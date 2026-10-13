@@ -1,0 +1,3 @@
+# Supply-chain policy: only install package versions that have been public
+# for at least a day, so a freshly compromised release never lands here.
+minimumReleaseAge: 1440
