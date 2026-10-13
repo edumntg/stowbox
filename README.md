@@ -30,31 +30,40 @@ few tens of megabytes instead of an Electron process per window.
 - Light and dark themes, keyboard reachable, honest empty, loading and error
   states everywhere.
 
-## What the agent needs inside the box
+## Install and run on the desktop
 
-Stowbox does not handle Anthropic or OpenAI credentials. The harness signs in
-with whatever the box already has:
+There are no prebuilt installers yet; the app is built from this repo.
 
-- an `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) set as a boxd secret:
-  `boxd env set ANTHROPIC_API_KEY sk-ant-… --secret`
-- or a `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`
-- or the Claude Code / Codex login boxd stores for your organization
+1. Install the toolchain:
+   - Rust 1.80+ via [rustup](https://rustup.rs).
+   - Node 22+ and pnpm (`npm install -g pnpm`); pnpm switches itself to the
+     version pinned in `package.json`.
+   - The Tauri 2 system packages for your OS: on macOS,
+     `xcode-select --install`; on Linux and Windows, follow
+     [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/).
+2. Build and start it:
 
-Claude Code, Codex and OpenCode come preinstalled on boxd machines. Turns run
-with `--dangerously-skip-permissions` by default because the box is a
-disposable VM; untick "Run tools without approval prompts" when creating the
-agent to have permission-needing tools denied instead.
+   ```sh
+   git clone https://github.com/edumntg/stowbox && cd stowbox
+   pnpm install
+   pnpm tauri dev        # desktop app with hot reload; the first run compiles
+                         # the Rust side and takes a few minutes
+   ```
 
-## Run it
+3. On first launch the app asks for a boxd API key (`bxd_…`), created at
+   [app.boxd.sh](https://app.boxd.sh). It is stored in the OS keychain.
 
-Requirements: Rust 1.80+, Node 22+, pnpm, and the
-[Tauri 2 system packages](https://tauri.app/start/prerequisites/) for your OS.
+To install it as a regular app instead of running it from a terminal:
 
 ```sh
-pnpm install
-pnpm tauri dev        # desktop app with hot reload
-pnpm tauri build      # installers in src-tauri/target/release/bundle
+pnpm tauri build      # installers in target/release/bundle/
 ```
+
+The build is unsigned. It opens fine on the machine that built it; a copy
+downloaded onto another Mac needs `xattr -dr com.apple.quarantine Stowbox.app`
+before Gatekeeper lets it open.
+
+## Develop
 
 The UI can also run in a plain browser against an in-memory mock, which is how
 it is developed and screenshotted without a boxd account:
@@ -77,6 +86,21 @@ hibernate, usage, fork, a Claude Code turn when the box can authenticate) and
 destroys it. It never touches existing machines. boxd refuses to create
 machines until the org has a payment method connected in the console, even
 with a credit balance.
+
+## What the agent needs inside the box
+
+Stowbox does not handle Anthropic or OpenAI credentials. The harness signs in
+with whatever the box already has:
+
+- an `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) set as a boxd secret:
+  `boxd env set ANTHROPIC_API_KEY sk-ant-… --secret`
+- or a `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`
+- or the Claude Code / Codex login boxd stores for your organization
+
+Claude Code, Codex and OpenCode come preinstalled on boxd machines. Turns run
+with `--dangerously-skip-permissions` by default because the box is a
+disposable VM; untick "Run tools without approval prompts" when creating the
+agent to have permission-needing tools denied instead.
 
 ## Layout
 
