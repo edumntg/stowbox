@@ -68,7 +68,15 @@ Rust side:
 ```sh
 cargo test -p stowbox-core   # parsers, cost math, auth helpers
 cargo check --workspace
+BOXD_API_KEY=bxd_… cargo run -p stowbox-core --example smoke   # against a real account
 ```
+
+The smoke example makes read-only calls, then creates one `stowbox-smoke-*`
+machine, runs every provider operation on it (exec, tty, cancel, standby,
+hibernate, usage, fork, a Claude Code turn when the box can authenticate) and
+destroys it. It never touches existing machines. boxd refuses to create
+machines until the org has a payment method connected in the console, even
+with a credit balance.
 
 ## Layout
 
