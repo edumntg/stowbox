@@ -107,6 +107,16 @@ Sandboxes later.
 - The API key is kept in the OS keychain; when no keychain is reachable it is
   written to a file only your user can read, and Settings says which.
 
+Measured against a real account on 2026-10-13 with the smoke example: a box
+is created and running in about 0.3 s (boot time reported as 4 to 5 ms),
+standby and resume are instant, hibernate takes 5 to 6 s, wake about 0.1 s,
+and dropping an exec stream kills the whole remote process group within
+half a second. `GetOrgBilling` is refused for API keys; the sidebar balance
+comes from `Whoami`. The rate card is in the org's currency, which was USD
+there, so the published EUR card is only a fallback. Pausing a box in the
+first seconds after waking it from hibernation can make the next resume
+fail with an Internal error; waiting a moment and retrying works.
+
 ## Not yet
 
 - Interactive tool approvals mid-turn (Claude Code's stdio control protocol).
