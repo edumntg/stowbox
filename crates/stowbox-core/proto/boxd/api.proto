@@ -1,0 +1,1771 @@
+syntax = "proto3";
+package boxd.api.v1;
+
+service BoxdApi {
+  rpc CreateVm(CreateVmRequest)             returns (CreateVmResponse);
+  rpc DestroyVm(DestroyVmRequest)           returns (DestroyVmResponse);
+  rpc RenameVm(RenameVmRequest)             returns (RenameVmResponse);
+  // Replaces a VM's whole network-tag set. The caller sends the complete
+  // desired set. Networks drive east-west reachability within the caller's
+  // org; see CreateVmRequest.networks.
+  rpc SetVmNetworks(SetVmNetworksRequest)   returns (SetVmNetworksResponse);
+  // Replaces a VM's egress allowlist: hostnames / wildcards and public IPv4
+  // addresses / CIDRs the machine may reach. Empty = no allowlist.
+  rpc SetVmEgressAllow(SetVmEgressAllowRequest) returns (SetVmEgressAllowResponse);
+  rpc StartVm(StartVmRequest)               returns (StartVmResponse);
+  rpc StopVm(StopVmRequest)                 returns (StopVmResponse);
+  rpc RebootVm(RebootVmRequest)             returns (RebootVmResponse);
+  // NOT_FOUND for an id/name with no matching machine, INCLUDING a destroyed
+  // one, so polling GetVm to confirm teardown is safe.
+  rpc GetVm(GetVmRequest)                   returns (GetVmResponse);
+  rpc ListVms(ListVmsRequest)               returns (ListVmsResponse);
+  // A fresh, available auto-generated VM name.
+  rpc SuggestVmName(SuggestVmNameRequest)   returns (SuggestVmNameResponse);
+  rpc ExposePort(ExposePortRequest)         returns (ExposePortResponse);
+  rpc UnexposePort(UnexposePortRequest)     returns (UnexposePortResponse);
+  rpc ListExposedPorts(ListExposedPortsRequest) returns (ListExposedPortsResponse);
+  // Env vars & secrets (scoped to an org or, when org is empty, personal).
+  rpc SetVar(SetVarRequest)                 returns (VarReply);
+  rpc ListVars(ListVarsRequest)             returns (VarListReply);
+  rpc RemoveVar(RemoveVarRequest)           returns (VarReply);
+  rpc SetSecretScope(SetSecretScopeRequest) returns (VarReply);
+  rpc StreamLogs(StreamLogsRequest)         returns (stream LogChunk);
+  // Run a command (or interactive shell, with `tty`) inside the VM. The
+  // first request chunk carries vm_id/command/tty; subsequent chunks carry
+  // stdin bytes or a resize. The stream ends with a final ExecChunk carrying
+  // `exit_code`.
+  //
+  // Cancelling the call (a client-side timeout expiring, or the caller
+  // half-closing/cancelling the stream) kills the remote command. Its whole
+  // process group gets SIGTERM, then SIGKILL after a short grace period if it
+  // hasn't exited. Both SDKs' `timeout` / `close()` go through this same path.
+  rpc Exec(stream ExecChunk)                returns (stream ExecChunk);
+  // Raw byte tunnel to the VM's desktop (xpra) socket, reachable ONLY through
+  // this authenticated RPC. The first chunk carries vm_id (data ignored);
+  // every later chunk is opaque xpra-protocol bytes, both directions. The
+  // desktop starts on demand.
+  rpc DesktopTunnel(stream DesktopChunk)    returns (stream DesktopChunk);
+  rpc CreateNetwork(CreateNetworkRequest)   returns (CreateNetworkResponse);
+  rpc ListNetworks(ListNetworksRequest)     returns (ListNetworksResponse);
+  // Per-VM custom domains (one domain -> one VM). AddCustomDomain creates a
+  // `pending` domain and the server immediately starts
+  // verifying DNS and issuing certs, then flips it `active`; `last_error`
+  // carries the reason while pending. Point DNS at the machine before calling
+  // this, since checking too early risks a public resolver negative-caching
+  // the apex before the records exist. Caller must own (or be a member of the
+  // org of) the target VM.
+  rpc AddCustomDomain(AddCustomDomainRequest)       returns (AddCustomDomainResponse);
+  rpc ListCustomDomains(ListCustomDomainsRequest)   returns (ListCustomDomainsResponse);
+  rpc RemoveCustomDomain(RemoveCustomDomainRequest) returns (RemoveCustomDomainResponse);
+  // Per-org wildcard domain (one apex per org, e.g. preview.mysaas.com,
+  // covering <vm>.preview.mysaas.com for every org-billed VM). Same
+  // already-pointed-DNS expectation as AddCustomDomain, this time NS
+  // delegation. Set/Clear require org admin; Get is readable by any org member.
+  rpc SetOrgDomain(SetOrgDomainRequest)     returns (SetOrgDomainResponse);
+  rpc GetOrgDomain(GetOrgDomainRequest)     returns (GetOrgDomainResponse);
+  rpc ClearOrgDomain(ClearOrgDomainRequest) returns (ClearOrgDomainResponse);
+  rpc Whoami(WhoamiRequest)                 returns (WhoamiResponse);
+  rpc CreateToken(CreateTokenRequest)       returns (CreateTokenResponse);
+  rpc ListTokens(ListTokensRequest)         returns (ListTokensResponse);
+  rpc RevokeToken(RevokeTokenRequest)       returns (RevokeTokenResponse);
+  // Link an SSH public key to the caller's account so `ssh <vm>.boxd`
+  // authenticates by that key's fingerprint. Idempotent for the caller.
+  rpc LinkSshKey(LinkSshKeyRequest)         returns (LinkSshKeyResponse);
+  rpc GetConfig(GetConfigRequest)            returns (GetConfigResponse);
+  rpc ForkVm(ForkVmRequest)                 returns (ForkVmResponse);
+  rpc ListProxies(ListProxiesRequest)       returns (ListProxiesResponse);
+  rpc CreateProxy(CreateProxyRequest)       returns (CreateProxyResponse);
+  rpc DeleteProxy(DeleteProxyRequest)       returns (DeleteProxyResponse);
+  rpc SetProxyPort(SetProxyPortRequest)     returns (SetProxyPortResponse);
+  rpc UploadFile(UploadFileRequest)         returns (UploadFileResponse);
+  // Streaming upload: lifts the 4 MiB single-message gRPC cap of UploadFile.
+  // The first chunk carries vm_id/path/total_size; subsequent chunks carry
+  // bytes only. The server reads exactly total_size bytes, verifies the file
+  // size, and returns the confirmed byte count.
+  rpc UploadFileStream(stream UploadFileChunk) returns (UploadFileResponse);
+  rpc DownloadFile(DownloadFileRequest)     returns (DownloadFileResponse);
+  // Streaming download: the sibling of UploadFileStream, lifting the 4 MiB
+  // single-message gRPC cap of DownloadFile. The first response chunk carries
+  // `total_size`; every chunk (the first included) carries a slice of the
+  // file's bytes in order. The client concatenates them and MUST verify the
+  // received byte count against `total_size`. A short stream is an error.
+  rpc DownloadFileStream(DownloadFileRequest) returns (stream DownloadFileChunk);
+  // Lists the immediate (non-recursive) contents of a directory inside the
+  // guest. Backs the console's file browser and the Python/TypeScript SDKs'
+  // `machines.files` namespace.
+  rpc ListDir(ListDirRequest)               returns (ListDirResponse);
+  // Directory/file management for the console's file browser and the
+  // Python/TypeScript SDKs. Mirrors `mkdir`/`mv`/`rm -rf` inside the guest.
+  rpc Mkdir(MkdirRequest)                   returns (MkdirResponse);
+  rpc RenamePath(RenamePathRequest)         returns (RenamePathResponse);
+  rpc DeletePath(DeletePathRequest)         returns (DeletePathResponse);
+  // Copy (mirrors `cp -r`). RenamePath covers a move.
+  rpc CopyPath(CopyPathRequest)             returns (CopyPathResponse);
+  rpc SuspendVm(SuspendVmRequest)           returns (SuspendVmResponse);
+  rpc ResumeVm(ResumeVmRequest)             returns (ResumeVmResponse);
+  rpc HibernateVm(HibernateVmRequest)       returns (HibernateVmResponse);
+  rpc WakeVm(WakeVmRequest)                 returns (WakeVmResponse);
+  // Snapshots: user/org point-in-time VM captures (memory + disk), replicated
+  // across a few hosts and versioned (latest-only).
+  rpc CreateSnapshot(CreateSnapshotRequest)   returns (CreateSnapshotResponse);
+  rpc ListSnapshots(ListSnapshotsRequest)     returns (ListSnapshotsResponse);
+  rpc GetSnapshot(GetSnapshotRequest)         returns (GetSnapshotResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest)   returns (DeleteSnapshotResponse);
+  rpc CreateVmFromSnapshot(CreateVmFromSnapshotRequest) returns (CreateVmResponse);
+  // Checkpoints: per-VM full captures (state+memory+disk) with warm restore
+  // in place. Same artifacts as a snapshot, but never replicated and never an
+  // account-level image. They live and die with the VM.
+  rpc CreateCheckpoint(CreateCheckpointRequest)   returns (CreateCheckpointResponse);
+  rpc ListCheckpoints(ListCheckpointsRequest)     returns (ListCheckpointsResponse);
+  rpc DeleteCheckpoint(DeleteCheckpointRequest)   returns (DeleteCheckpointResponse);
+  rpc RestoreCheckpoint(RestoreCheckpointRequest) returns (RestoreCheckpointResponse);
+  rpc SetAutoSuspendTimeout(SetAutoSuspendTimeoutRequest) returns (SetAutoSuspendTimeoutResponse);
+  rpc SetAutoHibernateTimeout(SetAutoHibernateTimeoutRequest) returns (SetAutoHibernateTimeoutResponse);
+  rpc SetBotProtection(SetBotProtectionRequest) returns (SetBotProtectionResponse);
+
+  // Disks
+  rpc CreateDisk(CreateDiskRequest)   returns (CreateDiskResponse);
+  rpc ListDisks(ListDisksRequest)     returns (ListDisksResponse);
+  rpc AttachDisk(AttachDiskRequest)   returns (AttachDiskResponse);
+  rpc DetachDisk(DetachDiskRequest)   returns (DetachDiskResponse);
+  rpc DestroyDisk(DestroyDiskRequest) returns (DestroyDiskResponse);
+
+  // API Keys
+  rpc CreateApiKey(CreateApiKeyRequest)   returns (CreateApiKeyResponse);
+  rpc ListApiKeys(ListApiKeysRequest)     returns (ListApiKeysResponse);
+  rpc DeleteApiKey(DeleteApiKeyRequest)   returns (DeleteApiKeyResponse);
+
+  // Billing. ListPlans works without auth (returns the single self-serve
+  // plan), the rest require a token.
+  rpc ListPlans(ListPlansRequest)                                   returns (ListPlansResponse);
+  rpc GetBilling(GetBillingRequest)                                 returns (GetBillingResponse);
+  rpc CreateCheckoutSession(CreateCheckoutSessionRequest)           returns (CreateCheckoutSessionResponse);
+  rpc CreateBillingPortalSession(CreateBillingPortalSessionRequest) returns (CreateBillingPortalSessionResponse);
+
+  // Organizations. Owner-only visibility toggle: share your VM with the whole
+  // org it belongs to, or make it private again. A VM never moves between
+  // orgs (it's born in the owner's org).
+  rpc ShareVm(ShareVmRequest)     returns (ShareVmResponse);
+  rpc UnshareVm(UnshareVmRequest) returns (UnshareVmResponse);
+  // List the orgs the caller is a member of.
+  rpc ListOrgs(ListOrgsRequest)               returns (ListOrgsResponse);
+  // The org's shared plan: aggregate quota + current usage. Any member may
+  // view it (read-only).
+  rpc GetOrgBilling(GetOrgBillingRequest)     returns (GetOrgBillingResponse);
+  // Usage and cost: what each machine used and cost over a window,
+  // and billing activity (what was actually charged). Org owners and admins
+  // only; API keys fenced to the org work, tokens minted inside a VM don't.
+  rpc GetOrgUsage(GetOrgUsageRequest)           returns (GetOrgUsageResponse);
+  rpc GetVmUsage(GetVmUsageRequest)             returns (GetVmUsageResponse);
+  rpc ListBillingActivity(ListBillingActivityRequest) returns (ListBillingActivityResponse);
+
+  // Disaster recovery: scheduled VM disk backups to object storage. Off by
+  // default.
+  rpc SetBackupSchedule(SetBackupScheduleRequest)     returns (SetBackupScheduleResponse);
+  rpc ClearBackupSchedule(ClearBackupScheduleRequest) returns (ClearBackupScheduleResponse);
+  rpc GetBackupSchedule(GetBackupScheduleRequest)     returns (GetBackupScheduleResponse);
+  rpc ListBackups(ListBackupsRequest)                 returns (ListBackupsResponse);
+  // On-demand "back up now". Captures immediately, independent of
+  // (and without disturbing) any schedule. Retention resolves from the VM's
+  // schedule, else the org default, else the platform default.
+  rpc TriggerBackup(TriggerBackupRequest)             returns (TriggerBackupResponse);
+  // Manual deletion of a single backup by id. Refused for a backup still
+  // being captured or one a newer backup depends on.
+  rpc DeleteBackup(DeleteBackupRequest)               returns (DeleteBackupResponse);
+  // Restore is IN-PLACE and DESTRUCTIVE (full disk rewrite). Get explicit
+  // user confirmation first.
+  rpc RestoreBackup(RestoreBackupRequest)             returns (RestoreBackupResponse);
+
+  // The org's default backup schedule for NEW VMs (existing VMs are
+  // unchanged; a fork always copies its own source's schedule instead of
+  // this default). Set requires org admin; Get is readable by any member.
+  rpc SetOrgBackupsDefault(SetOrgBackupsDefaultRequest) returns (SetOrgBackupsDefaultResponse);
+  rpc GetOrgBackupsDefault(GetOrgBackupsDefaultRequest) returns (GetOrgBackupsDefaultResponse);
+
+  // The org's default machine SIZE: what a machine gets at CREATE when the
+  // request names no size. The quota stays the ceiling and the per-request
+  // maximum; this is the org-admin-owned preference below it. Every
+  // machine keeps the size it was created with, so changing this only
+  // affects machines created afterwards.
+  // Set/Clear require org admin; Get is readable by any member.
+  rpc SetOrgMachineDefaults(SetOrgMachineDefaultsRequest) returns (SetOrgMachineDefaultsResponse);
+  rpc GetOrgMachineDefaults(GetOrgMachineDefaultsRequest) returns (GetOrgMachineDefaultsResponse);
+
+  // Org creation, roster, and membership (same rules as the console). Any
+  // signed-in user may create an org (becomes its owner+admin); invite/
+  // revoke/remove/set-role require org admin.
+  //
+  // Credential fence: an API key or in-VM token only ever acts on the org it
+  // is fenced to ("" resolves to it, any other org is refused); an in-VM
+  // token can read a roster but never change one; an `org`-kind (userless)
+  // credential has no org/team verbs at all. Creating an org, inviting an
+  // admin, and promoting to admin need an interactive session.
+  rpc CreateOrg(CreateOrgRequest)         returns (CreateOrgResponse);
+  rpc RenameOrg(RenameOrgRequest)         returns (RenameOrgResponse);
+  rpc GetOrgMembers(GetOrgMembersRequest) returns (GetOrgMembersResponse);
+  // Best-effort emails the invite link. The returned accept_url always
+  // works, even when email delivery fails.
+  rpc InviteOrgMember(InviteOrgMemberRequest) returns (InviteOrgMemberResponse);
+  rpc RevokeOrgInvite(RevokeOrgInviteRequest) returns (RevokeOrgInviteResponse);
+  // Refused for an org owner/admin or a member who still owns VMs billed to
+  // this org.
+  rpc RemoveOrgMember(RemoveOrgMemberRequest) returns (RemoveOrgMemberResponse);
+  // Promote a member to admin, or demote an admin back to member. Refused for
+  // the owner and for a target that isn't a member. Demoting ANOTHER admin is
+  // owner-only (an admin may only step down themselves). Promoting to admin
+  // needs an interactive session.
+  rpc SetOrgMemberRole(SetOrgMemberRoleRequest) returns (SetOrgMemberRoleResponse);
+
+  // Teams: org-scoped sub-grouping of members, each with an optional default
+  // snapshot new team machines boot from. Creating a team requires org admin;
+  // every other write requires team-admin (inherited by every org admin, or
+  // held directly as a team admin).
+  rpc ListTeams(ListTeamsRequest)     returns (ListTeamsResponse);
+  rpc GetTeam(GetTeamRequest)         returns (TeamInfo);
+  rpc CreateTeam(CreateTeamRequest)   returns (TeamInfo);
+  rpc RenameTeam(RenameTeamRequest)   returns (RenameTeamResponse);
+  rpc DestroyTeam(DestroyTeamRequest) returns (DestroyTeamResponse);
+  rpc AddTeamMember(AddTeamMemberRequest)       returns (AddTeamMemberResponse);
+  rpc RemoveTeamMember(RemoveTeamMemberRequest) returns (RemoveTeamMemberResponse);
+  rpc SetTeamMemberRole(SetTeamMemberRoleRequest) returns (SetTeamMemberRoleResponse);
+  // Must be a SHARED snapshot (a private default would only work for the
+  // admin who set it). Empty snapshot_id clears the default.
+  rpc SetTeamDefaultSnapshot(SetTeamDefaultSnapshotRequest) returns (SetTeamDefaultSnapshotResponse);
+
+  // Resize a machine to another supported size class (1 vCPU · 4 GiB, 2 · 8,
+  // or 4 · 16; naming one dimension resolves to its class), within the org
+  // quota ceiling (refused above it, never clamped). The new size persists
+  // immediately. A running machine is rebooted to apply it (cold boot, so
+  // in-memory state is lost and disk is kept), a stopped machine picks it up
+  // at its next start. Suspended and hibernated machines are refused. Resume
+  // or wake first, then resize.
+  rpc ResizeVm(ResizeVmRequest) returns (ResizeVmResponse);
+}
+
+// VM configuration. All fields use 0/empty as "use default".
+//
+// Sizing (vcpu, memory_bytes) applies to FRESH creates only and must name one
+// of the supported size classes: 1 vCPU · 4 GiB, 2 · 8, or 4 · 16 (naming
+// one dimension resolves to its class; any other combination is refused).
+// The pair is also validated against the billing org's quota ceiling: above
+// it the create is refused (invalid_argument), never clamped. ForkVm and
+// CreateVmFromSnapshot refuse non-zero sizing. A fork inherits its source's
+// size, a restore is born at the size the snapshot was captured at.
+message VmConfig {
+  uint32        vcpu         = 1;  // 0 = the org's default; else one of the size classes below
+  uint64        memory_bytes = 2;  // 0 = the org's default; else one of the size classes below
+  uint64        disk_bytes   = 3;  // must be 0 (or exactly the fixed 100 GiB); per-machine disk sizing is refused
+  SrfConfig     srf          = 4;
+  NetworkConfig network      = 5;
+  repeated VolumeMount volumes = 6;
+}
+
+message SrfConfig {
+  optional uint32 auto_suspend_timeout_secs = 1;  // unset = server default (30s for new, inherit for fork)
+  uint32          auto_destroy_timeout_secs = 2;  // 0 = no auto-destroy
+}
+
+message NetworkConfig {
+  bool                 ssh     = 1;  // default: true
+  repeated ProxyEntry  proxies = 2;
+}
+
+message ProxyEntry {
+  string name = 1;
+  uint32 port = 2;  // 0 = auto-detect
+}
+
+message VolumeMount {
+  string disk_id    = 1;
+  string mount_path = 2;
+  bool   read_only  = 3;
+}
+
+// VM management
+message CreateVmRequest {
+  string          name           = 1;
+  string          image_ref      = 2;
+  reserved 3;
+  reserved 4;
+  repeated EnvVar env            = 5;
+  repeated string cmd            = 6;
+  string          restart_policy = 7;
+  VmConfig        config         = 8;  // omit for defaults (all zeros)
+  // Org to create the VM in (name or id). Empty = personal. The org pays and
+  // the VM is PRIVATE to the creator unless `shared` is set.
+  string          org            = 9;
+  // Share the new VM with the whole org (only meaningful with `org`). Default
+  // false = private to the creator, billed to the org.
+  bool            shared         = 10;
+  // Network tags: east-west reachability within the org. Empty = this VM
+  // joins the org's implicit DEFAULT network, whose members are the org's
+  // other networkless, non-isolated VMs. Naming ≥1 network OPTS OUT of the
+  // default network: the VM then reaches only VMs it shares a network with,
+  // and untagged VMs no longer reach it. Editable after creation via
+  // SetVmNetworks.
+  repeated string networks       = 11;
+  // Isolated: a sandbox. Never in the default network and never a peer of
+  // another isolated VM. An isolated VM with no `networks` has no peers at
+  // all, and one with `networks` reaches exactly the NON-isolated VMs it
+  // shares a network with (east-west, internal DNS and exec/cp all follow the
+  // same rule). The guest is stripped of the in-VM boxd CLI, the git
+  // credential helper, the GitHub/Linear/Slack/Figma integrations, the agent
+  // skills/credentials, and `boxd local`. Internet and inbound SSH/HTTPS are
+  // unaffected. Set at creation, IMMUTABLE after. A fork or
+  // restore-from-snapshot always inherits the source's/snapshot's value.
+  bool            isolated       = 12;
+  // Team to borrow a starting image from, within `org` (name or id; a name
+  // resolves against the teams the caller directly belongs to). Empty = no
+  // team. If the team has a default snapshot set and this create doesn't
+  // otherwise restore from a snapshot, it boots from that default
+  // automatically. Does NOT associate the created VM with the team.
+  string          team           = 13;
+}
+
+message EnvVar {
+  string key   = 1;
+  string value = 2;
+}
+
+message CreateVmResponse {
+  string vm_id        = 1;
+  string name         = 2;
+  string public_ip    = 3;
+  string url          = 4;
+  string image        = 5;
+  string status       = 6;
+  uint64 boot_time_ms = 7;
+}
+
+message DestroyVmRequest  { string vm_id = 1; }
+message DestroyVmResponse {}
+
+message SuggestVmNameRequest  {}
+message SuggestVmNameResponse { string name = 1; }
+
+// vm_id accepts a VM name or ID. new_name must be free and not
+// reserved. Routing/DNS follow the new name immediately; the in-VM hostname
+// updates on the VM's next reboot.
+message RenameVmRequest  { string vm_id = 1; string new_name = 2; }
+message RenameVmResponse { string name = 1; }
+
+// Tag-based networks. `networks` is the COMPLETE desired set (replaces,
+// merges nothing). Clearing it to empty moves the VM into the org's default
+// network (its other networkless, non-isolated VMs). An ISOLATED VM peers
+// exclusively through explicit shared networks, so clearing them leaves it
+// with no peers at all.
+message SetVmNetworksRequest  { string vm_id = 1; repeated string networks = 2; }
+message SetVmNetworksResponse { repeated string networks = 1; }
+message SetVmEgressAllowRequest  { string vm = 1; repeated string entries = 2; }
+message SetVmEgressAllowResponse { repeated string entries = 1; }
+
+// vm_id accepts a VM name or ID. protocol is "tcp" | "udp" |
+// "both" (both share one allocated public port). Re-exposing the same vm_port
+// keeps its public port and updates the protocol set. Max 3 per VM.
+message ExposePortRequest  {
+  string vm_id    = 1 [deprecated = true];  // use `vm`
+  uint32 vm_port  = 2;
+  string protocol = 3;
+  string vm       = 4;  // machine id OR name
+}
+// dns is `<vm>.<zone>` and resolves to the VM's proxy IP. Connect on public_port.
+message ExposePortResponse {
+  string vm_name     = 1;
+  string dns         = 2;
+  uint32 public_port = 3;
+  uint32 vm_port     = 4;
+  string protocol    = 5;
+  // The machine this forward belongs to, beside `vm_name`. Lets a caller
+  // round-trip to any vm_id-addressed call without a name lookup.
+  string vm_id       = 6;
+}
+// Remove the forward for (vm_id, vm_port), freeing its public port. Errors if
+// nothing is exposed on that port. The response echoes what was removed.
+message UnexposePortRequest  {
+  string vm_id   = 1 [deprecated = true];  // use `vm`
+  uint32 vm_port = 2;
+  string vm      = 3;  // machine id OR name
+}
+message UnexposePortResponse { ExposePortResponse forward = 1; }
+// `vm` (id OR name) narrows to one machine; empty = every forward the
+// caller can see.
+message ListExposedPortsRequest  { string vm = 1; }
+message ListExposedPortsResponse { repeated ExposePortResponse forwards = 1; }
+
+// Env vars & secrets. `org` empty = personal scope. `kind` = "env" | "secret".
+// `scope` = "all" | "shared" | "private" (empty = default "shared"; ignored for
+// personal). Secret values are write-only and never returned in any response.
+// `domains` (secrets only): the hosts this secret may be sent to. Non-empty =
+// network-scoped. The machine only ever holds a `bxds_` placeholder and the
+// real value is substituted on outbound requests to these hosts. The request carries the FULL desired set: setting
+// a secret without `domains` makes it a plain secret again (there is no
+// separate domains RPC). Ignored for kind="env".
+message SetVarRequest {
+  string org    = 1;
+  string kind   = 2;
+  string name   = 3;
+  string value  = 4;
+  string scope  = 5;
+  repeated string domains = 6;
+}
+message VarReply { string message = 1; }
+message ListVarsRequest { string org = 1; string kind = 2; }
+message VarItem {
+  string name  = 1;
+  string kind  = 2;
+  string scope = 3;
+  string value = 4;             // env only; always empty for secrets
+  reserved 5;
+  repeated string domains = 6;  // secrets only; empty = not network-scoped
+}
+message VarListReply { repeated VarItem vars = 1; }
+message RemoveVarRequest { string org = 1; string kind = 2; string name = 3; string scope = 4; }
+message SetSecretScopeRequest { string org = 1; string name = 2; string from = 3; string to = 4; }
+
+message StartVmRequest  { string vm_id = 1; }
+message StartVmResponse {}
+
+message StopVmRequest  { string vm_id = 1; }
+message StopVmResponse {}
+
+message RebootVmRequest  { string vm_id = 1; }
+message RebootVmResponse {}
+
+message SuspendVmRequest  { string vm_id = 1; }  // VM name or id
+message SuspendVmResponse {
+  uint64 suspend_us = 1;
+}
+
+message ResumeVmRequest  { string vm_id = 1; }  // VM name or id
+message ResumeVmResponse {
+  uint64 resume_us = 1;
+}
+
+message HibernateVmRequest  { string vm_id = 1; }  // VM name or id
+message HibernateVmResponse {}
+message WakeVmRequest  { string vm_id = 1; }  // VM name or id
+message WakeVmResponse {}
+
+message GetVmRequest { string vm_id = 1; }  // VM name or id
+message GetVmResponse {
+  string vm_id          = 1;
+  string name           = 2;
+  string image_ref      = 3;
+  string public_ip      = 4;
+  // Never "destroyed": a destroyed machine's id/name is a NOT_FOUND error
+  // instead of a response carrying this field (see the GetVm RPC comment).
+  string status         = 5;
+  string restart_policy = 6;
+  // The machine's fixed disk ALLOCATION, always the platform constant
+  // (100 GiB). This is an allocation and does not move as the machine fills
+  // its disk.
+  uint64 disk_bytes     = 7;
+  uint32 auto_suspend_timeout_secs = 8;  // 0 = disabled/unset; always concrete on the wire
+  uint32 ssh_port = 9;  // per-VM SSH port on the proxy IP (0 = not yet allocated)
+  // Org the VM is SHARED with (org name; empty = not shared) and the org
+  // paying for it (org name; empty = the owner's personal quota). A private
+  // org-billed VM has `org` empty and `billing_org` set.
+  string org         = 10;
+  string billing_org = 11;
+  // The domain the VM is addressed under: the VM's billing org's active custom
+  // domain (e.g. `preview.mysaas.com`) if it has one, else the cluster zone
+  // (e.g. `boxd.sh`). Clients build `<name>.<access_domain>` for SSH/HTTPS
+  // display. The default `<name>.<cluster-zone>` always continues to resolve.
+  string access_domain = 12;
+  uint32 auto_hibernate_timeout_secs = 13;  // 0 = disabled/unset
+  // How the VM was created, for DISPLAY: "snapshot/<name>:<version>",
+  // "fork/<source-vm-name>", or "standalone". Read the structured
+  // `source_info` below instead of string-splitting this.
+  string source = 14;
+
+  // Sizing. The machine's EFFECTIVE vCPU/RAM: the VM's own override if it
+  // has one, else its billing org's quota, else the platform default.
+  uint32 vcpu         = 15;
+  uint64 memory_bytes = 16;
+
+  // Wall-clock unix SECONDS the VM was created. 0 = unknown (older VMs).
+  int64 created_at = 17;
+  // Wall-clock unix MILLISECONDS the VM entered `hibernated`. 0 = not
+  // hibernated (or hibernation time unknown).
+  int64 hibernated_at_ms = 18;
+  // Idle seconds before the VM is auto-destroyed. 0 = disabled/unset.
+  uint32 auto_destroy_timeout_secs = 19;
+  // Last boot duration in MILLISECONDS (0 = never booted / not recorded) and
+  // the wall-clock unix MILLISECONDS of the last client connection to the VM
+  // (0 = never connected).
+  int64 boot_time_ms       = 20;
+  int64 last_connected_ms  = 21;
+
+  // Ids for the orgs named by `org` / `billing_org` above, so a caller can
+  // round-trip to an org-addressed call without a name→id lookup. Same
+  // emptiness rules as the names they sit beside.
+  string org_id         = 22;
+  string billing_org_id = 23;
+
+  // Structured form of `source`, so clients never parse that string.
+  // UNSET for a standalone machine. See VmSource below.
+  VmSource source_info = 24;
+
+  // Tag-based networks: east-west reachability within the org. See
+  // CreateVmRequest.networks for the rule. Empty = this VM is in the org's
+  // implicit default network (its other networkless, non-isolated VMs);
+  // non-empty means it reaches only VMs sharing a network.
+  repeated string networks = 25;
+  // Isolated: a sandbox. Peers only through an explicit shared `networks`
+  // entry, never through the default network and never with another
+  // isolated VM. Immutable after creation.
+  bool isolated = 26;
+
+  // Per-VM custom domains bound to this machine. `domain` is globally
+  // unique but `vm_id` is not, so more than one can point here.
+  // Distinct from `access_domain` above, which is the org's wildcard
+  // domain or the cluster zone, not a per-VM custom domain.
+  repeated CustomDomainInfo custom_domains = 27;
+  // Egress allowlist. Empty = unrestricted.
+  repeated string egress_allow = 28;
+
+  // Bot protection: an HTTPS request that would wake this machine from
+  // suspended/hibernated on `<vm>.<domain>` or `www.<vm>.<domain>` must pass
+  // a Cloudflare Turnstile challenge first. On by default.
+  bool bot_protection = 29;
+}
+
+// Where a machine CAME FROM: a fork of another VM, or a restore of a
+// snapshot. A standalone machine leaves this message UNSET rather than
+// setting a kind that names its own absence, so a caller writes
+// `if (source_info)` instead of `if (source_info.kind != "standalone")`.
+// (The legacy `GetVmResponse.source` display string still reads
+// "standalone" for those machines.)
+message VmSource {
+  // "fork" | "snapshot". Never "standalone": that is the unset message.
+  string kind    = 1;
+  // The source VM's name (fork) or the snapshot's name (snapshot).
+  string name    = 2;
+  // The snapshot version. 0 for a fork.
+  uint64 version = 3;
+  // The source VM's id (fork) or the snapshot's id (snapshot).
+  //
+  // PROVENANCE, NOT A LIVE REFERENCE. A fork's parent may since have been
+  // destroyed and a snapshot may since have been deleted, so this id is not
+  // guaranteed to resolve. Treat a lookup miss as normal.
+  //
+  // Empty for some older machines restored from a snapshot, which report
+  // only the snapshot's name and version.
+  string id      = 4;
+}
+
+message ListVmsRequest {
+  // Scope: empty = the caller's personal VMs; an org name = that org's VMs
+  // (caller must be a member).
+  string org = 1;
+  // When true, ignore `org` and return every VM the caller can reach: their
+  // personal VMs plus, for each org they belong to, that org's shared VMs and
+  // their own private org-billed VMs, deduped.
+  bool all_contexts = 2;
+}
+message ListVmsResponse {
+  repeated GetVmResponse vms = 1;
+  // Cluster-info: the OpenSSH public-key line of the proxy's SSH host key
+  // (`ssh-ed25519 AAAA...`). All VM SSH connections terminate at the proxy and
+  // present this key, so the CLI writes one `known_hosts` line per VM with it.
+  string ssh_host_key = 2;
+}
+
+// Logs and exec
+message StreamLogsRequest {
+  string vm_id  = 1;
+  bool   follow = 2;
+}
+
+message LogChunk {
+  bytes data = 1;
+}
+
+message ExecChunk {
+  bytes  data      = 1;
+  bool   stdin     = 2;
+  bool   tty       = 3;
+  string command   = 4;
+  string vm_id     = 5;  // VM name or id
+  int32  exit_code = 6;
+  // PTY size. On the first chunk (with `tty = true`) these set the initial
+  // PTY geometry. On a subsequent chunk with `window_change = true` they
+  // signal a terminal resize. Zero falls back to 80x24.
+  uint32 cols          = 7;
+  uint32 rows          = 8;
+  bool   window_change = 9;
+  // Server→client: the bytes in `data` came from the subprocess's stderr.
+  // Defaults to false (stdout). PTY-mode execs merge stderr into stdout, so
+  // this field is only meaningful for non-PTY execs.
+  bool   is_stderr     = 10;
+  // Client-utilities device id of the connecting machine, exposed in the VM
+  // session env as BOXD_DEVICE_ID so in-VM tools reach this device.
+  string device_id    = 11;
+}
+
+message DesktopChunk {
+  // Set on the first client chunk only: which VM's desktop to reach. VM name or id.
+  string vm_id = 1;
+  // Opaque xpra-protocol bytes (both directions).
+  bytes  data  = 2;
+}
+
+// Networks
+message CreateNetworkRequest {
+  string name = 1;
+}
+
+message CreateNetworkResponse {
+  string network_id = 1;
+}
+
+message ListNetworksRequest {}
+message ListNetworksResponse {
+  repeated NetworkInfo networks = 1;
+}
+
+message NetworkInfo {
+  string network_id = 1;
+  string subnet     = 2;
+  string status     = 3;
+}
+
+// Domains
+//
+// Per-VM custom domains and the per-org wildcard domain are two independent
+// mechanisms. Both start `status: "pending"` the moment Add/Set is called,
+// and the server verifies DNS and issues certs, then flips it `"active"`.
+// `last_error` carries the reason while pending. Put the DNS records in
+// place *before* calling Add/Set.
+message AddCustomDomainRequest {
+  string vm_id  = 1;  // VM id or name
+  string domain = 2;  // full hostname, e.g. "example.com"
+}
+
+message AddCustomDomainResponse {
+  CustomDomainInfo domain = 1;
+}
+
+message ListCustomDomainsRequest {}
+message ListCustomDomainsResponse {
+  repeated CustomDomainInfo domains = 1;
+}
+
+message RemoveCustomDomainRequest {
+  string domain = 1;
+}
+
+message RemoveCustomDomainResponse {}
+
+message CustomDomainInfo {
+  string domain     = 1;
+  string vm_id      = 2;
+  string vm_name    = 3;
+  string status     = 4;  // "pending" | "active"
+  string last_error = 5;
+}
+
+message SetOrgDomainRequest {
+  string org_id = 1;
+  string domain = 2;  // bare apex, e.g. "preview.mysaas.com" (wildcard implied)
+}
+
+message SetOrgDomainResponse {
+  OrgDomainInfo domain = 1;
+}
+
+message GetOrgDomainRequest {
+  string org_id = 1;
+}
+
+message GetOrgDomainResponse {
+  // Unset (`HasField`/`has_domain()` false) if the org has no domain.
+  OrgDomainInfo domain = 1;
+}
+
+message ClearOrgDomainRequest {
+  string org_id = 1;
+}
+
+message ClearOrgDomainResponse {}
+
+message OrgDomainInfo {
+  string org_id     = 1;
+  string domain     = 2;
+  string status     = 3;  // "pending" | "active"
+  string last_error = 4;
+}
+
+// Config
+message GetConfigRequest {}
+message GetConfigResponse {
+  string default_image = 1;
+  string zone          = 2;
+}
+
+// Identity
+message WhoamiRequest {}
+message WhoamiResponse {
+  string          user_id             = 1;
+  repeated string pubkey_fingerprints = 2;
+  reserved 3;
+  reserved "default_network_id";
+  BillingInfo     billing             = 4;
+  // Human-friendly label (identity handle / display name) to show instead of
+  // the opaque user_id. Provider-agnostic; empty falls back to user_id.
+  string          display_name        = 5;
+}
+
+// Current billing state for the caller. past_due_since is 0 when the user
+// has never upgraded.
+message BillingInfo {
+  reserved 1;
+  reserved "tier";
+  reserved 2;
+  reserved "shape";
+  string subscription_status    = 3;  // 'active' | 'trialing' | 'past_due' | 'canceled'
+  reserved 4, 5;
+  reserved "stripe_customer_id", "stripe_subscription_id";
+  int64  past_due_since         = 6;  // 0 = not past due
+  uint32 max_vms                = 7;  // effective quota
+  // The size a machine created WITHOUT an explicit size gets in the home
+  // org: the org's stored default, else its quota, else the platform
+  // 2 vCPU / 8 GiB. This is the effective default, below the ceiling.
+  uint32 vcpu                   = 8;
+  uint64 memory_bytes           = 9;
+  // Credit-billing balance in micro-units (1e-6) of `currency`, e.g.
+  // 5_000_000 = €5.00 for a EUR org, $5.00 for a USD org. 0 for stripe orgs.
+  int64  balance_micro             = 10;
+  // 'stripe' (Stripe subscription) | 'credits'
+  // (pay-as-you-go balance, no subscription).
+  string billing_mode           = 11;
+  // The org's billing currency, lower-case ISO 4217 ('eur' | 'usd'). Every
+  // micro-unit amount in this message is denominated in it.
+  string currency               = 12;
+  // The largest machine an explicit request in the home org may ask for:
+  // the org quota, else the platform 4 vCPU / 16 GiB.
+  uint32 ceiling_vcpu           = 13;
+  uint64 ceiling_memory_bytes   = 14;
+}
+
+// Catalog of plans: the single self-serve plan (lookup_key 'boxd-monthly').
+message ListPlansRequest {}
+message ListPlansResponse {
+  repeated PlanInfo plans = 1;
+}
+
+message PlanInfo {
+  // Plan identity is lookup_key; size is vcpu + memory_bytes.
+  reserved 1;
+  reserved "tier";
+  reserved 2;
+  reserved "shape";
+  uint32 monthly_eur   = 3;  // price in EUR cents, e.g. 2000 for €20
+  string lookup_key    = 4;  // 'boxd-monthly'
+  string description   = 5;  // human-readable
+  uint32 vcpu          = 6;
+  uint64 memory_bytes  = 7;
+}
+
+// Detailed billing view (same as Whoami.billing).
+message GetBillingRequest {}
+message GetBillingResponse {
+  BillingInfo billing = 1;
+}
+
+// Free → paid upgrade. Returns a Stripe Checkout URL for the single plan.
+// Redirect the browser to it; the subscription activates on completion.
+message CreateCheckoutSessionRequest {
+  reserved 1;
+  reserved "shape";
+  string success_url = 2;  // optional override; server has a default
+  string cancel_url  = 3;  // optional override
+}
+message CreateCheckoutSessionResponse {
+  string checkout_url = 1;
+}
+
+// Paying user → manage payment/cancel. Returns a Stripe Customer Portal URL
+// to redirect to.
+message CreateBillingPortalSessionRequest {
+  string return_url = 1;  // optional override
+}
+message CreateBillingPortalSessionResponse {
+  string portal_url = 1;
+}
+
+// Tokens
+message CreateTokenRequest {
+  uint64 expires_in_secs = 1;
+}
+
+message CreateTokenResponse {
+  string token      = 1;
+  int64  expires_at = 2;
+}
+
+message ListTokensRequest {}
+message ListTokensResponse {
+  repeated TokenInfo tokens = 1;
+}
+
+message TokenInfo {
+  string jti        = 1;
+  int64  created_at = 2;
+  int64  expires_at = 3;
+}
+
+message RevokeTokenRequest {
+  string jti = 1;
+}
+
+message RevokeTokenResponse {}
+
+// Link an SSH public key to the caller's account. `pubkey` is the OpenSSH
+// authorized_keys line (`ssh-ed25519 AAAA... [comment]`), the verbatim
+// contents of a `.pub` file. The comment is ignored.
+message LinkSshKeyRequest {
+  string pubkey = 1;
+  // Optional device this key belongs to (the CLI's per-install `device_id`).
+  // When set, the server keeps ONE key per (user, device): re-linking from the
+  // same device replaces its previous key instead of accumulating stale ones.
+  string device_id = 2;
+  // Optional human label for the device (e.g. hostname), for display.
+  string label = 3;
+}
+message LinkSshKeyResponse {}
+
+// Fork
+message ForkVmRequest {
+  string   source_vm_id = 1;
+  string   name         = 2;
+  VmConfig config       = 3;  // omit = inherit from source (all zeros)
+  // Forking a shared org VM yields a PRIVATE org VM of the forker by default
+  // (visibility dropped, org billing kept). Set true to keep the fork shared
+  // with the source's org. No effect when the source is personal.
+  bool     shared       = 4;
+  // Network tags override: empty = inherit the source's current networks.
+  // Non-empty replaces them outright for the fork.
+  repeated string networks = 5;
+  // Isolation override, one-way: true forces the fork isolated even when the
+  // source is not. False (the proto3 default, indistinguishable from unset)
+  // means "inherit", so the server computes `source.isolated || isolated`.
+  // A fork of an isolated machine can never be de-isolated. Forcing a fork
+  // isolated removes the in-VM CLI, the git credential helper, the agent
+  // skills and any coding-agent credentials it inherited from the source.
+  bool isolated = 6;
+}
+
+message ForkVmResponse {
+  string vm_id        = 1;
+  string name         = 2;
+  string public_ip    = 3;
+  string url          = 4;
+  string image        = 5;
+  string status       = 6;
+  string forked_from  = 7;
+  uint64 boot_time_ms = 8;
+}
+
+// Proxies
+message ListProxiesRequest {
+  string vm_name = 1 [deprecated = true];  // use `vm`
+  // Machine id OR name. Empty = every proxy the caller can see.
+  string vm      = 2;
+}
+
+message ListProxiesResponse {
+  repeated ProxyInfo proxies = 1;
+}
+
+message ProxyInfo {
+  string name         = 1;
+  string vm_name      = 2;
+  string domain       = 3;
+  // The stored port: the locked port, else the auto-detected one, else 0.
+  // `effective_port` below is what traffic actually lands on.
+  uint32 port         = 4;
+  bool   is_default   = 5;
+  // Rendered English for a terminal ("8000", "auto (8000)"). Prefer
+  // `port_mode` + `effective_port`.
+  string port_display = 6;
+
+  // The VM this route belongs to, beside `vm_name`, so a caller can address
+  // the machine without a name→id lookup.
+  string vm_id = 7;
+  // "locked" (the port was pinned by the user) or "auto" (discovered from the
+  // guest). The machine-readable half of `port_display`.
+  string port_mode = 8;
+  // The port traffic is actually forwarded to: the locked port when
+  // port_mode="locked", else the detected port, falling back to 8000.
+  uint32 effective_port = 9;
+}
+
+message CreateProxyRequest {
+  string name    = 1;
+  string vm_name = 2 [deprecated = true];  // use `vm`
+  uint32 port    = 3;
+  // Machine id OR name. Preferred over `vm_name`.
+  string vm      = 4;
+}
+
+message CreateProxyResponse {
+  string name    = 1;
+  string vm_name = 2;
+  string domain  = 3;
+  uint32 port    = 4;
+}
+
+message DeleteProxyRequest {
+  string name    = 1;
+  string vm_name = 2 [deprecated = true];  // use `vm`
+  string vm      = 3;  // machine id OR name
+}
+
+message DeleteProxyResponse {}
+
+message SetProxyPortRequest {
+  string name    = 1;
+  string vm_name = 2 [deprecated = true];  // use `vm`
+  // A concrete port number, or the literal string "auto" (default proxy
+  // only) to have the port discovered from the guest's own `listen(2)`
+  // calls instead of pinning one. "auto" re-detects for the machine's whole
+  // lifetime, not just at boot. See `MachineProxies.setPort` /
+  // `Proxies.set_port` in the SDKs for the full semantics.
+  string port    = 3;
+  string vm      = 4;  // machine id OR name
+}
+
+message SetProxyPortResponse {}
+
+// File transfer
+message UploadFileRequest {
+  string vm_id = 1;  // VM name or id
+  string path  = 2;
+  bytes  data  = 3;
+}
+
+message UploadFileResponse {
+  // Bytes the server confirmed it wrote. 0 means unverified; fall back to
+  // the local file size.
+  uint64 bytes_written = 1;
+}
+
+// Streaming chunk for `UploadFileStream`. The first chunk on the stream
+// carries `vm_id`, `path`, and `total_size` (set once); `data` may be empty
+// or carry the first slice of file bytes. Subsequent chunks set `data` only.
+// vm_id/path/total_size on later chunks are ignored. The stream end signals
+// completion.
+message UploadFileChunk {
+  string vm_id      = 1;  // VM name or id
+  string path       = 2;
+  uint64 total_size = 3;
+  bytes  data       = 4;
+}
+
+message DownloadFileRequest {
+  string vm_id = 1;  // VM name or id
+  string path  = 2;
+}
+
+message DownloadFileResponse {
+  bytes data = 1;
+}
+
+// One frame of a `DownloadFileStream`. `total_size` is set on the FIRST frame
+// only (0 thereafter); `data` carries file bytes in order on every frame,
+// including the first. The stream ending is completion. The client checks
+// the concatenated length against `total_size`.
+message DownloadFileChunk {
+  uint64 total_size = 1;
+  bytes  data       = 2;
+}
+
+message ListDirRequest {
+  string vm_id = 1;  // VM name or id
+  string path  = 2;  // absolute directory path
+}
+
+message DirEntry {
+  string name       = 1;  // basename only, not the full path
+  bool   is_dir      = 2;
+  // A regular file's byte size. Always 0 for a directory.
+  uint64 size_bytes = 3;
+  string permissions = 4;  // ls-style, e.g. "-rw-r--r--" or "drwxr-xr-x"
+  int64  modified_at = 5;  // unix seconds, mtime
+  // "Added" is approximated with ctime (last inode/metadata change), so it
+  // also bumps on rename/chmod/chown.
+  int64  added_at    = 6;
+}
+
+message ListDirResponse {
+  repeated DirEntry entries = 1;
+  // True when the directory held more entries than the server's per-listing
+  // cap and `entries` is only the first slice of them (arbitrary order, not
+  // "the first N alphabetically"). A UI should say so rather than present a
+  // partial listing as complete.
+  bool truncated = 2;
+}
+
+message MkdirRequest {
+  string vm_id = 1;
+  string path  = 2;  // absolute path of the new directory (parent must exist)
+}
+message MkdirResponse {}
+
+message RenamePathRequest {
+  string vm_id    = 1;
+  string old_path = 2;
+  string new_path = 3;
+}
+message RenamePathResponse {}
+
+message DeletePathRequest {
+  string vm_id = 1;
+  string path  = 2;  // removed recursively if it's a directory
+}
+message DeletePathResponse {}
+
+message CopyPathRequest {
+  string vm_id    = 1;
+  string old_path = 2;
+  string new_path = 3;  // copied recursively if old_path is a directory
+}
+message CopyPathResponse {}
+
+// --- Snapshots ---
+
+message CreateSnapshotRequest {
+  string vm   = 1;   // source VM name or id (owned by the caller, must be running)
+  string name = 2;   // snapshot name (unique per owner; re-save bumps the version)
+}
+message CreateSnapshotResponse {
+  string snapshot_id = 1;
+  string name        = 2;
+  uint64 version     = 3;   // the version being captured
+  string status      = 4;   // "pending" until the capture is stored
+}
+
+message ListSnapshotsRequest {
+  // Org context (name or id); empty = the caller's active context.
+  // Snapshots never cross an org boundary.
+  string org = 1;
+}
+message ListSnapshotsResponse {
+  repeated SnapshotInfo snapshots = 1;
+}
+
+message GetSnapshotRequest {
+  string name = 1;   // snapshot name or id
+  string org  = 2;   // org context (name or id); empty = active context
+}
+message GetSnapshotResponse {
+  SnapshotInfo snapshot = 1;
+}
+
+message DeleteSnapshotRequest {
+  string name = 1;   // snapshot name or id
+  string org  = 2;   // org context (name or id); empty = active context
+}
+message DeleteSnapshotResponse {}
+
+message CreateVmFromSnapshotRequest {
+  string   snapshot = 1;   // snapshot name or id
+  string   name     = 2;   // new VM name (optional; auto-generated if empty)
+  VmConfig config   = 3;   // optional overrides
+  string   org      = 4;   // org context (name or id); empty = active context
+  // Isolation override, one-way. Same semantics as ForkVmRequest.isolated.
+  // The snapshot carries the `isolated` captured off its source VM at save
+  // time; true here forces the restore isolated on top of that, and the
+  // server computes `snapshot.isolated || isolated`. Never de-isolates.
+  bool     isolated = 5;
+}
+// Returns a CreateVmResponse, the same shape as CreateVm.
+
+message SnapshotInfo {
+  string snapshot_id      = 1;
+  string name             = 2;
+  uint64 version          = 3;   // current (latest ready) version; 0 = none yet
+  string status           = 4;   // "pending" | "ready" | "failed"
+  reserved 5, 6;
+  reserved "ready_replicas", "desired_replicas";
+  uint64 size_bytes       = 7;
+  int64  updated_at       = 8;   // epoch MILLISECONDS; moves with every new version
+  uint32 vcpu             = 9;
+  uint64 memory_bytes     = 10;
+  uint64 use_count        = 11;
+  // Wall-clock unix epoch MILLISECONDS the snapshot was first captured
+  // (`updated_at` above moves with every new version; this one does not).
+  int64  created_at       = 12;
+}
+
+// --- Checkpoints ---
+
+message CreateCheckpointRequest {
+  string vm   = 1;   // VM name or id (owned by the caller, must be running)
+  string name = 2;   // checkpoint name (unique per VM)
+}
+message CreateCheckpointResponse {
+  string checkpoint_id = 1;
+  string name          = 2;
+  string status        = 3;   // "pending" until the capture is stored
+}
+
+message ListCheckpointsRequest {
+  string vm = 1;   // VM name or id (owned by the caller)
+}
+message ListCheckpointsResponse {
+  repeated CheckpointInfo checkpoints = 1;
+}
+
+message DeleteCheckpointRequest {
+  string vm   = 1;   // VM name or id
+  string name = 2;   // checkpoint name or id
+}
+message DeleteCheckpointResponse {}
+
+message RestoreCheckpointRequest {
+  string vm   = 1;   // VM name or id
+  string name = 2;   // checkpoint name or id (must be ready and available)
+}
+message RestoreCheckpointResponse {}
+
+message CheckpointInfo {
+  string checkpoint_id = 1;
+  string name          = 2;
+  string status        = 3;   // "pending" | "ready" | "failed"
+  uint64 size_bytes    = 4;
+  int64  created_at    = 5;
+  string created_by    = 6;
+  // Restorable right now: `status == "ready"` AND the checkpoint is still on
+  // the VM's current host. Poll this before calling restore.
+  bool   available     = 7;
+}
+
+// --- Disks ---
+
+message CreateDiskRequest {
+  string name       = 1;
+  uint64 size_bytes = 2;  // disk size in bytes
+  // A disk is always created writable; only the attachment
+  // (AttachDiskRequest.read_only) can be read-only.
+  reserved 3;
+}
+
+message CreateDiskResponse {
+  string disk_id    = 1;
+  string name       = 2;
+  uint64 size_bytes = 3;
+  string status     = 4;
+  reserved 5;
+}
+
+message ListDisksRequest {}
+
+message ListDisksResponse {
+  repeated DiskInfo disks = 1;
+}
+
+message DiskInfo {
+  string disk_id    = 1;
+  string name       = 2;
+  uint64 size_bytes = 3;
+  string status     = 4;
+  reserved 5;
+  repeated DiskAttachment attachments = 6;
+  // A disk has no single mode; check DiskAttachment.mount_mode for a
+  // specific attachment's mode.
+  reserved 7;
+  // Wall-clock unix epoch MILLISECONDS the disk was created.
+  int64 created_at = 8;
+}
+
+message DiskAttachment {
+  string vm_id      = 1;
+  string vm_name    = 2;
+  string mount_path = 3;
+  string mount_mode = 4;  // "ro" or "rw"
+}
+
+message AttachDiskRequest {
+  string disk_id    = 1;
+  string vm_id      = 2;  // VM name or id
+  string mount_path = 3;
+  // Mount this attachment read-only. A disk is always created writable;
+  // this is the only place read-only is chosen. A disk can only be attached
+  // to one VM at a time (regardless of mode), so this request is rejected if
+  // the disk already has any attachment.
+  bool   read_only  = 4;
+}
+
+message AttachDiskResponse {}
+
+message DetachDiskRequest {
+  string disk_id = 1;
+  string vm_id   = 2;  // VM name or id
+}
+
+message DetachDiskResponse {}
+
+message DestroyDiskRequest {
+  string disk_id = 1;
+}
+
+message DestroyDiskResponse {}
+
+message SetAutoSuspendTimeoutRequest {
+  string vm_id        = 1;  // accepts VM name or id
+  uint32 timeout_secs = 2;  // 0 = disable
+}
+
+message SetAutoSuspendTimeoutResponse {}
+
+message SetAutoHibernateTimeoutRequest {
+  string vm_id        = 1;  // accepts VM name or id
+  uint32 timeout_secs = 2;  // 0 = disable
+}
+
+message SetAutoHibernateTimeoutResponse {}
+
+message SetBotProtectionRequest {
+  string vm_id   = 1; // name or id
+  bool   enabled = 2;
+}
+
+message SetBotProtectionResponse {}
+
+// --- API Keys ---
+
+message CreateApiKeyRequest {
+  string name            = 1;
+  uint64 expires_in_secs = 2;  // 0 = no expiry
+  // Org (by name) the key is fenced to; "" = your own org. Every key is
+  // scoped to exactly one org and never grants account-wide access.
+  string org             = 3;
+  // "member" (default): acts as you within the org. "org": userless service
+  // credential for the org's SHARED fleet only; requires org admin.
+  string kind            = 4;
+}
+
+message CreateApiKeyResponse {
+  string id      = 1;
+  string api_key = 2;  // raw key, shown once and never stored
+  int64  expires_at = 3;  // 0 = no expiry
+}
+
+message ListApiKeysRequest {}
+
+message ListApiKeysResponse {
+  repeated ApiKeyInfo keys = 1;
+}
+
+message ApiKeyInfo {
+  string id           = 1;
+  string name         = 2;
+  string key_prefix   = 3;
+  int64  created_at   = 4;
+  int64  last_used_at = 5;  // 0 = never
+  int64  expires_at   = 6;  // 0 = no expiry
+  string org          = 7;  // org name the key is fenced to
+  string kind         = 8;  // "member" | "org"
+}
+
+message DeleteApiKeyRequest {
+  string id = 1;
+}
+
+message DeleteApiKeyResponse {}
+
+// --- Organizations ---
+
+message ShareVmRequest {
+  string vm_id = 1;  // VM name or id (must be owned by the caller)
+}
+
+message ShareVmResponse {}
+
+message ListOrgsRequest {}
+
+message ListOrgsResponse {
+  repeated OrgSummary orgs = 1;
+  reserved 2;
+  // The caller's default org.
+  string default_org_id = 3;
+}
+message OrgSummary {
+  string id       = 1;
+  string name     = 2;  // display label (may be shared across orgs)
+  bool   is_admin = 3;  // caller is the org admin
+  string slug     = 4;  // unique machine key (used for resolution / `auth switch`)
+  // A user's own org is a normal org, selected by name like any other.
+}
+
+message GetOrgBillingRequest {
+  string org = 1;  // org name (caller must be a member)
+}
+message GetOrgBillingResponse {
+  string id           = 1;
+  string name         = 2;
+  bool   is_admin     = 3;  // caller is the org admin
+  // Shared VM-count cap (unset falls back to the platform default).
+  uint32 max_vms      = 4;
+  // The size a machine created in this org WITHOUT an explicit size gets:
+  // the org's stored default, else its quota, else the platform
+  // 2 vCPU / 8 GiB. For the ceiling, see ceiling_vcpu / ceiling_memory_bytes.
+  uint32 vcpu         = 5;
+  uint64 memory_bytes = 6;
+  // Non-destroyed VMs billed to the org, shared + private org-billed (the
+  // count enforced against max_vms).
+  uint32 vm_count     = 7;
+  // Per-VM billing line items (admin only; empty for plain members). This is
+  // management/billing visibility, never access: an admin sees that a
+  // private org-billed VM exists and who owns it, but cannot reach it.
+  repeated OrgBilledVm vms = 8;
+  // Credit balance in micro-units (1e-6) of `currency`. 0 for stripe orgs;
+  // only meaningful when billing_mode='credits'. Visible to every org member,
+  // unlike the per-VM lines above, which stay admin-only.
+  int64  balance_micro     = 9;
+  // 'stripe' (subscription) | 'credits' (usage-based).
+  string billing_mode      = 10;
+  // Usage accrued but not yet charged, in micro-units of `currency`.
+  // Display-only approximation; absent on stripe orgs and when pricing is
+  // unavailable.
+  optional int64 accruing_micro = 11;
+  // The org's billing currency, lower-case ISO 4217 ('eur' | 'usd').
+  string currency          = 12;
+  // The largest machine an explicit request in this org may ask for: the
+  // org quota, else the platform 4 vCPU / 16 GiB.
+  uint32 ceiling_vcpu         = 13;
+  uint64 ceiling_memory_bytes = 14;
+}
+
+message OrgBilledVm {
+  string name    = 1;
+  string owner   = 2;  // owner user_id (stable)
+  string status  = 3;
+  // Sizing lives in the org quota (GetOrgBillingResponse.vcpu/memory_bytes).
+  reserved 4;
+  reserved "shape";
+  string billing = 5;  // "shared" | "private"
+  // Human label for the owner (display name, else GitHub handle), resolved
+  // server-side. Empty when nothing better than the user_id is known, in
+  // which case fall back to `owner`.
+  string owner_name = 6;
+}
+
+// --- Usage and cost ---
+//
+// Costs are priced at the org's CURRENT rates over the window, from the same
+// per-machine meter the balance is charged from, so they track billing activity
+// closely but are an estimate: billing activity (ListBillingActivity) is what was
+// actually charged. Every money field is micro-units (1e-6) of `currency`.
+// A window is unix seconds, [since, until). Usage is metered in 15-minute
+// buckets, and a bucket counts when it starts inside the window. No window
+// is the calendar month an org is invoiced for, so label totals with the
+// window they cover.
+
+// Rates the costs were priced at, micro-units of `currency` per unit-hour.
+message UsageRates {
+  int64 vcpu_hour_micro     = 1;  // per vCPU-hour while running
+  int64 ram_gib_hour_micro  = 2;  // per GiB-hour of resident RAM (running or standby)
+  int64 disk_gib_hour_micro = 3;  // per GiB-hour of used disk (every state)
+}
+
+// Seconds a machine spent in each state over the window.
+message StateSeconds {
+  uint64 running    = 1;
+  uint64 standby    = 2;
+  uint64 hibernated = 3;
+  uint64 stopped    = 4;
+}
+
+// One machine's usage over a window.
+message VmUsage {
+  string vm_id        = 1;
+  string name         = 2;  // current name, or the last one seen if deleted
+  string owner        = 3;  // owner user_id; empty for machines no user owns
+  // Human label for the owner, resolved server-side. Empty when nothing
+  // better than the user_id is known: fall back to `owner`.
+  string owner_name   = 4;
+  string sharing      = 5;  // "shared" | "private"
+  // The machine's current status, or "deleted" once it no longer exists
+  // (its usage is kept for two years).
+  string status       = 6;
+  // Size now (or when last seen, if deleted).
+  uint32 vcpu         = 7;
+  uint64 memory_bytes = 8;
+  uint64 disk_bytes   = 9;
+  StateSeconds seconds = 10;
+  // What the cost is computed from, in the rates' units: vCPU-hours while
+  // running, GiB-hours of resident RAM while running or in standby, GiB-hours
+  // of used disk in every state. cost_micro is these times `rates`, rounded
+  // up per component.
+  double vcpu_hours     = 11;
+  double ram_gib_hours  = 12;
+  double disk_gib_hours = 13;
+  int64  cost_micro     = 14;
+  // All of this machine's usage in the window has been metered: the figures
+  // above won't grow. Metering lags by up to ~25 minutes, so a machine read
+  // right after it is deleted is not complete yet; one that still exists
+  // never is in a window that runs to now. Store a cost once this is true.
+  bool   complete       = 15;
+}
+
+message GetOrgUsageRequest {
+  // Org name or id; "" = your default org (for an API key: the key's org).
+  string org   = 1;
+  // Window start, unix seconds, inclusive. 0 = the 28 days before `until`.
+  int64  since = 2;
+  // Window end, unix seconds, exclusive. 0 = now; later than now is clamped.
+  // The window may span at most 366 days.
+  int64  until = 3;
+}
+message GetOrgUsageResponse {
+  string org_id       = 1;
+  string org          = 2;  // display name
+  int64  period_start = 3;  // the window resolved, unix seconds [start, end)
+  int64  period_end   = 4;
+  string currency     = 5;  // lower-case ISO 4217 ('eur' | 'usd')
+  UsageRates rates    = 6;
+  int64  total_cost_micro = 7;  // sum of the machines' cost_micro
+  // Every machine that used anything in the window, most expensive first,
+  // including machines deleted since.
+  repeated VmUsage vms = 8;
+  // Every machine above is complete, so the total won't grow.
+  bool   complete = 9;
+}
+
+message GetVmUsageRequest {
+  // Machine name or id. A machine that no longer exists is found in the
+  // usage history of `org`, by its id or a name it had; when several deleted
+  // machines had that name the call fails listing their ids.
+  string vm_id = 1;
+  // Window start, unix seconds, inclusive. 0 = since the machine was created
+  // (at most 366 days back).
+  int64  since = 2;
+  // Window end, unix seconds, exclusive. 0 = now (for a deleted machine:
+  // when it was last metered).
+  int64  until = 3;
+  // Org (name or id) whose usage history is searched when no existing
+  // machine matches; "" = your default org (for an API key: the key's org).
+  // Ignored for a machine that exists.
+  string org   = 4;
+}
+message GetVmUsageResponse {
+  int64  period_start = 1;
+  int64  period_end   = 2;
+  string currency     = 3;
+  UsageRates rates    = 4;
+  // All-zero seconds and cost when the machine used nothing in the window.
+  VmUsage usage       = 5;
+}
+
+message ListBillingActivityRequest {
+  string org        = 1;  // as GetOrgUsageRequest.org
+  // Optional window on created_at, unix seconds [since, until); both 0 = the
+  // whole history.
+  int64  since      = 2;
+  int64  until      = 3;
+  // The previous response's next_page_token, unchanged; "" = the newest page.
+  string page_token = 4;
+  // Entries per page; 0 = 500, at most 1000.
+  uint32 page_size  = 5;
+}
+message BillingActivityEntry {
+  string entry_id     = 1;
+  // 'usage_charge' (one org-wide charge per 15 minutes) | 'topup' |
+  // 'grant' | 'signup' | 'promo' | 'adjustment' | 'operator_credit'. New
+  // kinds may appear; show an unknown one as-is.
+  string kind         = 2;
+  int64  amount_micro = 3;  // signed: credits positive, charges negative
+  int64  created_at   = 4;  // unix seconds
+}
+message ListBillingActivityResponse {
+  string currency      = 1;
+  int64  balance_micro = 2;  // the org's balance now
+  repeated BillingActivityEntry entries = 3;  // newest first
+  // Pass as page_token for the next (older) page; "" = this was the last.
+  string next_page_token = 4;
+}
+
+message UnshareVmRequest {
+  string vm_id = 1;  // VM name or id (must be owned by the caller)
+}
+
+message UnshareVmResponse {}
+
+// --- Disaster recovery: scheduled VM disk backups ---
+
+message SetBackupScheduleRequest {
+  string vm             = 1;  // VM name or id
+  string schedule_kind  = 2;  // "cron" | "interval"
+  string schedule_value = 3;  // cron expr, or interval seconds as text
+  uint32 retention_secs = 4;
+}
+
+message SetBackupScheduleResponse {}
+
+message ClearBackupScheduleRequest {
+  string vm = 1;
+}
+
+message ClearBackupScheduleResponse {}
+
+message GetBackupScheduleRequest {
+  string vm = 1;
+}
+
+message GetBackupScheduleResponse {
+  bool   enabled        = 1;  // false = no schedule; remaining fields are zero
+  string schedule_kind  = 2;
+  string schedule_value = 3;
+  uint32 retention_secs = 4;
+  int64  next_backup_at = 5;  // unix ms
+  int64  last_backup_at = 6;  // unix ms; 0 = never
+}
+
+message ListBackupsRequest {
+  string vm = 1;
+}
+
+message BackupInfo {
+  string backup_id          = 1;
+  string status              = 2;  // "pending" | "ready" | "dedup" | "failed"
+  uint64 size_bytes          = 3;  // 0 for pending/dedup/failed
+  string checksum            = 4;  // sha256, hex; empty for pending/dedup/failed
+  string points_to_backup_id = 5;  // set iff status == "dedup"
+  int64  created_at          = 6;  // unix ms
+  int64  expires_at          = 7;  // unix ms
+}
+
+message ListBackupsResponse {
+  repeated BackupInfo backups = 1;
+}
+
+message TriggerBackupRequest {
+  string vm = 1;  // VM name or id
+}
+
+message TriggerBackupResponse {
+  string backup_id = 1;  // id of the freshly-queued 'pending' backup
+}
+
+message DeleteBackupRequest {
+  string vm        = 1;  // VM name or id
+  string backup_id = 2;
+}
+
+message DeleteBackupResponse {}
+
+message RestoreBackupRequest {
+  string vm        = 1;
+  string backup_id = 2;
+}
+
+message RestoreBackupResponse {}
+
+// The org's default backup schedule for new VMs. Always an "interval"
+// schedule; per-VM schedules can also use cron.
+message SetOrgBackupsDefaultRequest {
+  string org_id = 1;
+  // Both absent clears the org default (new VMs get no schedule). Present
+  // sets both together, since period/retention only make sense as a pair.
+  optional uint32 period_secs    = 2;
+  optional uint32 retention_secs = 3;
+}
+
+message SetOrgBackupsDefaultResponse {
+  bool   enabled        = 1;  // false = cleared; remaining fields are zero
+  uint32 period_secs    = 2;
+  uint32 retention_secs = 3;
+}
+
+message GetOrgBackupsDefaultRequest {
+  string org_id = 1;
+}
+
+message GetOrgBackupsDefaultResponse {
+  bool   enabled        = 1;  // false = no default; remaining fields are zero
+  uint32 period_secs    = 2;
+  uint32 retention_secs = 3;
+}
+
+message SetOrgMachineDefaultsRequest {
+  string org_id = 1;  // name or id; "" = your home org
+  // Both absent (or 0) clears the org default (default machines size at the
+  // org quota). Otherwise names a size class, like a create or resize: one
+  // dimension snaps to its class (vcpu 1 = 1 vCPU / 4 GiB); must be within
+  // the org quota ceiling and at or above the boot floor (512 MiB, 1 vCPU).
+  optional uint32 vcpu         = 2;
+  optional uint64 memory_bytes = 3;
+}
+
+message SetOrgMachineDefaultsResponse {}
+
+message GetOrgMachineDefaultsRequest {
+  string org_id = 1;  // name or id; "" = your home org
+}
+
+message ResizeVmRequest {
+  string vm_id        = 1;  // VM name or id
+  uint32 vcpu         = 2;  // names a size class (0 = derive from memory_bytes)
+  uint64 memory_bytes = 3;  // names a size class (0 = derive from vcpu)
+}
+
+message ResizeVmResponse {
+  uint32 vcpu         = 1;  // the size now persisted
+  uint64 memory_bytes = 2;
+  bool   rebooted     = 3;  // the machine was running and was rebooted to apply it
+}
+
+message GetOrgMachineDefaultsResponse {
+  bool   set                  = 1;  // an explicit org default is stored
+  uint32 vcpu                 = 2;  // effective default (= ceiling when unset)
+  uint64 memory_bytes         = 3;
+  uint32 ceiling_vcpu         = 4;  // the org quota, for gating size options
+  uint64 ceiling_memory_bytes = 5;
+}
+
+// --- Org creation & membership ---
+
+message CreateOrgRequest {
+  string name = 1;
+}
+message CreateOrgResponse {
+  string id   = 1;
+  string name = 2;
+}
+
+message RenameOrgRequest {
+  string org_id = 1;  // name or id; "" = your home org
+  string name    = 2;
+}
+message RenameOrgResponse {}
+
+message GetOrgMembersRequest {
+  string org_id = 1;  // name or id; "" = your home org
+}
+message GetOrgMembersResponse {
+  repeated OrgMemberInfo members = 1;
+  // Populated for org admins only; empty for a plain member.
+  repeated OrgInviteInfo invites = 2;
+}
+message OrgMemberInfo {
+  string user_id         = 1;
+  string role            = 2;  // "owner" | "admin" | "member"
+  string display_name    = 3;  // "" when the member has none set
+  string github_username = 4;  // "" when not signed in via GitHub
+}
+message OrgInviteInfo {
+  string token      = 1;
+  string email      = 2;
+  string accept_url = 3;
+  int64  created_at = 4;  // unix epoch seconds
+  int64  expires_at = 5;  // unix epoch seconds
+  string role        = 6;  // "admin" | "member", the role the invitee lands with
+}
+
+message InviteOrgMemberRequest {
+  string org_id = 1;  // name or id; "" = your home org
+  string email   = 2;
+  // "member" (default) | "admin".
+  string role    = 3;
+}
+message InviteOrgMemberResponse {
+  string token      = 1;
+  string accept_url = 2;
+  int64  expires_at = 3;  // unix epoch seconds
+  int64  created_at = 4;  // unix epoch seconds
+}
+
+message RevokeOrgInviteRequest {
+  string token = 1;
+}
+message RevokeOrgInviteResponse {}
+
+message RemoveOrgMemberRequest {
+  string org_id  = 1;  // name or id; "" = your home org
+  string user_id = 2;
+}
+message RemoveOrgMemberResponse {}
+
+message SetOrgMemberRoleRequest {
+  string org_id  = 1;  // name or id; "" = your home org
+  string user_id = 2;
+  string role    = 3;  // "admin" | "member"
+}
+message SetOrgMemberRoleResponse {}
+
+// --- Teams ---
+
+message TeamInfo {
+  string id                  = 1;
+  string org_id              = 2;
+  string name                = 3;
+  string created_by_user_id  = 4;  // "" if the creating user no longer exists
+  int64  created_at          = 5;  // unix epoch milliseconds
+  bool   is_admin            = 6;  // caller has team-admin authority
+  repeated TeamMemberInfo members = 7;
+  string default_snapshot_id = 8;  // "" = no default set
+}
+message TeamMemberInfo {
+  string user_id         = 1;
+  string role            = 2;  // "admin" | "member"
+  string display_name    = 3;
+  string github_username = 4;
+  int64  added_at        = 5;  // unix epoch milliseconds
+}
+
+message ListTeamsRequest {
+  string org_id = 1;  // name or id; "" = your home org
+}
+message ListTeamsResponse {
+  repeated TeamInfo teams = 1;
+}
+
+message GetTeamRequest {
+  string team_id = 1;
+}
+
+message CreateTeamRequest {
+  string org_id = 1;  // name or id; "" = your home org
+  string name    = 2;
+}
+
+message RenameTeamRequest {
+  string team_id = 1;
+  string name    = 2;
+}
+message RenameTeamResponse {}
+
+message DestroyTeamRequest {
+  string team_id = 1;
+}
+message DestroyTeamResponse {}
+
+message AddTeamMemberRequest {
+  string team_id = 1;
+  string user_id = 2;  // must already be a member of the team's org
+}
+message AddTeamMemberResponse {}
+
+message RemoveTeamMemberRequest {
+  string team_id = 1;
+  string user_id = 2;
+}
+message RemoveTeamMemberResponse {}
+
+message SetTeamMemberRoleRequest {
+  string team_id = 1;
+  string user_id = 2;
+  string role    = 3;  // "admin" | "member"
+}
+message SetTeamMemberRoleResponse {}
+
+message SetTeamDefaultSnapshotRequest {
+  string team_id    = 1;
+  // "" clears the default. Must be a snapshot the caller can access AND
+  // shared (see the RPC comment above). An unshared snapshot is refused.
+  string snapshot_id = 2;
+}
+message SetTeamDefaultSnapshotResponse {}

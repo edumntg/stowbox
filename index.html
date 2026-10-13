@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stowbox</title>
+    <link rel="icon" href="data:," />
+    <script>
+      // Paint the right background before the first frame; no flash on launch.
+      try {
+        var t = localStorage.getItem("stowbox.theme");
+        if (t !== "light" && t !== "dark") t = "dark";
+        document.documentElement.dataset.theme = t;
+      } catch (e) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
+    <style>
+      html[data-theme="dark"] { background: #151515; color-scheme: dark; }
+      html[data-theme="light"] { background: #f4f2ee; color-scheme: light; }
+      body { margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
