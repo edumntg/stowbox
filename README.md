@@ -113,9 +113,10 @@ standby and resume are instant, hibernate takes 5 to 6 s, wake about 0.1 s,
 and dropping an exec stream kills the whole remote process group within
 half a second. `GetOrgBilling` is refused for API keys; the sidebar balance
 comes from `Whoami`. The rate card is in the org's currency, which was USD
-there, so the published EUR card is only a fallback. Pausing a box in the
-first seconds after waking it from hibernation can make the next resume
-fail with an Internal error; waiting a moment and retrying works.
+there, so the published EUR card is only a fallback. Pausing a box within
+about 300 ms of waking it from hibernation, then resuming within about
+250 ms, fails the first resume with an Internal error; the second attempt
+works and nothing is lost. Details in `docs/boxd-resume-after-wake-race.md`.
 
 ## Not yet
 
