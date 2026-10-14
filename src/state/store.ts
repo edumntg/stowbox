@@ -44,11 +44,14 @@ interface AppState {
   ui: {
     theme: Theme;
     selection: Selection;
+    tabs: Selection[];
+    sidebar: boolean;
     inspector: boolean;
     boxTab: BoxTab;
     dialog: Dialog;
     toasts: Toast[];
     collapsed: Record<string, boolean>;
+    filter: string;
   };
 }
 
@@ -77,13 +80,36 @@ export const [state, setState] = createStore<AppState>({
   ui: {
     theme: initialTheme(),
     selection: { kind: "none" },
+    tabs: [],
+    sidebar: true,
     inspector: true,
     boxTab: "agents",
     dialog: null,
     toasts: [],
     collapsed: {},
+    filter: "",
   },
 });
+
+const sameSel = (a: Selection, b: Selection) => a.kind === b.kind && (a.kind === "none" || (a as { id: string }).id === (b as { id: string }).id);
+
+function loadTabs(): Selection[] {
+  try {
+    const raw = localStorage.getItem("stowbox.tabs");
+    const parsed = raw ? (JSON.parse(raw) as Selection[]) : [];
+    return Array.isArray(parsed) ? parsed.filter((t) => t && (t.kind === "box" || t.kind === "agent") && typeof (t as { id: unknown }).id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTabs(tabs: Selection[]) {
+  try {
+    localStorage.setItem("stowbox.tabs", JSON.stringify(tabs));
+  } catch {
+    /* private mode: tabs just do not persist */
+  }
+}
 
 document.documentElement.dataset.theme = state.ui.theme;
 
@@ -165,6 +191,9 @@ export const actions = {
     setState({ account, agents });
     api.rates().then((rateCard) => setState("rateCard", rateCard)).catch(() => undefined);
     await actions.refreshMachines();
+    if (state.ui.tabs.length === 0) setState("ui", "tabs", loadTabs());
+    actions.pruneTabs();
+    if (state.ui.selection.kind === "none" && state.ui.tabs.length > 0) actions.select(state.ui.tabs[state.ui.tabs.length - 1]);
     window.clearInterval(pollTimer);
     pollTimer = window.setInterval(() => {
       if (document.visibilityState === "visible" && state.phase === "ready") void actions.refreshMachines();
@@ -191,16 +220,15 @@ export const actions = {
       live: {},
       provider: await api.providerStatus(),
     });
-    setState("ui", { selection: { kind: "none" }, dialog: null });
+    setState("ui", { selection: { kind: "none" }, dialog: null, tabs: [] });
+    saveTabs([]);
   },
 
   async refreshMachines() {
     try {
       const machines = await api.listMachines();
       setState({ machines, machinesLoaded: true, machinesError: "" });
-      if (state.ui.selection.kind === "box" && !machines.some((m) => m.id === (state.ui.selection as { id: string }).id)) {
-        setState("ui", "selection", { kind: "none" });
-      }
+      actions.pruneTabs();
     } catch (e) {
       setState({ machinesError: message(e), machinesLoaded: true });
     }
@@ -215,13 +243,52 @@ export const actions = {
   },
 
   select(sel: Selection) {
+    if (sel.kind !== "none" && !state.ui.tabs.some((t) => sameSel(t, sel))) {
+      setState("ui", "tabs", (tabs) => [...tabs, sel]);
+      saveTabs(state.ui.tabs);
+    }
     setState("ui", "selection", sel);
     if (sel.kind === "agent") void actions.loadTranscript(sel.id);
-    if (sel.kind === "box") setState("ui", "boxTab", "agents");
+    if (sel.kind === "box" && !(state.ui.selection.kind === "box" && state.ui.selection.id === sel.id)) setState("ui", "boxTab", "agents");
+  },
+
+  closeTab(sel: Selection) {
+    const tabs = state.ui.tabs;
+    const i = tabs.findIndex((t) => sameSel(t, sel));
+    if (i < 0) return;
+    const next = tabs.filter((_, j) => j !== i);
+    setState("ui", "tabs", next);
+    saveTabs(next);
+    if (sameSel(state.ui.selection, sel)) {
+      const neighbour = next[Math.min(i, next.length - 1)];
+      setState("ui", "selection", neighbour ?? { kind: "none" });
+      if (neighbour?.kind === "agent") void actions.loadTranscript(neighbour.id);
+    }
+  },
+
+  /** Drops tabs whose box or agent no longer exists. */
+  pruneTabs() {
+    const ok = (t: Selection) =>
+      (t.kind === "box" && state.machines.some((m) => m.id === t.id)) || (t.kind === "agent" && state.agents.some((a) => a.id === t.id));
+    const next = state.ui.tabs.filter(ok);
+    if (next.length !== state.ui.tabs.length) {
+      setState("ui", "tabs", next);
+      saveTabs(next);
+    }
+    if (state.ui.selection.kind !== "none" && !ok(state.ui.selection)) setState("ui", "selection", next[0] ?? { kind: "none" });
   },
 
   openBoxTab(id: string, tab: BoxTab) {
-    setState("ui", { selection: { kind: "box", id }, boxTab: tab });
+    actions.select({ kind: "box", id });
+    setState("ui", "boxTab", tab);
+  },
+
+  toggleSidebar() {
+    setState("ui", "sidebar", (v) => !v);
+  },
+
+  setFilter(filter: string) {
+    setState("ui", "filter", filter);
   },
 
   async loadTranscript(id: string) {
@@ -265,7 +332,7 @@ export const actions = {
       await api.machinePower(id, action);
       if (action === "destroy") {
         setState("machines", (ms) => ms.filter((m) => m.id !== id));
-        if (state.ui.selection.kind === "box" && state.ui.selection.id === id) setState("ui", "selection", { kind: "none" });
+        actions.closeTab({ kind: "box", id });
         actions.toast("Box deleted.", "info");
       }
       // The provider answers once the transition is underway; read back now
@@ -361,9 +428,7 @@ export const actions = {
       run: async () => {
         await api.deleteAgent(a.id);
         setState("agents", (as) => as.filter((x) => x.id !== a.id));
-        if (state.ui.selection.kind === "agent" && state.ui.selection.id === a.id) {
-          setState("ui", "selection", { kind: "box", id: a.machineId });
-        }
+        actions.closeTab({ kind: "agent", id: a.id });
       },
     });
   },

@@ -31,9 +31,9 @@ export default function Onboarding() {
           void connect();
         }}
       >
-        <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-          <BrandMark />
-          <span class="brand-name">Stowbox</span>
+        <div style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--text-xs)", "font-weight": "500" }}>
+          <BrandMark size={16} />
+          <span>Stowbox</span>
         </div>
         <h1>Connect your boxd account</h1>
         <p>
@@ -55,7 +55,7 @@ export default function Onboarding() {
             />
             <button type="button" class="icon-btn" title={reveal() ? "Hide" : "Show"} aria-label="Toggle key visibility" onClick={() => setReveal(!reveal())}>
               <Show when={reveal()} fallback={<I.Eye />}>
-                <I.EyeSlash />
+                <I.EyeOff />
               </Show>
             </button>
           </div>
@@ -70,7 +70,7 @@ export default function Onboarding() {
         <Show when={error()}>
           <div class="form-error">{error()}</div>
         </Show>
-        <div class="modal-actions" style={{ "justify-content": "flex-start" }}>
+        <div class="dialog-actions" style={{ "justify-content": "flex-start" }}>
           <button type="submit" class="btn primary" disabled={!key().trim() || busy()}>
             <I.Key /> {busy() ? "Checking with boxd…" : "Connect"}
           </button>

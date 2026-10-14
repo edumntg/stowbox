@@ -1,5 +1,5 @@
-import { Match, Show, Switch } from "solid-js";
-import { actions, selectedAgent, selectedMachine, state } from "../state/store";
+import { For, Match, Show, Switch } from "solid-js";
+import { actions, agentById, machineById, selectedAgent, selectedMachine, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import AgentView from "./AgentView";
 import BoxView from "./BoxView";
@@ -8,11 +8,94 @@ import Inspector from "./Inspector";
 import Onboarding from "./Onboarding";
 import Sidebar from "./Sidebar";
 import Toasts from "./Toasts";
+import { AgentDot, BrandMark, Dot, isMac } from "./common";
+import { money } from "./format";
+
+const Tab = (p: { sel: Selection }) => {
+  const active = () => state.ui.selection.kind === p.sel.kind && (state.ui.selection as { id?: string }).id === (p.sel as { id?: string }).id;
+  const label = () => {
+    if (p.sel.kind === "box") return machineById(p.sel.id)?.name ?? "box";
+    if (p.sel.kind === "agent") return agentById(p.sel.id)?.title || "New agent";
+    return "";
+  };
+  return (
+    <div class="tab" classList={{ active: active() }} role="tab" aria-selected={active()}>
+      <button class="tab-label" style={{ display: "flex", "align-items": "center", gap: "7px", "min-width": 0 }} onClick={() => actions.select(p.sel)} title={label()}>
+        <Switch>
+          <Match when={p.sel.kind === "box" && machineById((p.sel as { id: string }).id)}>{(m) => <Dot status={m().status} />}</Match>
+          <Match when={p.sel.kind === "agent" && agentById((p.sel as { id: string }).id)}>{(a) => <AgentDot status={a().status} />}</Match>
+        </Switch>
+        <Show when={p.sel.kind === "agent"} fallback={<I.Box />}>
+          <I.Chat />
+        </Show>
+        <span class="tab-label">{label()}</span>
+      </button>
+      <button class="tab-close" aria-label={`Close ${label()}`} onClick={() => actions.closeTab(p.sel)}>
+        <I.Close />
+      </button>
+    </div>
+  );
+};
+
+const Topbar = () => (
+  <header class="topbar" classList={{ mac: isMac }} data-tauri-drag-region>
+    <button class="icon-btn" title={state.ui.sidebar ? "Hide sidebar" : "Show sidebar"} aria-label="Toggle sidebar" aria-pressed={state.ui.sidebar} onClick={() => actions.toggleSidebar()}>
+      <I.PanelLeft />
+    </button>
+    <span class="topbar-title" data-tauri-drag-region>
+      <BrandMark />
+      Stowbox
+    </span>
+    <div class="topbar-right">
+      <button class="icon-btn" title={state.ui.theme === "dark" ? "Light theme" : "Dark theme"} aria-label="Toggle theme" onClick={() => actions.setTheme(state.ui.theme === "dark" ? "light" : "dark")}>
+        <Show when={state.ui.theme === "dark"} fallback={<I.Moon />}>
+          <I.Sun />
+        </Show>
+      </button>
+      <button class="icon-btn" title="Settings" aria-label="Open settings" onClick={() => actions.openDialog({ kind: "settings" })}>
+        <I.Settings />
+      </button>
+      <button class="icon-btn" title={state.ui.inspector ? "Hide box panel" : "Show box panel"} aria-label="Toggle box panel" aria-pressed={state.ui.inspector} onClick={() => actions.toggleInspector()}>
+        <I.PanelRight />
+      </button>
+    </div>
+  </header>
+);
+
+const Statusbar = () => {
+  const running = () => state.machines.filter((m) => m.status === "running" || m.status === "suspended");
+  const hourly = () => running().reduce((s, m) => s + m.estHourlyMicro, 0);
+  const currency = () => state.machines[0]?.currency ?? state.account?.billing.currency ?? "usd";
+  return (
+    <footer class="statusbar">
+      <Show when={state.account}>
+        {(a) => (
+          <>
+            <span>{a().displayName}</span>
+            <Show when={a().billing.mode === "credits"}>
+              <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
+                {money(a().billing.balanceMicro, a().billing.currency)} balance
+              </span>
+            </Show>
+          </>
+        )}
+      </Show>
+      <span class="spacer" />
+      <span>
+        <span class="dot" data-state={running().length ? "running" : "stopped"} />
+        {running().length} running or standby
+      </span>
+      <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
+        {money(hourly(), currency())}/h est.
+      </span>
+    </footer>
+  );
+};
 
 const EmptyMain = () => (
-  <div class="empty-main">
-    <h2>Nothing selected</h2>
-    <span>Pick a box or an agent on the left. Boxes are persistent VMs; agents are Claude Code or Codex sessions running inside them.</span>
+  <div class="empty">
+    <h2>Nothing open</h2>
+    <span>Pick a box or an agent on the left. Boxes are persistent VMs; agents are Claude Code or Codex sessions inside them.</span>
     <div class="actions">
       <button class="btn" onClick={() => actions.openDialog({ kind: "new-box" })}>
         <I.Plus /> New box
@@ -27,19 +110,33 @@ const EmptyMain = () => (
 const Shell = () => {
   const agent = selectedAgent;
   const machine = selectedMachine;
-  const inspector = () => state.ui.inspector && !!agent();
+  const panel = () => state.ui.inspector && !!agent();
   return (
-    <div class="shell" classList={{ "has-inspector": inspector() }}>
-      <Sidebar />
-      <main class="main">
-        <Switch fallback={<EmptyMain />}>
-          <Match when={agent()}>{(a) => <AgentView agent={a()} />}</Match>
-          <Match when={machine()}>{(m) => <BoxView machine={m()} />}</Match>
-        </Switch>
-      </main>
-      <Show when={inspector()}>
-        <Inspector agent={agent()!} />
-      </Show>
+    <div class="app">
+      <Topbar />
+      <div class="body" classList={{ "has-panel": panel(), "no-sidebar": !state.ui.sidebar }}>
+        <Show when={state.ui.sidebar}>
+          <Sidebar />
+        </Show>
+        <main class="main">
+          <div class="tabstrip" role="tablist" aria-label="Open items">
+            <For each={state.ui.tabs}>{(t) => <Tab sel={t} />}</For>
+            <button class="tab-add" title="New agent" aria-label="New agent" onClick={() => actions.openDialog({ kind: "new-agent" })} disabled={state.machines.length === 0}>
+              <I.Plus />
+            </button>
+          </div>
+          <div class="content">
+            <Switch fallback={<EmptyMain />}>
+              <Match when={agent()}>{(a) => <AgentView agent={a()} />}</Match>
+              <Match when={machine()}>{(m) => <BoxView machine={m()} />}</Match>
+            </Switch>
+          </div>
+        </main>
+        <Show when={panel()}>
+          <Inspector agent={agent()!} />
+        </Show>
+      </div>
+      <Statusbar />
     </div>
   );
 };

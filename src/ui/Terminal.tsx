@@ -27,10 +27,10 @@ export default function Terminal(p: { machine: string; key?: string }) {
       cursorBlink: true,
       scrollback: 5000,
       theme: {
-        background: css.getPropertyValue("--term-bg").trim() || "#121212",
-        foreground: "#e6e6e6",
-        cursor: "#f2b43c",
-        selectionBackground: "rgba(242, 180, 60, 0.3)",
+        background: css.getPropertyValue("--terminal").trim() || "#0a0a0a",
+        foreground: "#e5e5e5",
+        cursor: "#fafafa",
+        selectionBackground: "rgba(255, 255, 255, 0.22)",
       },
     });
     const fit = new FitAddon();

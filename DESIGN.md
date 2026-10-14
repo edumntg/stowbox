@@ -1,49 +1,69 @@
 # Stowbox design direction
 
 Reading: a desktop cockpit for developers who run coding agents in cloud
-boxes. Dense, quiet, dark by default like the tools it sits next to, with one
-warm accent for the thing that needs the person. Dial: ENERGY 2 / RHYTHM 1 /
-MOTION 1.
+boxes, built to sit next to Orca and feel like the same family of tool:
+monochrome, dense, quiet. Dial: ENERGY 1 / RHYTHM 1 / MOTION 1. The visual
+language follows Orca by the owner's explicit request; the structure is
+Stowbox's own.
 
-## Identity
+## Palette
 
-- **The box is the motif.** Every status marker is a small square, not a dot:
-  machine state in the sidebar, agent state in rows and headers, the app mark
-  itself (a box seen from above with an amber lid). One shape, repeated.
-- **Palette.** Two cores and one accent. Dark: charcoal surfaces
-  (`#151515` → `#333333`) with off-white text. Light: warm paper
-  (`#f4f2ee` → `#ffffff`) with near-black text. Accent: cargo amber
-  (`#f2b43c` dark, `#b8780a` light), the colour of shipping labels and
-  warehouse tape, used only where the person is wanted: agents that finished
-  and wait for review, the primary button, the text cursor in the terminal.
-- **Status colours are semantic, not palette.** Green running, blue standby,
-  slate hibernated, grey stopped, red failed. They mark real state and nothing
-  else; no glow, no pulse.
-- **Type.** The system UI stack and the system monospace stack. A desktop
-  tool should feel native and start instantly; the person's own fonts cost
-  nothing to load. Base 13px, ids and money in monospace.
-- **Density.** 30px rows in the sidebar, 36px in tables, 44px headers. The
-  window is a workbench, not a page.
+Two scales and nothing else. Dark: coal black surfaces `#0a0a0a` (canvas),
+`#171717` (sidebar, cards, popovers), `#262626` (hover, muted), `#404040`
+(pressed), borders at 7% white, text `#fafafa` with `#a1a1a1` for secondary.
+Light: white canvas, `#fafafa` sidebar, `#f5f5f5` muted, `#e5e5e5` borders,
+text `#0a0a0a` with `#737373` secondary. Primary buttons invert: light text
+on `#171717`, or dark text on `#e5e5e5`.
+
+Colour means state and only state:
+
+- green: a box running, an agent working, a tool call in progress, a diff
+  line added
+- orange: standby, hibernated, pending, and an agent that finished and
+  waits for the person
+- red: failed, a destructive button on hover, a diff line removed
+- grey: stopped, idle
+
+No accent colour on chrome. The focus ring is a neutral grey at 50%.
+
+## Type and shape
+
+Geist (bundled, OFL) at 13px body, 12px in rows and controls, 11px for
+secondary lines, 10px uppercase with 0.08em tracking for section titles.
+System monospace for ids, money, commands and the terminal. Letter-spacing
+0.01em on the body, as Orca sets it.
+
+Radius scale from a 10px base: 6px rows and small controls, 8px buttons,
+inputs and cards, 10px dialogs, 14px the composer. Borders are 1px, never
+shadows, except the floating shadow under dialogs and toasts.
 
 ## Layout
 
-Three columns, built around the two decisions the person makes here: *which
-agent needs me* and *what is this costing*.
+- A 38px top bar with the mark, the app name and the panel toggles. On
+  macOS it is the title bar: traffic lights sit in it.
+- Left sidebar (260px): BOXES header with count and actions, a search field,
+  box rows with a 7px state dot, name, and a second line with status and
+  size, cost per hour on the right. Agents nest under an AGENTS header with
+  their status and relative time.
+- Main column: a tab strip of open boxes and agents, each with its state
+  dot, icon and close control, then the view.
+- Right panel (280px) when an agent is open: a toolbar of icon buttons, the
+  box card with the hourly estimate and power controls, the session facts.
+- A 24px status bar: account, balance, how many boxes are running and the
+  combined hourly estimate.
 
-- Left: boxes, each with its agents nested under it. Size and live €/h on
-  every row; balance at the top.
-- Centre: the selected agent's conversation, or the selected box with its
-  Agents, Terminal and Details tabs.
-- Right (when an agent is selected): the box behind it, with power controls
-  and the hourly estimate, so pausing a box never means leaving the chat.
+## Icons
+
+Lucide, 1.75px stroke, 14 to 16px, inlined per glyph. The app mark is one
+cube drawn with the same stroke.
 
 ## Motion
 
-Hover and focus states, a rotating caret, nothing on a loop. Liveness is
-shown by content changing (streaming text, a status label, an elapsed cost),
-not by animation.
+150ms background and colour transitions on hover, a 150ms rotate on the
+disclosure caret, 160ms pop-in on dialogs and toasts. Hover reveals row
+controls; touch devices always show them. Nothing loops.
 
 ## Copy
 
-Short, specific, no marketing words. Empty states say why they are empty and
-what fills them. Errors carry the provider's message verbatim.
+Short, specific, no marketing words. Empty states say why they are empty
+and what fills them. Errors carry the provider's message verbatim.

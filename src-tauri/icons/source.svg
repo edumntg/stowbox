@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <rect width="1024" height="1024" rx="224" fill="#151515"/>
-  <!-- A box seen from above: lid flap in amber, body in off-white. -->
-  <path d="M232 400 L512 272 L792 400 L512 528 Z" fill="#f2b43c"/>
-  <path d="M232 400 L512 528 L512 824 L232 696 Z" fill="#ececec"/>
-  <path d="M792 400 L512 528 L512 824 L792 696 Z" fill="#b9b9b9"/>
-  <path d="M372 336 L652 464 L652 560 L372 432 Z" fill="#151515" opacity="0.18"/>
+  <rect width="1024" height="1024" rx="232" fill="#0a0a0a"/>
+  <!-- One cube, one stroke weight: the box, nothing else. -->
+  <g fill="none" stroke="#fafafa" stroke-width="54" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M512 232 L772 372 L772 652 L512 792 L252 652 L252 372 Z"/>
+    <path d="M252 372 L512 512 L772 372"/>
+    <path d="M512 512 L512 792"/>
+  </g>
 </svg>

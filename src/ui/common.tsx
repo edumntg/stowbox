@@ -1,9 +1,9 @@
-import { For, Show } from "solid-js";
+import { For } from "solid-js";
 import type { AgentStatus, Machine, MachineStatus, PowerAction } from "../bridge/types";
 import { actions, state } from "../state/store";
 import * as I from "../icons";
 
-export function squareState(s: MachineStatus): string {
+export function dotState(s: MachineStatus): string {
   switch (s) {
     case "running":
       return "running";
@@ -22,7 +22,7 @@ export function squareState(s: MachineStatus): string {
   }
 }
 
-export function agentSquareState(s: AgentStatus): string {
+export function agentDotState(s: AgentStatus): string {
   switch (s.kind) {
     case "starting":
     case "thinking":
@@ -39,15 +39,15 @@ export function agentSquareState(s: AgentStatus): string {
   }
 }
 
-export const StatusSquare = (p: { status: MachineStatus }) => <span class="sq" data-state={squareState(p.status)} />;
-export const AgentSquare = (p: { status: AgentStatus }) => <span class="sq" data-state={agentSquareState(p.status)} />;
+export const Dot = (p: { status: MachineStatus }) => <span class="dot" data-state={dotState(p.status)} />;
+export const AgentDot = (p: { status: AgentStatus }) => <span class="dot" data-state={agentDotState(p.status)} />;
 
-/** The app mark: a box seen from above, lid in the accent colour. */
-export const BrandMark = () => (
-  <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M3 8l9-4 9 4-9 4z" fill="currentColor" />
-    <path d="M3 8l9 4v9l-9-4z" fill="currentColor" opacity="0.55" />
-    <path d="M21 8l-9 4v9l9-4z" fill="currentColor" opacity="0.35" />
+/** The app mark: one cube, one stroke. */
+export const BrandMark = (p: { size?: number }) => (
+  <svg class="brand-mark" viewBox="0 0 24 24" width={p.size ?? 15} height={p.size ?? 15} fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+    <path d="M12 3l7.5 4.2v8.6L12 21l-7.5-5.2V7.2z" />
+    <path d="M4.5 7.2 12 11.4l7.5-4.2" />
+    <path d="M12 11.4V21" />
   </svg>
 );
 
@@ -63,19 +63,19 @@ export function powerButtons(m: Machine): PowerButton[] {
     case "running":
       return [
         { action: "pause", label: "Standby", icon: I.Pause, title: "Keep memory warm, stop paying for vCPU" },
-        { action: "hibernate", label: "Hibernate", icon: I.Hibernate, title: "Write memory to disk, pay for disk only" },
+        { action: "hibernate", label: "Hibernate", icon: I.Moon, title: "Write memory to disk, pay for disk only" },
         { action: "stop", label: "Stop", icon: I.Stop, title: "Stop the machine; processes are lost, disk stays" },
         { action: "reboot", label: "Reboot", icon: I.Refresh, title: "Cold restart" },
       ];
     case "suspended":
       return [
         { action: "resume", label: "Resume", icon: I.Play, title: "Resume from standby" },
-        { action: "hibernate", label: "Hibernate", icon: I.Hibernate, title: "Write memory to disk, pay for disk only" },
+        { action: "hibernate", label: "Hibernate", icon: I.Moon, title: "Write memory to disk, pay for disk only" },
         { action: "stop", label: "Stop", icon: I.Stop, title: "Stop the machine" },
       ];
     case "hibernated":
       return [
-        { action: "wake", label: "Wake", icon: I.Wake, title: "Wake with processes intact" },
+        { action: "wake", label: "Wake", icon: I.Sun, title: "Wake with processes intact" },
         { action: "stop", label: "Stop", icon: I.Stop, title: "Stop the machine" },
       ];
     case "stopped":
@@ -87,12 +87,12 @@ export function powerButtons(m: Machine): PowerButton[] {
   }
 }
 
-export const PowerActions = (p: { machine: Machine; quiet?: boolean }) => {
+export const PowerActions = (p: { machine: Machine; ghost?: boolean; size?: "sm" }) => {
   const busy = () => !!state.pending[p.machine.id];
   return (
     <For each={powerButtons(p.machine)}>
       {(b) => (
-        <button class="btn" classList={{ quiet: !!p.quiet }} title={b.title} disabled={busy()} onClick={() => void actions.power(p.machine.id, b.action)}>
+        <button class="btn" classList={{ ghost: !!p.ghost, sm: p.size === "sm" }} title={b.title} disabled={busy()} onClick={() => void actions.power(p.machine.id, b.action)}>
           <b.icon />
           {b.label}
         </button>
@@ -101,8 +101,4 @@ export const PowerActions = (p: { machine: Machine; quiet?: boolean }) => {
   );
 };
 
-export const Busy = (p: { when: boolean; label?: string }) => (
-  <Show when={p.when}>
-    <span class="faint">{p.label ?? "Working…"}</span>
-  </Show>
-);
+export const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);

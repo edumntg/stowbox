@@ -2,7 +2,8 @@ import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
 import type { AgentMeta } from "../bridge/types";
 import { actions, machineById, state } from "../state/store";
 import * as I from "../icons";
-import { AgentSquare, StatusSquare } from "./common";
+import { AgentDot, Dot } from "./common";
+import { diffFor } from "./diff";
 import { agentStatusLabel, duration, isBusy, statusLabel, tokens, usd } from "./format";
 import { renderMarkdown } from "./markdown";
 import { toItems, toolSummary, type Item } from "./transcript";
@@ -10,18 +11,30 @@ import { toItems, toolSummary, type Item } from "./transcript";
 const ToolCard = (p: { item: Extract<Item, { kind: "tool" }> }) => {
   const summary = () => toolSummary(p.item.name, p.item.input);
   const stateLabel = () => (p.item.result === undefined ? "running" : p.item.isError ? "error" : "done");
+  const diff = createMemo(() => diffFor(p.item.name, p.item.input));
+  const Icon = () => (diff() ? <I.FileDiff /> : p.item.name === "Bash" || p.item.name === "command" ? <I.Terminal /> : <I.Wrench />);
   return (
-    <details class="t-tool" classList={{ error: !!p.item.isError }}>
+    <details class="tool" open={!!diff()}>
       <summary>
-        <span class="name">{p.item.name}</span>
-        <span class="cmd mono">{summary()}</span>
-        <span class="state">{stateLabel()}</span>
+        <Icon />
+        <span class="tool-name">{p.item.name}</span>
+        <span class="tool-summary mono">{summary()}</span>
+        <span class="tool-state" data-state={stateLabel()}>
+          {stateLabel()}
+        </span>
       </summary>
-      <Show when={p.item.input && !summary()}>
-        <pre class="mono">{JSON.stringify(p.item.input, null, 2)}</pre>
+      <Show when={diff()}>
+        {(lines) => (
+          <div class="diff">
+            <For each={lines()}>{(l) => <div class={l.kind}>{l.text}</div>}</For>
+          </div>
+        )}
       </Show>
-      <Show when={p.item.result !== undefined}>
-        <pre class="mono">{p.item.result || "(no output)"}</pre>
+      <Show when={!diff() && p.item.input && !summary()}>
+        <pre>{JSON.stringify(p.item.input, null, 2)}</pre>
+      </Show>
+      <Show when={p.item.result !== undefined && (p.item.isError || !diff() || p.item.result)}>
+        <pre>{p.item.result || "(no output)"}</pre>
       </Show>
     </details>
   );
@@ -45,12 +58,12 @@ const Transcript = (p: { agent: AgentMeta }) => {
   );
 
   return (
-    <div class="transcript" ref={scroller}>
-      <Show when={events()} fallback={<div class="t-empty">Loading the transcript…</div>}>
+    <div class="transcript scroll" ref={scroller}>
+      <Show when={events()} fallback={<div class="chat-empty">Loading the transcript…</div>}>
         <Show
           when={items().length > 0 || live()}
           fallback={
-            <div class="t-empty">
+            <div class="chat-empty">
               <strong>Describe the task.</strong>
               <span>
                 {p.agent.harness === "claude-code" ? "Claude Code" : "Codex"} will run inside {p.agent.machineName}
@@ -60,17 +73,17 @@ const Transcript = (p: { agent: AgentMeta }) => {
             </div>
           }
         >
-          <div class="t-inner">
+          <div class="chat">
             <For each={items()}>
               {(it) => {
                 switch (it.kind) {
                   case "user":
-                    return <div class="t-user">{it.text}</div>;
+                    return <div class="msg-user">{it.text}</div>;
                   case "text":
-                    return <div class="t-text" innerHTML={renderMarkdown(it.text)} />;
+                    return <div class="msg-text" innerHTML={renderMarkdown(it.text)} />;
                   case "thinking":
                     return (
-                      <details class="t-thinking">
+                      <details class="msg-thinking">
                         <summary>Reasoning</summary>
                         {it.text}
                       </details>
@@ -79,7 +92,7 @@ const Transcript = (p: { agent: AgentMeta }) => {
                     return <ToolCard item={it} />;
                   case "result":
                     return (
-                      <div class="t-result" classList={{ failed: !it.ok }}>
+                      <div class="turn-result" classList={{ failed: !it.ok }}>
                         <Show when={it.ok} fallback={<I.Warning />}>
                           <I.Check />
                         </Show>
@@ -96,21 +109,21 @@ const Transcript = (p: { agent: AgentMeta }) => {
                       </div>
                     );
                   case "note":
-                    return <div class="t-note mono">{it.text}</div>;
+                    return <div class="msg-note">{it.text}</div>;
                   case "exit":
                     return (
                       <Show when={it.code !== 0}>
-                        <div class="t-note">{it.code === -1 ? "Stopped." : `Process exited with code ${it.code}.`}</div>
+                        <div class="msg-note">{it.code === -1 ? "Stopped." : `Process exited with code ${it.code}.`}</div>
                       </Show>
                     );
                 }
               }}
             </For>
             <Show when={live()}>
-              <div class="t-text t-live" innerHTML={renderMarkdown(live())} />
+              <div class="msg-text msg-live" innerHTML={renderMarkdown(live())} />
             </Show>
             <Show when={!live() && p.agent.status.kind === "starting"}>
-              <div class="t-note">Starting {p.agent.harness === "claude-code" ? "claude" : "codex"} in {machine()?.name ?? p.agent.machineName}…</div>
+              <div class="msg-note">Starting {p.agent.harness === "claude-code" ? "claude" : "codex"} in {machine()?.name ?? p.agent.machineName}…</div>
             </Show>
           </div>
         </Show>
@@ -183,18 +196,20 @@ const Composer = (p: { agent: AgentMeta }) => {
             </button>
           }
         >
-          <button class="btn primary" disabled={!text().trim() || busy() || !!blocked()} onClick={() => void submit()}>
+          <button class="btn primary" disabled={!text().trim() || busy() || !!blocked()} onClick={() => void submit()} aria-label="Send">
             <I.Send /> Send
           </button>
         </Show>
       </div>
-      <div class="composer-hint">
+      <div class="composer-foot">
         <Show when={blocked()} fallback={<span>Enter sends, Shift+Enter adds a line.</span>}>
           <span>{blocked()}</span>
         </Show>
         <span>{p.agent.skipPermissions ? "Tools run without approval prompts." : "Tools that need approval are denied."}</span>
         <Show when={p.agent.cwd}>
-          <span class="mono">cwd {p.agent.cwd}</span>
+          <span class="mono" style={{ "font-size": "var(--text-3xs)" }}>
+            {p.agent.cwd}
+          </span>
         </Show>
       </div>
     </div>
@@ -221,7 +236,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
     <section class="view agent-view">
       <header class="view-head">
         <div class="view-title">
-          <AgentSquare status={a().status} />
+          <AgentDot status={a().status} />
           <Show
             when={editing()}
             fallback={
@@ -235,7 +250,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
           >
             <input
               class="input"
-              style={{ "max-width": "420px" }}
+              style={{ "max-width": "420px", height: "28px" }}
               value={draft()}
               onInput={(e) => setDraft(e.currentTarget.value)}
               onBlur={commit}
@@ -248,40 +263,42 @@ export default function AgentView(p: { agent: AgentMeta }) {
             />
           </Show>
         </div>
-        <div class="actions">
-          <button class="icon-btn" title={state.ui.inspector ? "Hide the box panel" : "Show the box panel"} aria-label="Toggle box panel" onClick={() => actions.toggleInspector()}>
-            <I.Sidebar />
-          </button>
-          <button class="icon-btn" title="Remove this agent and its transcript" aria-label="Remove agent" onClick={() => actions.confirmDeleteAgent(a())}>
-            <I.Trash />
+        <div class="view-actions">
+          <Show when={isBusy(a().status)}>
+            <button class="btn ghost danger" onClick={() => void actions.stop(a().id)} title="Kill the running turn">
+              <I.Stop /> Stop
+            </button>
+          </Show>
+          <button class="btn ghost" title="Remove this agent and its transcript" onClick={() => actions.confirmDeleteAgent(a())}>
+            <I.Trash /> Remove
           </button>
         </div>
         <div class="subhead">
-          <span class="pill">{a().harness === "claude-code" ? "Claude Code" : "Codex"}</span>
+          <span class="tag">{a().harness === "claude-code" ? "Claude Code" : "Codex"}</span>
           <span class="in-box">
-            <Show when={machine()}>{(m) => <StatusSquare status={m().status} />}</Show>
+            <Show when={machine()}>{(m) => <Dot status={m().status} />}</Show>
             <button class="link" onClick={() => actions.select({ kind: "box", id: a().machineId })} title="Open the box">
               {a().machineName}
             </button>
           </span>
-          <span class="stats mono">
-          <span>{a().status.kind === "done" ? "Ready for you" : agentStatusLabel(a().status)}</span>
-          <span>
-            <b>{a().turns}</b> turns
-          </span>
-          <span>
-            <b>{a().totalCostUsd > 0 ? usd(a().totalCostUsd) : "$0"}</b>
-          </span>
-          <Show when={a().inputTokens + a().outputTokens > 0}>
+          <span class="stats mono" style={{ "font-size": "var(--text-2xs)" }}>
+            <span>{a().status.kind === "done" ? "Ready for you" : agentStatusLabel(a().status)}</span>
             <span>
-              {tokens(a().inputTokens)} in · {tokens(a().outputTokens)} out
+              <b>{a().turns}</b> turns
             </span>
-          </Show>
+            <span>
+              <b>{a().totalCostUsd > 0 ? usd(a().totalCostUsd) : "$0"}</b>
+            </span>
+            <Show when={a().inputTokens + a().outputTokens > 0}>
+              <span>
+                {tokens(a().inputTokens)} in · {tokens(a().outputTokens)} out
+              </span>
+            </Show>
           </span>
         </div>
       </header>
       <Show when={a().status.kind === "failed"}>
-        <div class="t-note" style={{ margin: "10px 24px 0" }}>
+        <div class="msg-note" style={{ margin: "10px 22px 0" }}>
           {(a().status as { message: string }).message}
           <Show when={machine() && machine()!.status !== "running"}>
             {" "}
