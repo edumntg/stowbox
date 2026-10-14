@@ -18,8 +18,8 @@ function Modal(p: { title: string; children: JSX.Element; onClose: () => void })
   });
   onCleanup(() => document.removeEventListener("keydown", onKey));
   return (
-    <div class="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && p.onClose()}>
-      <div class="modal" role="dialog" aria-modal="true" aria-label={p.title} ref={panel}>
+    <div class="overlay" onMouseDown={(e) => e.target === e.currentTarget && p.onClose()}>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label={p.title} ref={panel}>
         <h2>{p.title}</h2>
         {p.children}
       </div>
@@ -103,7 +103,7 @@ const NewBox = () => {
       <Show when={error()}>
         <div class="form-error">{error()}</div>
       </Show>
-      <div class="modal-actions">
+      <div class="dialog-actions">
         <button class="btn" onClick={actions.closeDialog} disabled={busy()}>
           Cancel
         </button>
@@ -186,14 +186,14 @@ const NewAgent = (p: { machineId?: string }) => {
         <label for="na-first">First task (optional)</label>
         <textarea id="na-first" class="input" placeholder="Add a /health endpoint and a test for it" value={first()} onInput={(e) => setFirst(e.currentTarget.value)} />
       </div>
-      <p class="note">
+      <p class="hint">
         The agent signs in with whatever the box has: an <span class="mono">ANTHROPIC_API_KEY</span> or <span class="mono">CLAUDE_CODE_OAUTH_TOKEN</span> secret
         set with <span class="mono">boxd env set</span>, or a login stored for your org.
       </p>
       <Show when={error()}>
         <div class="form-error">{error()}</div>
       </Show>
-      <div class="modal-actions">
+      <div class="dialog-actions">
         <button class="btn" onClick={actions.closeDialog} disabled={busy()}>
           Cancel
         </button>
@@ -227,18 +227,18 @@ const Settings = () => {
         </dd>
         <dt>Theme</dt>
         <dd>
-          <button class="btn" onClick={() => actions.setTheme("dark")} aria-pressed={state.ui.theme === "dark"}>
-            Dark
+          <button class="btn sm" classList={{ primary: state.ui.theme === "dark" }} onClick={() => actions.setTheme("dark")} aria-pressed={state.ui.theme === "dark"}>
+            <I.Moon /> Dark
           </button>
-          <button class="btn" onClick={() => actions.setTheme("light")} aria-pressed={state.ui.theme === "light"}>
-            Light
+          <button class="btn sm" classList={{ primary: state.ui.theme === "light" }} onClick={() => actions.setTheme("light")} aria-pressed={state.ui.theme === "light"}>
+            <I.Sun /> Light
           </button>
         </dd>
         <dt>Version</dt>
         <dd class="mono">0.1.0</dd>
       </dl>
-      <p class="note">Stowbox talks to boxd directly from this computer. No Stowbox server sees your key, your boxes or your transcripts.</p>
-      <div class="modal-actions">
+      <p class="hint">Stowbox talks to boxd directly from this computer. No Stowbox server sees your key, your boxes or your transcripts.</p>
+      <div class="dialog-actions">
         <button class="btn danger" onClick={() => void actions.signOut()}>
           <I.Key /> Forget API key
         </button>
@@ -271,7 +271,7 @@ const Confirm = (p: { d: Extract<NonNullable<Dialog>, { kind: "confirm" }> }) =>
       <Show when={error()}>
         <div class="form-error">{error()}</div>
       </Show>
-      <div class="modal-actions">
+      <div class="dialog-actions">
         <button class="btn" onClick={actions.closeDialog} disabled={busy()}>
           Cancel
         </button>

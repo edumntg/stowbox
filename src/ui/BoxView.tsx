@@ -3,14 +3,12 @@ import type { Machine } from "../bridge/types";
 import { api } from "../bridge/api";
 import { actions, agentsForMachine, state } from "../state/store";
 import * as I from "../icons";
-import { AgentSquare, PowerActions, StatusSquare } from "./common";
-import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, tokens, usd } from "./format";
+import { AgentDot, Dot, PowerActions } from "./common";
+import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, usd } from "./format";
 
 const Terminal = lazy(() => import("./Terminal"));
 
-function sshCommand(m: Machine) {
-  return `ssh ${m.name}.boxd`;
-}
+const sshCommand = (m: Machine) => `ssh ${m.name}.boxd`;
 
 const AgentsTab = (p: { machine: Machine }) => {
   const agents = () => agentsForMachine(p.machine.id);
@@ -20,29 +18,31 @@ const AgentsTab = (p: { machine: Machine }) => {
       fallback={
         <div class="empty-state">
           <span>
-            <strong>No agents in {p.machine.name} yet.</strong> An agent is a Claude Code or Codex session that runs inside this box; its files and
-            shell state stay here between turns.
+            <strong>No agents in {p.machine.name} yet.</strong> An agent is a Claude Code or Codex session that runs inside this box; its files and shell state
+            stay here between turns.
           </span>
           <button class="btn primary" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })}>
-            <I.Chat /> New agent in this box
+            <I.Plus /> New agent in this box
           </button>
         </div>
       }
     >
-      <div class="actions" style={{ "margin-bottom": "10px" }}>
-        <button class="btn" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })}>
+      <div style={{ "margin-bottom": "8px" }}>
+        <button class="btn sm" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })}>
           <I.Plus /> New agent
         </button>
       </div>
-      <div class="agent-table">
+      <div class="list">
         <For each={agents()}>
           {(a) => (
-            <button class="agent-line" onClick={() => actions.select({ kind: "agent", id: a.id })}>
-              <AgentSquare status={a.status} />
-              <span class="agent-title">{a.title || "New agent"}</span>
+            <button class="list-row" onClick={() => actions.select({ kind: "agent", id: a.id })}>
+              <AgentDot status={a.status} />
+              <span class="name">{a.title || "New agent"}</span>
               <span class="cell">{a.harness === "claude-code" ? "Claude Code" : "Codex"}</span>
               <span class="cell mono">{a.totalCostUsd > 0 ? usd(a.totalCostUsd) : ""}</span>
-              <span class="cell">{a.status.kind === "done" ? "Ready for you" : agentStatusLabel(a.status)} · {relTime(a.updatedAt)}</span>
+              <span class="cell">
+                {a.status.kind === "done" ? "Ready for you" : agentStatusLabel(a.status)} · {relTime(a.updatedAt)}
+              </span>
             </button>
           )}
         </For>
@@ -58,11 +58,11 @@ const DetailsTab = (p: { machine: Machine }) => {
   return (
     <div class="details">
       <section>
-        <h3>Machine</h3>
+        <h3 class="section-title">Machine</h3>
         <dl class="kv">
           <dt>Status</dt>
           <dd>
-            <StatusSquare status={m().status} /> {statusLabel[m().status]}
+            <Dot status={m().status} /> {statusLabel[m().status]}
           </dd>
           <dt>Size</dt>
           <dd>
@@ -114,7 +114,7 @@ const DetailsTab = (p: { machine: Machine }) => {
       </section>
 
       <section>
-        <h3>Usage since creation</h3>
+        <h3 class="section-title">Usage since creation</h3>
         <Switch>
           <Match when={usage.loading}>
             <div class="muted">Asking boxd for the metered usage…</div>
@@ -122,7 +122,7 @@ const DetailsTab = (p: { machine: Machine }) => {
           <Match when={usage.error}>
             <div class="empty-state">
               <span>Could not read usage: {String(usage.error)}</span>
-              <button class="btn" onClick={() => void refetch()}>
+              <button class="btn sm" onClick={() => void refetch()}>
                 <I.Refresh /> Try again
               </button>
             </div>
@@ -173,42 +173,42 @@ export default function BoxView(p: { machine: Machine }) {
     <section class="view">
       <header class="view-head">
         <div class="view-title">
-          <StatusSquare status={m().status} />
+          <Dot status={m().status} />
           <h1>{m().name}</h1>
-          <span class="pill">{statusLabel[m().status]}</span>
+          <span class="tag">{statusLabel[m().status]}</span>
           <span class="meta mono">
             {sizeLabel(m())} · {money(m().estHourlyMicro, m().currency)}/h
           </span>
         </div>
-        <div class="actions">
-          <PowerActions machine={m()} />
-          <button class="btn" title="Copy-on-write fork of this machine, under 200 ms" disabled={!!state.pending[m().id]} onClick={() => void actions.forkBox(m())}>
+        <div class="view-actions">
+          <PowerActions machine={m()} ghost />
+          <button class="btn ghost" title="Copy-on-write fork of this machine, under 200 ms" disabled={!!state.pending[m().id]} onClick={() => void actions.forkBox(m())}>
             <I.Fork /> Fork
           </button>
-          <button class="btn" title="Open the live desktop in the browser" onClick={() => void actions.open(m().desktopUrl)}>
+          <button class="btn ghost" title="Open the live desktop in the browser" onClick={() => void actions.open(m().desktopUrl)}>
             <I.Desktop /> Desktop
           </button>
-          <button class="btn danger" title="Destroy the machine and its disk" disabled={!!state.pending[m().id]} onClick={() => actions.confirmDestroy(m())}>
+          <button class="btn ghost danger" title="Destroy the machine and its disk" disabled={!!state.pending[m().id]} onClick={() => actions.confirmDestroy(m())}>
             <I.Trash /> Delete
           </button>
         </div>
       </header>
 
-      <nav class="tabs" role="tablist" aria-label="Box sections">
-        <button class="tab" role="tab" aria-selected={tab() === "agents"} onClick={() => actions.setBoxTab("agents")}>
+      <nav class="subtabs" role="tablist" aria-label="Box sections">
+        <button class="subtab" role="tab" aria-selected={tab() === "agents"} onClick={() => actions.setBoxTab("agents")}>
           Agents <span class="count">{agentCount()}</span>
         </button>
-        <button class="tab" role="tab" aria-selected={tab() === "terminal"} onClick={() => actions.setBoxTab("terminal")}>
+        <button class="subtab" role="tab" aria-selected={tab() === "terminal"} onClick={() => actions.setBoxTab("terminal")}>
           Terminal
         </button>
-        <button class="tab" role="tab" aria-selected={tab() === "details"} onClick={() => actions.setBoxTab("details")}>
+        <button class="subtab" role="tab" aria-selected={tab() === "details"} onClick={() => actions.setBoxTab("details")}>
           Details & cost
         </button>
       </nav>
 
       <Switch>
         <Match when={tab() === "agents"}>
-          <div class="view-body">
+          <div class="view-body scroll">
             <AgentsTab machine={m()} />
           </div>
         </Match>
@@ -223,7 +223,9 @@ export default function BoxView(p: { machine: Machine }) {
                       <strong>{m().name} is {statusLabel[m().status].toLowerCase()}.</strong> A shell needs the machine running; standby and hibernated boxes wake on
                       their own when a terminal opens, stopped ones do not.
                     </span>
-                    <PowerActions machine={m()} />
+                    <div style={{ display: "flex", gap: "4px" }}>
+                      <PowerActions machine={m()} />
+                    </div>
                   </div>
                 </div>
               }
@@ -233,7 +235,7 @@ export default function BoxView(p: { machine: Machine }) {
           </div>
         </Match>
         <Match when={tab() === "details"}>
-          <div class="view-body">
+          <div class="view-body scroll">
             <DetailsTab machine={m()} />
           </div>
         </Match>
@@ -241,5 +243,3 @@ export default function BoxView(p: { machine: Machine }) {
     </section>
   );
 }
-
-export { tokens };

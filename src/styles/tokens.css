@@ -1,72 +1,105 @@
-/* Stowbox design tokens.
-   Two cores (charcoal / warm paper) plus one accent (cargo amber) reserved for
-   the thing that needs the user. Status colours are semantic, not palette. */
+/* Stowbox tokens, after Orca's shadcn "new-york" neutral scale.
+   Monochrome surfaces; colour exists only for state (green, orange, red)
+   and for diff lines (added, removed). */
 
 :root {
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
-  --fs-0: 11px;
-  --fs-1: 12px;
-  --fs-2: 13px;
-  --fs-3: 15px;
-  --fs-4: 18px;
-  --r-1: 3px;
-  --r-2: 6px;
-  --r-3: 10px;
-  --sidebar-w: 272px;
-  --inspector-w: 296px;
-  --row-h: 30px;
-  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", SFMono-Regular, ui-monospace, "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --text-3xs: 10px;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --sidebar-w: 260px;
+  --panel-w: 280px;
+  --topbar-h: 38px;
+  --tabstrip-h: 36px;
+  --statusbar-h: 24px;
+  --shadow-floating: 0 10px 24px rgb(0 0 0 / 0.18);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* light */
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --primary: #171717;
+  --primary-foreground: #fafafa;
+  --secondary: #f5f5f5;
+  --muted: #f5f5f5;
+  --muted-foreground: #737373;
+  --accent: #f5f5f5;
+  --accent-foreground: #171717;
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #a1a1a1;
+  --sidebar: #fafafa;
+  --sidebar-accent: #f0f0f0;
+  --sidebar-border: #e5e5e5;
+  --panel: #fafafa;
+  --terminal: #0a0a0a;
+  --chat-user: color-mix(in srgb, var(--foreground) 4%, var(--background));
+  --chat-user-border: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --chat-code: color-mix(in srgb, var(--foreground) 2%, var(--background));
+  --chat-inline: color-mix(in srgb, var(--foreground) 4%, var(--background));
+  --chat-inline-border: color-mix(in srgb, var(--foreground) 9%, transparent);
+  --chat-composer: var(--background);
+  --chat-composer-border: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --ok: #16a34a;
+  --warn: #ea580c;
+  --danger: #dc2626;
+  --ok-bg: rgb(22 163 74 / 0.1);
+  --warn-bg: rgb(234 88 12 / 0.1);
+  --danger-bg: rgb(220 38 38 / 0.08);
+  --diff-add: #15803d;
+  --diff-add-bg: rgb(22 163 74 / 0.1);
+  --diff-del: #b91c1c;
+  --diff-del-bg: rgb(220 38 38 / 0.08);
+  --scrollbar: color-mix(in srgb, var(--muted-foreground) 28%, transparent);
+  --scrollbar-hover: color-mix(in srgb, var(--muted-foreground) 48%, transparent);
 }
 
 :root[data-theme="dark"] {
-  --bg-0: #151515;
-  --bg-1: #1c1c1c;
-  --bg-2: #232323;
-  --bg-3: #2a2a2a;
-  --bg-4: #333333;
-  --line: #2c2c2c;
-  --line-strong: #3c3c3c;
-  --text: #ececec;
-  --text-2: #a8a8a8;
-  --text-3: #7d7d7d;
-  --accent: #f2b43c;
-  --accent-ink: #1a1200;
-  --accent-soft: rgba(242, 180, 60, 0.14);
-  --ok: #3dd68c;
-  --standby: #5aa9e6;
-  --hibernated: #8a93a6;
-  --stopped: #666666;
-  --failed: #ef5f5f;
-  --failed-soft: rgba(239, 95, 95, 0.14);
-  --pending: #c9c9c9;
-  --user-bubble: #262626;
-  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.55);
-  --term-bg: #121212;
-}
-
-:root[data-theme="light"] {
-  --bg-0: #f4f2ee;
-  --bg-1: #faf9f6;
-  --bg-2: #efece6;
-  --bg-3: #ffffff;
-  --bg-4: #e6e2da;
-  --line: #dcd8cf;
-  --line-strong: #c9c4b8;
-  --text: #1c1b18;
-  --text-2: #5c5a54;
-  --text-3: #76736b;
-  --accent: #b8780a;
-  --accent-ink: #ffffff;
-  --accent-soft: rgba(184, 120, 10, 0.12);
-  --ok: #178f55;
-  --standby: #2b78b8;
-  --hibernated: #6b7280;
-  --stopped: #8a8780;
-  --failed: #c7382e;
-  --failed-soft: rgba(199, 56, 46, 0.1);
-  --pending: #5c5a54;
-  --user-bubble: #e9e5dc;
-  --shadow-modal: 0 24px 60px rgba(40, 30, 10, 0.22);
-  --term-bg: #1c1b18;
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+  --card: #171717;
+  --popover: #171717;
+  --primary: #e5e5e5;
+  --primary-foreground: #171717;
+  --secondary: #262626;
+  --muted: #262626;
+  --muted-foreground: #a1a1a1;
+  --accent: #404040;
+  --accent-foreground: #fafafa;
+  --border: rgb(255 255 255 / 0.07);
+  --input: rgb(255 255 255 / 0.15);
+  --ring: #737373;
+  --sidebar: #171717;
+  --sidebar-accent: #262626;
+  --sidebar-border: rgb(255 255 255 / 0.07);
+  --panel: #171717;
+  --terminal: #0a0a0a;
+  --chat-user: color-mix(in srgb, var(--foreground) 7%, var(--background));
+  --chat-user-border: color-mix(in srgb, var(--foreground) 6%, transparent);
+  --chat-code: color-mix(in srgb, var(--foreground) 3.5%, transparent);
+  --chat-inline: color-mix(in srgb, var(--foreground) 6%, transparent);
+  --chat-inline-border: color-mix(in srgb, var(--foreground) 9%, transparent);
+  --chat-composer: color-mix(in srgb, var(--foreground) 4%, transparent);
+  --chat-composer-border: color-mix(in srgb, var(--foreground) 9%, transparent);
+  --ok: #22c55e;
+  --warn: #f97316;
+  --danger: #ef4444;
+  --ok-bg: rgb(34 197 94 / 0.12);
+  --warn-bg: rgb(249 115 22 / 0.12);
+  --danger-bg: rgb(239 68 68 / 0.1);
+  --diff-add: #4ade80;
+  --diff-add-bg: rgb(34 197 94 / 0.12);
+  --diff-del: #f87171;
+  --diff-del-bg: rgb(239 68 68 / 0.1);
 }
