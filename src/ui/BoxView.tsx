@@ -114,7 +114,7 @@ const SetupTab = (p: { machine: Machine }) => {
           <Show
             when={active()}
             fallback={
-              <button class="btn" disabled={!chosen() || p.machine.status === "stopped"} title={p.machine.status === "stopped" ? "Start the box first" : "Run this preset in the box now"} onClick={() => void actions.startSetup(p.machine.id, chosen())}>
+              <button class="btn" disabled={!chosen() || p.machine.status === "stopped"} title={p.machine.status === "stopped" ? "Start the box first" : "Run this preset in the box now"} onClick={() => actions.runPreset(p.machine.id, chosen())}>
                 <I.Play /> {run() ? "Run again" : "Run preset"}
               </button>
             }
@@ -149,6 +149,21 @@ const SetupTab = (p: { machine: Machine }) => {
             </div>
             <Show when={r().error}>
               <div class="form-error">{r().error}</div>
+            </Show>
+            <Show when={(r().variables ?? []).length > 0}>
+              <p class="note">
+                With{" "}
+                <For each={r().variables}>
+                  {(v, i) => (
+                    <>
+                      {i() > 0 ? ", " : ""}
+                      <span class="mono">
+                        {v.name}={v.value}
+                      </span>
+                    </>
+                  )}
+                </For>
+              </p>
             </Show>
             <Show when={r().secretNames.length > 0}>
               <p class="note">

@@ -18,7 +18,9 @@ import type {
   SetupPush,
   SetupRun,
   TermEvent,
+  VariableValues,
 } from "./types";
+import { substitute, variablesIn } from "./variables";
 
 const GIB = 1024 ** 3;
 
@@ -293,10 +295,12 @@ let presets: Preset[] = [
     name: "main commands",
     commands: [
       "git clone https://$GITHUB_TOKEN@github.com/example/api.git ~/api",
+      "cd ~/api && git checkout {{branch}}",
       "cd ~/api && docker compose up -d",
       "bash ~/api/scripts/bootstrap.sh",
     ],
     secretNames: ["GITHUB_TOKEN", "DATABASE_URL"],
+    variables: [{ name: "branch", default: "main" }],
     createdAt: Date.now() - 86_400_000,
     updatedAt: Date.now() - 3_600_000,
     secrets: [
@@ -304,8 +308,35 @@ let presets: Preset[] = [
       { name: "DATABASE_URL", hasValue: true },
     ],
   },
+  {
+    id: "preset_mock_2",
+    name: "review a pull request",
+    commands: ["gh repo clone {{repo}} ~/review", "cd ~/review && gh pr checkout {{pr}}"],
+    secretNames: [],
+    variables: [
+      { name: "repo", default: "" },
+      { name: "pr", default: "" },
+    ],
+    createdAt: Date.now() - 3 * 86_400_000,
+    updatedAt: Date.now() - 2 * 86_400_000,
+    secrets: [],
+  },
 ];
 const presetValues: Record<string, Record<string, string>> = { preset_mock_1: { GITHUB_TOKEN: "placeholder", DATABASE_URL: "placeholder" } };
+
+/** Mirrors stowbox_core::provision::prepare. */
+function prepareMock(p: Preset, given: VariableValues) {
+  const names = variablesIn(p.commands);
+  const unknown = Object.keys(given).sort().find((k) => !names.includes(k));
+  if (unknown) throw new Error(`"${p.name}" has no variable ${unknown}`);
+  const values: Record<string, string> = {};
+  for (const name of names) {
+    const v = given[name] || p.variables.find((x) => x.name === name)?.default || "";
+    if (!v) throw new Error(`give ${name} a value`);
+    values[name] = v;
+  }
+  return { commands: p.commands.map((c) => substitute(c, values)), variables: names.map((name) => ({ name, value: values[name] })) };
+}
 
 let setupRuns: SetupRun[] = [
   {
@@ -316,8 +347,9 @@ let setupRuns: SetupRun[] = [
     presetName: "main commands",
     status: "done",
     error: null,
-    steps: presets[0].commands.map((command) => ({ command, state: "ok" as const, exitCode: 0 })),
+    steps: prepareMock(presets[0], {}).commands.map((command) => ({ command, state: "ok" as const, exitCode: 0 })),
     secretNames: ["GITHUB_TOKEN", "DATABASE_URL"],
+    variables: [{ name: "branch", value: "main" }],
     secretsWritten: true,
     output: "Cloning into '/home/user/api'...\n[+] Running 2/2\n ✔ Container api-db-1   Started\n ✔ Container api-app-1  Started\nbootstrap: done\n",
     startedAt: Date.now() - 2 * 86_400_000,
@@ -367,11 +399,17 @@ async function simulateSetup(run: SetupRun) {
   setupEmit(run);
 }
 
-function startMockSetup(m: Machine, presetId: string): SetupRun {
+/** Throws what the desktop side would refuse, before anything is created. */
+function prepareMockSetup(presetId: string, given: VariableValues) {
   const p = presets.find((x) => x.id === presetId);
   if (!p) throw new Error("setup preset not found");
   const missing = p.secretNames.find((n) => !presetValues[p.id]?.[n]);
   if (missing) throw new Error(`the secret ${missing} in "${p.name}" has no value; edit the preset first`);
+  return { p, ...prepareMock(p, given) };
+}
+
+function startMockSetup(m: Machine, presetId: string, given: VariableValues): SetupRun {
+  const { p, commands, variables } = prepareMockSetup(presetId, given);
   if (setupRuns.some((r) => r.machineId === m.id && (r.status === "waiting" || r.status === "running"))) throw new Error(`a setup is already running in ${m.name}`);
   const run: SetupRun = {
     id: "run_mock_" + Date.now(),
@@ -381,8 +419,9 @@ function startMockSetup(m: Machine, presetId: string): SetupRun {
     presetName: p.name,
     status: "waiting",
     error: null,
-    steps: p.commands.map((command) => ({ command, state: "pending", exitCode: null })),
+    steps: commands.map((command) => ({ command, state: "pending", exitCode: null })),
     secretNames: [...p.secretNames],
+    variables,
     secretsWritten: false,
     output: "",
     startedAt: Date.now(),
@@ -598,11 +637,12 @@ export const mockApi: Api = {
     if (!m) throw new Error("not found: " + id);
     return m;
   },
-  async createMachine(spec, presetId) {
+  async createMachine(spec, presetId, variables) {
+    if (presetId) prepareMockSetup(presetId, variables ?? {});
     await sleep(800);
     const m = machine({ id: "vm_mock_" + Date.now(), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
     machines = [...machines, m];
-    if (presetId) startMockSetup(m, presetId);
+    if (presetId) startMockSetup(m, presetId, variables ?? {});
     return m;
   },
   async forkMachine(source, name) {
@@ -764,6 +804,7 @@ export const mockApi: Api = {
       name,
       commands,
       secretNames: names,
+      variables: variablesIn(commands).map((n) => ({ name: n, default: input.variables.find((v) => v.name === n)?.default ?? "" })),
       createdAt: prev?.createdAt ?? Date.now(),
       updatedAt: Date.now(),
       secrets: names.map((n) => ({ name: n, hasValue: true })),
@@ -775,9 +816,9 @@ export const mockApi: Api = {
     presets = presets.filter((p) => p.id !== id);
     delete presetValues[id];
   },
-  async setupStart(machineId, presetId) {
+  async setupStart(machineId, presetId, variables) {
     const m = await mockApi.getMachine(machineId);
-    return startMockSetup(m, presetId);
+    return startMockSetup(m, presetId, variables ?? {});
   },
   async setupCancel(machineId) {
     const run = setupRuns.find((r) => r.machineId === machineId && (r.status === "waiting" || r.status === "running"));

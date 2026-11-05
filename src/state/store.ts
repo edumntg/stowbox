@@ -1,5 +1,6 @@
 import { createStore, produce } from "solid-js/store";
 import { api } from "../bridge/api";
+import { presetVariables } from "../bridge/variables";
 import type {
   Account,
   AgentEvent,
@@ -19,6 +20,7 @@ import type {
   RateCard,
   SetupPush,
   SetupRun,
+  VariableValues,
 } from "../bridge/types";
 import { isBusy } from "../ui/format";
 
@@ -29,6 +31,7 @@ export type Theme = "dark" | "light";
 export type Dialog =
   | null
   | { kind: "new-box" }
+  | { kind: "run-setup"; machineId: string; presetId: string }
   | { kind: "new-agent"; machineId?: string }
   | { kind: "settings" }
   | { kind: "delete-agent"; agentId: string }
@@ -545,8 +548,8 @@ export const actions = {
     });
   },
 
-  async createBox(spec: CreateSpec, presetId?: string | null): Promise<Machine> {
-    const m = await api.createMachine(spec, presetId ?? null);
+  async createBox(spec: CreateSpec, presetId?: string | null, variables?: VariableValues | null): Promise<Machine> {
+    const m = await api.createMachine(spec, presetId ?? null, variables ?? null);
     setState("machines", (ms) => [...ms.filter((x) => x.id !== m.id), m].sort((a, b) => a.name.localeCompare(b.name)));
     actions.select({ kind: "box", id: m.id });
     if (presetId) setState("ui", "boxTab", "setup");
@@ -583,13 +586,17 @@ export const actions = {
     });
   },
 
-  async startSetup(machineId: string, presetId: string) {
-    try {
-      const run = await api.setupStart(machineId, presetId);
-      setState("setupRuns", machineId, run);
-    } catch (e) {
-      actions.toast("Setup could not start: " + message(e));
-    }
+  /** Runs a preset in a box, asking for its variables first if it has any. */
+  runPreset(machineId: string, presetId: string) {
+    const p = state.presets.find((x) => x.id === presetId);
+    if (p && presetVariables(p).length > 0) return actions.openDialog({ kind: "run-setup", machineId, presetId });
+    actions.startSetup(machineId, presetId).catch((e) => actions.toast("Setup could not start: " + message(e)));
+  },
+
+  /** Throws when the run cannot start, so a dialog can show why. */
+  async startSetup(machineId: string, presetId: string, variables?: VariableValues | null) {
+    const run = await api.setupStart(machineId, presetId, variables ?? null);
+    setState("setupRuns", machineId, run);
   },
 
   async cancelSetup(machineId: string) {

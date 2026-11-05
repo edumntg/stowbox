@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import type { Harness } from "../bridge/types";
+import type { Harness, Preset, VariableValues } from "../bridge/types";
+import { presetVariables } from "../bridge/variables";
 import { actions, machineById, state, type Dialog } from "../state/store";
 import * as I from "../icons";
 import { isBusy, money } from "./format";
@@ -31,6 +32,42 @@ function errorText(e: unknown): string {
   return typeof e === "string" ? e : e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
 }
 
+/** The values a preset's variables start with: their defaults. */
+const defaultValues = (p: Preset | undefined): VariableValues => Object.fromEntries((p ? presetVariables(p) : []).map((v) => [v.name, v.default]));
+
+/** The first variable left without a value or a default, as an error. */
+const missingValue = (p: Preset | undefined, values: VariableValues) => {
+  const v = (p ? presetVariables(p) : []).find((x) => !values[x.name] && !x.default);
+  return v ? `give ${v.name} a value` : "";
+};
+
+/** One input per `{{name}}` in the preset's commands. */
+const VariableFields = (p: { preset: Preset; values: VariableValues; onInput: (name: string, value: string) => void }) => (
+  <Show when={presetVariables(p.preset).length > 0}>
+    <div class="var-rows">
+      <For each={presetVariables(p.preset)}>
+        {(v) => (
+          <div class="var-row">
+            <label class="mono" for={`var-${v.name}`}>
+              {v.name}
+            </label>
+            <input
+              id={`var-${v.name}`}
+              class="input mono"
+              spellcheck={false}
+              autocomplete="off"
+              placeholder={v.default ? `default: ${v.default}` : "required"}
+              value={p.values[v.name] ?? ""}
+              onInput={(e) => p.onInput(v.name, e.currentTarget.value)}
+            />
+          </div>
+        )}
+      </For>
+    </div>
+    <p class="hint">Each value goes into the commands as one quoted word. Values are kept with the run and show in its log; put tokens in secrets.</p>
+  </Show>
+);
+
 const NewBox = () => {
   const billing = () => state.account?.billing;
   const rates = () => state.rateCard;
@@ -44,6 +81,11 @@ const NewBox = () => {
   const [isolated, setIsolated] = createSignal(false);
   const [presetId, setPresetId] = createSignal("");
   const preset = () => state.presets.find((x) => x.id === presetId());
+  const [values, setValues] = createSignal<VariableValues>({});
+  const pickPreset = (id: string) => {
+    setPresetId(id);
+    setValues(defaultValues(state.presets.find((x) => x.id === id)));
+  };
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
 
@@ -55,6 +97,8 @@ const NewBox = () => {
   };
 
   const create = async () => {
+    const missing = missingValue(preset(), values());
+    if (missing) return setError(missing);
     setBusy(true);
     setError("");
     try {
@@ -67,6 +111,7 @@ const NewBox = () => {
           isolated: isolated(),
         },
         presetId() || null,
+        preset() ? values() : null,
       );
       actions.closeDialog();
     } catch (e) {
@@ -100,7 +145,7 @@ const NewBox = () => {
       </div>
       <div class="field">
         <label for="nb-setup">Setup</label>
-        <select id="nb-setup" class="input" value={presetId()} onChange={(e) => setPresetId(e.currentTarget.value)}>
+        <select id="nb-setup" class="input" value={presetId()} onChange={(e) => pickPreset(e.currentTarget.value)}>
           <option value="">None: an empty box</option>
           <For each={state.presets}>{(x) => <option value={x.id}>{x.name}</option>}</For>
         </select>
@@ -137,6 +182,7 @@ const NewBox = () => {
             </p>
           )}
         </Show>
+        <Show when={preset()}>{(pr) => <VariableFields preset={pr()} values={values()} onInput={(n, v) => setValues((vs) => ({ ...vs, [n]: v }))} />}</Show>
       </div>
       <label class="check">
         <input type="checkbox" checked={isolated()} onChange={(e) => setIsolated(e.currentTarget.checked)} />
@@ -468,12 +514,60 @@ const DeleteAgent = (p: { agentId: string }) => {
   );
 };
 
+const RunSetup = (p: { machineId: string; presetId: string }) => {
+  const preset = () => state.presets.find((x) => x.id === p.presetId);
+  const m = () => machineById(p.machineId);
+  const [values, setValues] = createSignal<VariableValues>(defaultValues(preset()));
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+  const run = async () => {
+    const missing = missingValue(preset(), values());
+    if (missing) return setError(missing);
+    setBusy(true);
+    setError("");
+    try {
+      await actions.startSetup(p.machineId, p.presetId, values());
+      actions.closeDialog();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Show when={preset()} fallback={<Modal title="Preset not found" onClose={actions.closeDialog}><p>It was deleted.</p></Modal>}>
+      {(pr) => (
+        <Modal title={`Run "${pr().name}"`} onClose={actions.closeDialog}>
+          <p>
+            Values for this run in <span class="mono">{m()?.name ?? p.machineId}</span>.
+          </p>
+          <VariableFields preset={pr()} values={values()} onInput={(n, v) => setValues((vs) => ({ ...vs, [n]: v }))} />
+          <Show when={error()}>
+            <div class="form-error">{error()}</div>
+          </Show>
+          <div class="dialog-actions">
+            <button class="btn" onClick={actions.closeDialog} disabled={busy()}>
+              Cancel
+            </button>
+            <button class="btn primary" onClick={() => void run()} disabled={busy()}>
+              <I.Play /> {busy() ? "Starting…" : "Run preset"}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </Show>
+  );
+};
+
 export default function Dialogs() {
   const d = () => state.ui.dialog;
   return (
     <Switch>
       <Match when={d()?.kind === "new-box"}>
         <NewBox />
+      </Match>
+      <Match when={d()?.kind === "run-setup"}>
+        <RunSetup machineId={(d() as { machineId: string }).machineId} presetId={(d() as { presetId: string }).presetId} />
       </Match>
       <Match when={d()?.kind === "new-agent"}>
         <NewAgent machineId={(d() as { machineId?: string }).machineId} />

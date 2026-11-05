@@ -17,7 +17,7 @@ use stowbox_core::git::{self, GitReview, PrOutcome};
 use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::provider::Provider;
-use stowbox_core::provision::{self, Preset, ProvisionRun, RunEvent};
+use stowbox_core::provision::{self, Preset, Prepared, ProvisionRun, RunEvent, Variable};
 use stowbox_core::store::Store;
 use stowbox_core::types::*;
 use stowbox_core::worktree;
@@ -216,22 +216,24 @@ async fn get_machine(state: State<'_, AppState>, id: String) -> CmdResult<Machin
 
 /// Creates the box, then, when a setup preset is picked, starts running it
 /// in the background. A setup that cannot start (a missing secret value)
-/// fails before the box is created, so nothing is billed for nothing.
+/// or a variable without a value) fails before the box is created, so
+/// nothing is billed for nothing.
 #[tauri::command]
 async fn create_machine(
     app: AppHandle,
     state: State<'_, AppState>,
     spec: CreateSpec,
     preset_id: Option<String>,
+    variables: Option<HashMap<String, String>>,
 ) -> CmdResult<MachineView> {
     let p = state.provider().await?;
     let setup = match preset_id.filter(|id| !id.is_empty()) {
-        Some(id) => Some(preset_with_secrets(&state, &id).await?),
+        Some(id) => Some(prepare_setup(&state, &id, &variables.unwrap_or_default()).await?),
         None => None,
     };
     let m = p.create_machine(spec).await.map_err(err)?;
-    if let Some((preset, secrets)) = setup {
-        start_setup(&app, &state, p.clone(), &m, preset, secrets).await?;
+    if let Some(setup) = setup {
+        start_setup(&app, &state, p.clone(), &m, setup).await?;
     }
     Ok(state.view(&p, m).await)
 }
@@ -772,6 +774,9 @@ struct PresetInput {
     name: String,
     commands: Vec<String>,
     secrets: Vec<SecretInput>,
+    /// Defaults by name; the names themselves come from the commands.
+    #[serde(default)]
+    variables: Vec<Variable>,
 }
 
 /// A run as the UI sees it: the record without its output, plus the text
@@ -837,8 +842,9 @@ async fn save_preset(state: State<'_, AppState>, input: PresetInput) -> CmdResul
     let preset = Preset {
         id: id.clone(),
         name,
-        commands,
+        commands: commands.clone(),
         secret_names,
+        variables: provision::preset_variables(&commands, &input.variables),
         created_at: existing.as_ref().map(|p| p.created_at).unwrap_or(now),
         updated_at: now,
     };
@@ -866,9 +872,16 @@ async fn delete_preset(state: State<'_, AppState>, id: String) -> CmdResult<()> 
     Ok(())
 }
 
-/// The preset and its secret values in the preset's order, or an error
-/// naming the first secret that has no value.
-async fn preset_with_secrets(state: &AppState, id: &str) -> CmdResult<(Preset, Vec<(String, String)>)> {
+/// Everything one setup run needs, checked before anything starts.
+struct Setup {
+    preset: Preset,
+    prepared: Prepared,
+    secrets: Vec<(String, String)>,
+}
+
+/// The preset with its variables filled in and its secret values in the
+/// preset's order, or an error naming the first thing that has no value.
+async fn prepare_setup(state: &AppState, id: &str, variables: &HashMap<String, String>) -> CmdResult<Setup> {
     let preset = state.presets.read().await.iter().find(|p| p.id == id).cloned().ok_or("setup preset not found")?;
     let values = state.preset_secrets.load(id);
     let mut secrets = Vec::with_capacity(preset.secret_names.len());
@@ -878,7 +891,8 @@ async fn preset_with_secrets(state: &AppState, id: &str) -> CmdResult<(Preset, V
             None => return Err(format!("the secret {n} in \"{}\" has no value; edit the preset first", preset.name)),
         }
     }
-    Ok((preset, secrets))
+    let prepared = provision::prepare(&preset, variables).map_err(err)?;
+    Ok(Setup { preset, prepared, secrets })
 }
 
 /// Folds one event into the box's run, tells the UI, and persists the run
@@ -907,14 +921,14 @@ async fn start_setup(
     state: &AppState,
     p: Arc<dyn Provider>,
     machine: &Machine,
-    preset: Preset,
-    secrets: Vec<(String, String)>,
+    setup: Setup,
 ) -> CmdResult<ProvisionRun> {
+    let Setup { preset, prepared, secrets } = setup;
     let mut setups = state.setups.lock().await;
     if setups.contains_key(&machine.id) {
         return Err(format!("a setup is already running in {}", machine.name));
     }
-    let run = ProvisionRun::new(uuid::Uuid::new_v4().to_string(), machine, &preset, now_ms());
+    let run = ProvisionRun::new(uuid::Uuid::new_v4().to_string(), machine, &preset, &prepared, now_ms());
     {
         let mut runs = state.setup_runs.write().await;
         runs.retain(|r| r.machine_id != machine.id);
@@ -924,7 +938,7 @@ async fn start_setup(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<RunEvent>();
     let machine_id = machine.id.clone();
-    let commands = preset.commands.clone();
+    let commands = prepared.commands;
     let runner = tokio::spawn(async move {
         provision::run(&*p, &machine_id, &commands, &secrets, |ev| {
             let _ = tx.send(ev);
@@ -948,11 +962,17 @@ async fn start_setup(
 }
 
 #[tauri::command]
-async fn setup_start(app: AppHandle, state: State<'_, AppState>, machine_id: String, preset_id: String) -> CmdResult<ProvisionRun> {
+async fn setup_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    machine_id: String,
+    preset_id: String,
+    variables: Option<HashMap<String, String>>,
+) -> CmdResult<ProvisionRun> {
     let p = state.provider().await?;
-    let (preset, secrets) = preset_with_secrets(&state, &preset_id).await?;
+    let setup = prepare_setup(&state, &preset_id, &variables.unwrap_or_default()).await?;
     let m = p.get_machine(&machine_id).await.map_err(err)?;
-    start_setup(&app, &state, p, &m, preset, secrets).await
+    start_setup(&app, &state, p, &m, setup).await
 }
 
 #[tauri::command]

@@ -84,7 +84,13 @@ few tens of megabytes instead of an Electron process per window.
   load, so terminals and agents see them too. The script travels over boxd's
   exec stream on stdin, never on a command line, and secret values are
   masked in the setup log. Commands run in order in one shell (`cd` and
-  `export` carry over); the first non-zero exit stops the run.
+  `export` carry over); the first non-zero exit stops the run. A command can
+  hold `{{name}}` placeholders (`git checkout {{branch}}`): the editor lists
+  them with an optional default, and *New box* or *Run* asks for each value
+  (required when there is no default). A value goes in as one single-quoted
+  shell word, so keep placeholders outside quotes; other text in braces,
+  such as `{{.State}}` for `docker inspect`, is left alone. Values are not
+  secrets: the run keeps them and they show in the log.
 - **Desktop**: one click opens boxd's live desktop view in the browser.
 - **Notifications**: when an agent's turn finishes or fails, or a setup run
   ends, the OS shows a notification, by default only while Stowbox is not

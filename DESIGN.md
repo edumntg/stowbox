@@ -60,10 +60,15 @@ shadows, except the floating shadow under dialogs and toasts.
 - Setup presets view, reached from the sidebar under Fleet overview: a
   240px list of presets on the left, the editor on the right (name,
   secrets as name and masked value rows, commands as numbered monospace
-  rows with move and remove controls). A box's Setup tab shows the last
-  run: one row per command with a 6x10 square (green while it runs, a
-  neutral foreground square once it exits 0, red on failure, faded grey
-  when pending or skipped) and the output below in a monospace well.
+  rows with move and remove controls, then the `{{name}}` variables found
+  in the commands as a monospace name next to its default). A box's Setup
+  tab shows the last run: one row per command with a 6x10 square (green
+  while it runs, a neutral foreground square once it exits 0, red on
+  failure, faded grey when pending or skipped) and the output below in a
+  monospace well. New box and the Setup tab's Run dialog ask for variable
+  values in the same name and value rows, prefilled with the defaults;
+  the run shows "With name=value" above its steps, and the steps show the
+  commands as they ran.
 - An agent has two sub-tabs, Chat and Changes; a box has a Changes tab
   next to Setup, with a path field for the repository. Changes reads top
   down: the branch in monospace with "ahead, behind upstream" and the
