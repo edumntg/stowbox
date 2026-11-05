@@ -42,6 +42,35 @@ pub fn temp_dir(prefix: &str) -> std::path::PathBuf {
     d
 }
 
+/// Runs `cmd` with local bash in `dir`, with `home` as `$HOME`; panics on failure.
+pub fn sh(dir: &std::path::Path, home: &std::path::Path, cmd: &str) -> String {
+    let out = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(dir)
+        .env("HOME", home)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{cmd}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+pub fn has_git() -> bool {
+    has_bash() && std::process::Command::new("git").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// A home with a git identity, a bare remote and a clone of it with one
+/// pushed commit on `main`.
+pub fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
+    let home = temp_dir("stowbox-git");
+    std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Test\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n").unwrap();
+    sh(&home, &home, "git init -q --bare remote.git && git clone -q remote.git work 2>/dev/null");
+    let work = home.join("work");
+    sh(&work, &home, "printf 'one\\ntwo\\n' > a.txt && git add a.txt && git commit -qm init && git push -q -u origin main 2>/dev/null");
+    (home, work)
+}
+
 /// Runs exec scripts with local bash in `home`, so code that talks to a box
 /// over exec is tested end to end. stdout and stderr stay separate, like on
 /// the wire. Tokens and `GIT_SSH_COMMAND` from the test runner's own

@@ -20,6 +20,7 @@ use stowbox_core::provider::Provider;
 use stowbox_core::provision::{self, Preset, ProvisionRun, RunEvent};
 use stowbox_core::store::Store;
 use stowbox_core::types::*;
+use stowbox_core::worktree;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -138,6 +139,13 @@ struct NewAgent {
     model: Option<String>,
     #[serde(default = "yes")]
     skip_permissions: bool,
+    /// Give the agent its own worktree on a new branch, made from the
+    /// repository that contains `cwd` before the first turn.
+    #[serde(default)]
+    own_branch: bool,
+    /// Text to name the branch after (the first task), when there is no title.
+    #[serde(default)]
+    branch_hint: Option<String>,
 }
 
 fn yes() -> bool {
@@ -335,14 +343,25 @@ async fn list_agents(state: State<'_, AppState>) -> CmdResult<Vec<AgentMeta>> {
 
 #[tauri::command]
 async fn create_agent(state: State<'_, AppState>, spec: NewAgent) -> CmdResult<AgentMeta> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let title = spec.title.filter(|t| !t.trim().is_empty()).unwrap_or_default();
+    let mut cwd = spec.cwd.filter(|c| !c.trim().is_empty());
+    let mut own = None;
+    if spec.own_branch {
+        let p = state.provider().await?;
+        let hint = if title.is_empty() { spec.branch_hint.unwrap_or_default() } else { title.clone() };
+        let added = worktree::add(p.as_ref(), &spec.machine_id, cwd.as_deref(), &worktree::slug(&hint, &id)).await.map_err(err)?;
+        cwd = Some(added.cwd);
+        own = Some(added.worktree);
+    }
     let now = now_ms();
     let meta = AgentMeta {
-        id: uuid::Uuid::new_v4().to_string(),
-        title: spec.title.filter(|t| !t.trim().is_empty()).unwrap_or_default(),
+        id,
+        title,
         harness: spec.harness,
         machine_id: spec.machine_id,
         machine_name: spec.machine_name,
-        cwd: spec.cwd.filter(|c| !c.trim().is_empty()),
+        cwd,
         model: spec.model.filter(|m| !m.trim().is_empty()),
         session_id: None,
         status: AgentStatus::Idle,
@@ -354,6 +373,7 @@ async fn create_agent(state: State<'_, AppState>, spec: NewAgent) -> CmdResult<A
         input_tokens: 0,
         output_tokens: 0,
         turn: None,
+        worktree: own,
     };
     state.agents.write().await.push(meta.clone());
     state.persist_agents().await?;
@@ -378,13 +398,26 @@ async fn rename_agent(state: State<'_, AppState>, id: String, title: String) -> 
     Ok(meta)
 }
 
+/// `remove_worktree` also removes the agent's worktree in the box (its
+/// branch stays) before anything else; if git refuses, for example over
+/// uncommitted files without `force`, the agent is kept and the error
+/// carries git's words.
 #[tauri::command]
-async fn delete_agent(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+async fn delete_agent(state: State<'_, AppState>, id: String, remove_worktree: Option<bool>, force: Option<bool>) -> CmdResult<()> {
+    let gone = state.agents.read().await.iter().find(|a| a.id == id).cloned();
+    if let (true, Some(a)) = (remove_worktree.unwrap_or(false), gone.as_ref()) {
+        if let Some(wt) = &a.worktree {
+            if is_busy(&a.status) {
+                return Err("stop the agent's turn before removing its worktree".into());
+            }
+            let p = state.provider().await?;
+            worktree::remove(p.as_ref(), &a.machine_id, wt, force.unwrap_or(false)).await.map_err(err)?;
+        }
+    }
     if let Some(h) = state.runs.lock().await.remove(&id) {
         h.abort();
     }
     // A turn still running in the box is killed on the way out, best effort.
-    let gone = state.agents.read().await.iter().find(|a| a.id == id).cloned();
     if let (Some(a), Ok(p)) = (gone, state.provider().await) {
         if let Some(turn) = a.turn {
             tauri::async_runtime::spawn(async move {

@@ -11,6 +11,7 @@
 //! - `notify`: which agent and setup outcomes deserve a desktop notification.
 //! - `provision`: setup presets (commands and secrets) run in a new box.
 //! - `store`: on-disk persistence of agent sessions and transcripts.
+//! - `worktree`: one git worktree and branch per agent, next to the repository.
 
 pub mod agent;
 pub mod boxd;
@@ -25,5 +26,6 @@ pub mod store;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod types;
+pub mod worktree;
 
 pub use error::{Error, Result};

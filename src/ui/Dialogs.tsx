@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createSignal, onCleanup, onMount, type JSX } 
 import type { Harness } from "../bridge/types";
 import { actions, machineById, state, type Dialog } from "../state/store";
 import * as I from "../icons";
-import { money } from "./format";
+import { isBusy, money } from "./format";
 
 const GIB = 1024 ** 3;
 
@@ -166,6 +166,7 @@ const NewAgent = (p: { machineId?: string }) => {
   const [cwd, setCwd] = createSignal("");
   const [model, setModel] = createSignal("");
   const [skip, setSkip] = createSignal(true);
+  const [ownBranch, setOwnBranch] = createSignal(false);
   const [first, setFirst] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -180,7 +181,16 @@ const NewAgent = (p: { machineId?: string }) => {
     setError("");
     try {
       await actions.createAgent(
-        { machineId: m.id, machineName: m.name, harness: harness(), cwd: cwd().trim() || null, model: model().trim() || null, skipPermissions: skip() },
+        {
+          machineId: m.id,
+          machineName: m.name,
+          harness: harness(),
+          cwd: cwd().trim() || null,
+          model: model().trim() || null,
+          skipPermissions: skip(),
+          ownBranch: ownBranch() && !!cwd().trim(),
+          branchHint: first().trim() || null,
+        },
         first(),
       );
       actions.closeDialog();
@@ -216,6 +226,17 @@ const NewAgent = (p: { machineId?: string }) => {
         <label for="na-cwd">Working directory</label>
         <input id="na-cwd" class="input mono" placeholder="/home/user/project (empty = home)" value={cwd()} onInput={(e) => setCwd(e.currentTarget.value)} />
       </div>
+      <label class="check">
+        <input type="checkbox" checked={ownBranch() && !!cwd().trim()} disabled={!cwd().trim()} onChange={(e) => setOwnBranch(e.currentTarget.checked)} />
+        <span>
+          <strong>Work on its own branch.</strong>{" "}
+          <Show when={cwd().trim()} fallback="Needs a working directory inside a git repository.">
+            A new branch <span class="mono">stowbox/…</span> in a git worktree next to the repository, in <span class="mono">&lt;repo&gt;-wt/</span>, started
+            from the commit checked out in <span class="mono">{cwd().trim()}</span>. Other agents on the same repository do not touch its files; uncommitted
+            changes in <span class="mono">{cwd().trim()}</span> stay there.
+          </Show>
+        </span>
+      </label>
       <div class="field">
         <label for="na-model">Model</label>
         <input id="na-model" class="input mono" placeholder="empty = harness default" value={model()} onInput={(e) => setModel(e.currentTarget.value)} />
@@ -243,7 +264,7 @@ const NewAgent = (p: { machineId?: string }) => {
           Cancel
         </button>
         <button class="btn primary" onClick={() => void create()} disabled={busy() || !machineId()}>
-          <I.Chat /> {busy() ? "Creating…" : first().trim() ? "Create and send" : "Create agent"}
+          <I.Chat /> {busy() ? (ownBranch() && cwd().trim() ? "Creating the worktree…" : "Creating…") : first().trim() ? "Create and send" : "Create agent"}
         </button>
       </div>
     </Modal>
@@ -364,6 +385,89 @@ const Confirm = (p: { d: Extract<NonNullable<Dialog>, { kind: "confirm" }> }) =>
   );
 };
 
+/** Removing an agent that has its own worktree: offers to remove the
+ * worktree too (the branch stays). git refuses a worktree with changes; the
+ * dialog then shows git's words and asks before discarding them. */
+const DeleteAgent = (p: { agentId: string }) => {
+  const a = () => state.agents.find((x) => x.id === p.agentId);
+  const working = () => !!a() && isBusy(a()!.status);
+  const boxGone = () => !!a() && !machineById(a()!.machineId);
+  const [remove, setRemove] = createSignal(!working() && !boxGone());
+  const [refused, setRefused] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+  const run = async (removeWorktree: boolean, force: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      await actions.deleteAgent(p.agentId, removeWorktree, force);
+      actions.closeDialog();
+    } catch (e) {
+      if (removeWorktree && !force) setRefused(errorText(e));
+      else setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Show when={a()}>
+      {(ag) => (
+        <Modal title={`Remove "${ag().title || "this agent"}"?`} onClose={actions.closeDialog}>
+          <p>The transcript is deleted from this computer.</p>
+          <label class="check">
+            <input type="checkbox" checked={remove()} disabled={working() || boxGone() || busy() || !!refused()} onChange={(e) => setRemove(e.currentTarget.checked)} />
+            <span>
+              <strong>Also remove its worktree</strong> <span class="mono">{ag().worktree!.path}</span>. The branch{" "}
+              <span class="mono">{ag().worktree!.branch}</span> stays in the repository, with everything committed on it.
+              <Switch>
+                <Match when={working()}>
+                  <span class="hint" style={{ display: "block" }}>
+                    Stop the agent's turn first to remove its worktree.
+                  </span>
+                </Match>
+                <Match when={boxGone()}>
+                  <span class="hint" style={{ display: "block" }}>
+                    The box is no longer in your boxd account.
+                  </span>
+                </Match>
+              </Switch>
+            </span>
+          </label>
+          <Show when={refused()}>
+            <div class="form-error mono" style={{ "white-space": "pre-wrap" }}>
+              {refused()}
+            </div>
+            <p class="hint">Remove it anyway to discard those changes, or keep the worktree and remove only the agent.</p>
+          </Show>
+          <Show when={error()}>
+            <div class="form-error">{error()}</div>
+          </Show>
+          <div class="dialog-actions">
+            <button class="btn" onClick={actions.closeDialog} disabled={busy()}>
+              Cancel
+            </button>
+            <Show
+              when={refused()}
+              fallback={
+                <button class="btn danger" onClick={() => void run(remove(), false)} disabled={busy()}>
+                  {busy() ? "Working…" : remove() ? "Remove agent and worktree" : "Remove agent"}
+                </button>
+              }
+            >
+              <button class="btn" onClick={() => void run(false, false)} disabled={busy()}>
+                Keep the worktree
+              </button>
+              <button class="btn danger" onClick={() => void run(true, true)} disabled={busy()}>
+                {busy() ? "Working…" : "Discard changes and remove"}
+              </button>
+            </Show>
+          </div>
+        </Modal>
+      )}
+    </Show>
+  );
+};
+
 export default function Dialogs() {
   const d = () => state.ui.dialog;
   return (
@@ -376,6 +480,9 @@ export default function Dialogs() {
       </Match>
       <Match when={d()?.kind === "settings"}>
         <Settings />
+      </Match>
+      <Match when={d()?.kind === "delete-agent"}>
+        <DeleteAgent agentId={(d() as { agentId: string }).agentId} />
       </Match>
       <Match when={d()?.kind === "confirm"}>
         <Confirm d={d() as Extract<NonNullable<Dialog>, { kind: "confirm" }>} />

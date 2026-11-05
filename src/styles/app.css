@@ -786,6 +786,27 @@ ul {
   gap: 6px;
 }
 
+/* Last in the row and sized by the space left, never by its text, so a
+   long branch name cannot widen the view. */
+.subhead .branch {
+  flex: 1 1 0;
+  min-width: 0;
+  contain: inline-size;
+}
+
+.subhead .branch span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subhead .branch svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
 .stats {
   display: inline-flex;
   gap: 12px;

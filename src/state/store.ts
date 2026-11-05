@@ -31,6 +31,7 @@ export type Dialog =
   | { kind: "new-box" }
   | { kind: "new-agent"; machineId?: string }
   | { kind: "settings" }
+  | { kind: "delete-agent"; agentId: string }
   | { kind: "confirm"; title: string; body: string; confirmLabel: string; danger: boolean; run: () => Promise<void> };
 export interface NotifyPrefs {
   /** Notify when an agent finishes or fails, or a setup run ends. */
@@ -649,18 +650,23 @@ export const actions = {
   },
 
   confirmDeleteAgent(a: AgentMeta) {
+    // An agent with its own worktree gets the dialog that offers to remove it.
+    if (a.worktree) return actions.openDialog({ kind: "delete-agent", agentId: a.id });
     actions.openDialog({
       kind: "confirm",
       title: `Remove "${a.title || "this agent"}"?`,
       body: "The transcript is deleted from this computer. The box and its files are not touched.",
       confirmLabel: "Remove agent",
       danger: true,
-      run: async () => {
-        await api.deleteAgent(a.id);
-        setState("agents", (as) => as.filter((x) => x.id !== a.id));
-        actions.closeTab({ kind: "agent", id: a.id });
-      },
+      run: () => actions.deleteAgent(a.id),
     });
+  },
+
+  /** Throws git's message when the worktree cannot be removed; the agent is kept then. */
+  async deleteAgent(id: string, removeWorktree = false, force = false) {
+    await api.deleteAgent(id, removeWorktree, force);
+    setState("agents", (as) => as.filter((x) => x.id !== id));
+    actions.closeTab({ kind: "agent", id });
   },
 
   async copy(text: string, what = "Copied") {

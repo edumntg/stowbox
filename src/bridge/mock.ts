@@ -257,6 +257,7 @@ async function simulateTurn(id: string, text: string) {
   await sleep(900);
   if (stopped(id) || !(await simulateReconnect(id, { kind: "tool", name: "Bash" }))) return;
   record(id, { type: "tool_result", tool_use_id: "x1", content: " M src/app.ts", is_error: false });
+  dirtyWorktree(id);
   setStatus(id, { kind: "thinking" });
   await sleep(700);
   record(id, { type: "assistant", blocks: [{ type: "text", text: "One modified file. Tell me whether to commit it or keep going." }] });
@@ -529,6 +530,45 @@ function mockRepo(machineId: string, cwd: string | null): MockRepo | GitReview["
   return dir === "/home/user" || dir === "" ? "not-repo" : "no-dir";
 }
 
+/** The core's `worktree::slug`: up to five words of the hint, then six characters of the id. */
+function slug(hint: string, id: string): string {
+  let head = "";
+  for (const w of hint.split(/[^A-Za-z0-9]+/).filter(Boolean).slice(0, 5)) {
+    if (head.length + w.length + 1 > 32) break;
+    head += (head ? "-" : "") + w.toLowerCase();
+  }
+  const tail = id.replace(/[^A-Za-z0-9]/g, "").slice(0, 6).toLowerCase();
+  return [head || "agent", tail].filter(Boolean).join("-");
+}
+
+/** Like `git worktree add -b stowbox/<slug> <repo>-wt/<slug> HEAD`: a clean checkout of the repository's commit. */
+function addWorktree(machineId: string, cwd: string | null, s: string): { worktree: NonNullable<AgentMeta["worktree"]>; cwd: string } {
+  const r = mockRepo(machineId, cwd);
+  const shown = cwd?.trim() || "~";
+  if (r === "no-dir") throw new Error(`${shown} does not exist in the box, so the agent cannot have its own branch there`);
+  if (typeof r === "string") throw new Error(`${shown} is not inside a git repository, so the agent cannot have its own branch there`);
+  const root = r.review.root;
+  const path = `${root}-wt/${s}`;
+  const branch = `stowbox/${s}`;
+  if (repos[`${machineId}:${path}`]) throw new Error(`${path} already exists`);
+  const dir = (cwd ?? "~").replace(/^~(?=\/|$)/, "/home/user").replace(/\/+$/, "");
+  const prefix = dir.slice(root.length);
+  repos[`${machineId}:${path}`] = {
+    rejectPush: false,
+    review: { ...structuredClone(r.review), root: path, branch: { head: branch, oid: r.review.branch.oid, upstream: null, ahead: 0, behind: 0 }, files: [], diff: [] },
+  };
+  return { worktree: { path, branch, repo: root }, cwd: path + prefix };
+}
+
+/** A mock turn edits a file in the agent's worktree, so its Changes tab and removal have something to show. */
+function dirtyWorktree(id: string) {
+  const a = agents.find((x) => x.id === id);
+  const r = a?.worktree && repos[`${a.machineId}:${a.worktree.path}`];
+  if (!r || r.review.files.length) return;
+  r.review.files = [{ path: "src/app.ts", origPath: null, code: "M", staged: false }];
+  r.review.diff = [{ path: "src/app.ts", oldPath: null, change: "modified", binary: false, additions: 4, deletions: 1, patch: healthPatch }];
+}
+
 function requireRepo(machineId: string, cwd: string | null): MockRepo {
   const r = mockRepo(machineId, cwd);
   if (typeof r === "string") throw new Error(r === "no-dir" ? "the directory does not exist in the box" : "the directory is not inside a git repository");
@@ -627,13 +667,23 @@ export const mockApi: Api = {
     return [...agents].sort((a, b) => b.updatedAt - a.updatedAt);
   },
   async createAgent(spec) {
+    const id = "ag_" + Math.random().toString(16).slice(2, 10);
+    let cwd = spec.cwd ?? null;
+    let worktree: AgentMeta["worktree"] = null;
+    if (spec.ownBranch) {
+      await sleep(700);
+      const added = addWorktree(spec.machineId, cwd, slug(spec.title || spec.branchHint || "", id.slice(3)));
+      cwd = added.cwd;
+      worktree = added.worktree;
+    }
     const meta: AgentMeta = {
-      id: "ag_" + Date.now(),
+      id,
       title: spec.title ?? "",
       harness: spec.harness,
       machineId: spec.machineId,
       machineName: spec.machineName,
-      cwd: spec.cwd ?? null,
+      cwd,
+      worktree,
       model: spec.model ?? null,
       sessionId: null,
       status: { kind: "idle" },
@@ -663,7 +713,17 @@ export const mockApi: Api = {
     setStatus(id, { kind: "stopped" });
     record(id, { type: "exit", code: -1 });
   },
-  async deleteAgent(id) {
+  async deleteAgent(id, removeWorktree, force) {
+    const a = agents.find((x) => x.id === id);
+    const wt = a?.worktree;
+    if (a && wt && removeWorktree) {
+      if (a.status.kind === "starting" || a.status.kind === "thinking" || a.status.kind === "tool" || a.status.kind === "reconnecting")
+        throw new Error("stop the agent's turn before removing its worktree");
+      await sleep(500);
+      const key = `${a.machineId}:${wt.path}`;
+      if (repos[key]?.review.files.length && !force) throw new Error(`fatal: '${wt.path}' contains modified or untracked files, use --force to delete it`);
+      delete repos[key];
+    }
     agents = agents.filter((a) => a.id !== id);
     delete transcripts[id];
   },

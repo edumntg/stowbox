@@ -79,6 +79,17 @@ shadows, except the floating shadow under dialogs and toasts.
   Empty states name the directory: not a repository, missing, git not
   installed, no changes; a box in standby offers "Wake and read" instead
   of waking on its own.
+- New agent has a "Work on its own branch" checkbox under the working
+  directory (disabled, with the reason, while the directory is empty).
+  An agent with its own worktree shows its branch last in the header's
+  second line, a branch icon and the name in monospace, cut with an
+  ellipsis before it can widen the view; the box panel lists it under
+  the directory with the repository it belongs to. Removing such an
+  agent opens its own dialog: one checkbox, on by default, to remove the
+  worktree too (the branch stays), disabled with the reason while a turn
+  runs or once the box is gone. When git refuses, its message shows
+  verbatim in the red error style and the actions become "Keep the
+  worktree" and "Discard changes and remove".
 - Right panel (280px) when an agent is open: a toolbar of icon buttons, the
   box card with the hourly estimate and power controls, the session facts.
 - A 24px status bar: account, balance, how many boxes are running and the
