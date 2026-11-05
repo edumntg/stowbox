@@ -173,6 +173,8 @@ export type AgentStatus =
   | { kind: "starting" }
   | { kind: "thinking" }
   | { kind: "tool"; name: string }
+  /** A turn runs detached in the box; its output stream is not attached yet. */
+  | { kind: "reconnecting"; message: string }
   | { kind: "done" }
   | { kind: "failed"; message: string }
   | { kind: "stopped" };

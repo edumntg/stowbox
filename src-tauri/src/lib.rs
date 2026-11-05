@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use stowbox_core::agent::{self, AgentEvent, AgentMeta, AgentStatus, Block, Harness, LineBuffer, TurnSpec};
+use stowbox_core::agent::detached::{self, FollowEnd, FollowItem, TurnCursor};
+use stowbox_core::agent::{self, AgentEvent, AgentMeta, AgentStatus, Block, Harness, TurnSpec};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::cost;
 use stowbox_core::metrics::MachineMetrics;
@@ -33,7 +34,8 @@ struct AppState {
     secret_backend: RwLock<Option<secrets::Backend>>,
     store: Store,
     agents: RwLock<Vec<AgentMeta>>,
-    runs: Mutex<HashMap<String, RunHandle>>,
+    /// Live followers of detached agent turns, by agent id.
+    runs: Mutex<HashMap<String, AbortHandle>>,
     terminals: Mutex<HashMap<String, RunHandle>>,
     rates: RwLock<Option<(String, Rates)>>,
     presets: RwLock<Vec<Preset>>,
@@ -239,11 +241,17 @@ async fn machine_power(state: State<'_, AppState>, id: String, action: PowerActi
         state.persist_setup_runs().await?;
         // Agents that lived there are kept as history, but marked stopped.
         let mut agents = state.agents.write().await;
+        let mut runs = state.runs.lock().await;
         for a in agents.iter_mut().filter(|a| a.machine_id == id) {
-            if matches!(a.status, AgentStatus::Starting | AgentStatus::Thinking | AgentStatus::Tool { .. }) {
+            if is_busy(&a.status) {
                 a.status = AgentStatus::Stopped;
             }
+            a.turn = None;
+            if let Some(h) = runs.remove(&a.id) {
+                h.abort();
+            }
         }
+        drop(runs);
         drop(agents);
         state.persist_agents().await?;
     }
@@ -310,6 +318,7 @@ async fn create_agent(state: State<'_, AppState>, spec: NewAgent) -> CmdResult<A
         turns: 0,
         input_tokens: 0,
         output_tokens: 0,
+        turn: None,
     };
     state.agents.write().await.push(meta.clone());
     state.persist_agents().await?;
@@ -336,8 +345,17 @@ async fn rename_agent(state: State<'_, AppState>, id: String, title: String) -> 
 
 #[tauri::command]
 async fn delete_agent(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    if let Some(run) = state.runs.lock().await.remove(&id) {
-        run.abort.abort();
+    if let Some(h) = state.runs.lock().await.remove(&id) {
+        h.abort();
+    }
+    // A turn still running in the box is killed on the way out, best effort.
+    let gone = state.agents.read().await.iter().find(|a| a.id == id).cloned();
+    if let (Some(a), Ok(p)) = (gone, state.provider().await) {
+        if let Some(turn) = a.turn {
+            tauri::async_runtime::spawn(async move {
+                let _ = detached::stop(p.as_ref(), &a.machine_id, &a.id, &turn.id).await;
+            });
+        }
     }
     state.agents.write().await.retain(|a| a.id != id);
     state.persist_agents().await?;
@@ -346,12 +364,35 @@ async fn delete_agent(state: State<'_, AppState>, id: String) -> CmdResult<()> {
 
 #[tauri::command]
 async fn agent_stop(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let Some(run) = state.runs.lock().await.remove(&id) else { return Ok(()) };
-    run.abort.abort();
-    drop(run.input);
-    let meta = update_meta(&state, &id, |m| m.status = AgentStatus::Stopped).await?;
+    let follower = state.runs.lock().await.remove(&id);
+    if let Some(h) = &follower {
+        h.abort();
+    }
+    let meta = state.agents.read().await.iter().find(|a| a.id == id).cloned().ok_or("agent not found")?;
+    let Some(turn) = meta.turn.clone() else {
+        if follower.is_none() {
+            return Ok(());
+        }
+        let meta = update_meta(&state, &id, |m| m.status = AgentStatus::Stopped).await?;
+        push(&app, &state, &id, Some(AgentEvent::Exit { code: -1 }), meta).await;
+        return Ok(());
+    };
+    // The turn runs on its own in the box, so stopping it means killing it there.
+    let killed = match state.provider().await {
+        Ok(p) => detached::stop(p.as_ref(), &meta.machine_id, &id, &turn.id).await.map_err(err),
+        Err(e) => Err(e),
+    };
+    let meta = update_meta(&state, &id, |m| {
+        m.status = AgentStatus::Stopped;
+        m.turn = None;
+    })
+    .await?;
     push(&app, &state, &id, Some(AgentEvent::Exit { code: -1 }), meta).await;
-    Ok(())
+    killed.map_err(|e| format!("marked stopped, but the turn may still be running in the box: {e}"))
+}
+
+fn is_busy(s: &AgentStatus) -> bool {
+    matches!(s, AgentStatus::Starting | AgentStatus::Thinking | AgentStatus::Tool { .. } | AgentStatus::Reconnecting { .. })
 }
 
 async fn update_meta(state: &AppState, id: &str, f: impl FnOnce(&mut AgentMeta)) -> CmdResult<AgentMeta> {
@@ -397,7 +438,8 @@ async fn agent_send(app: AppHandle, state: State<'_, AppState>, id: String, text
         max_turns: None,
         max_budget_usd: None,
     };
-    let script = agent::turn_command(meta.harness, &spec);
+    let command = agent::turn_command(meta.harness, &spec);
+    let turn_id = detached::new_turn_id(now_ms());
 
     let title_from_prompt = meta.title.is_empty();
     let meta = update_meta(&state, &id, |m| {
@@ -405,118 +447,163 @@ async fn agent_send(app: AppHandle, state: State<'_, AppState>, id: String, text
             m.title = title_from(&text);
         }
         m.status = AgentStatus::Starting;
+        m.turn = Some(TurnCursor::new(turn_id.clone()));
     })
     .await?;
     push(&app, &state, &id, Some(AgentEvent::UserMessage { text: text.clone() }), meta.clone()).await;
 
-    let handle = match p
-        .exec(
-            &meta_machine(&state, &id).await?,
-            ExecSpec {
-                script,
-                tty: false,
-                cols: 0,
-                rows: 0,
-                env: vec![("TERM".into(), "dumb".into()), ("NO_COLOR".into(), "1".into())],
-            },
-        )
-        .await
-    {
-        Ok(h) => h,
-        Err(e) => {
-            let msg = e.to_string();
-            let meta = update_meta(&state, &id, |m| m.status = AgentStatus::Failed { message: msg.clone() }).await?;
-            push(&app, &state, &id, Some(AgentEvent::Stderr { text: msg.clone() }), meta).await;
-            return Err(msg);
-        }
-    };
-
-    let ExecHandle { input, mut output } = handle;
+    // The turn runs detached in the box and writes to files there; a second
+    // exec follows those files, so a dropped stream or a closed app does
+    // not end the turn.
+    let env = vec![("TERM".into(), "dumb".into()), ("NO_COLOR".into(), "1".into())];
     let prompt = format!("{text}\n");
-    input.send(ExecInput::Data(prompt.into_bytes())).await.map_err(|_| "could not send the prompt")?;
-    input.send(ExecInput::Close).await.map_err(|_| "could not close stdin")?;
-
-    let app2 = app.clone();
-    let agent_id = id.clone();
-    let harness = meta.harness;
-    let reader = tokio::spawn(async move {
-        let st = app2.state::<AppState>();
-        let mut parser = agent::parser_for(harness);
-        let mut out_buf = LineBuffer::default();
-        let mut err_buf = LineBuffer::default();
-        let mut saw_result = false;
-
-        while let Some(chunk) = output.recv().await {
-            let (lines, is_err) = match chunk {
-                ExecOutput::Stdout(b) => (out_buf.push(&b), false),
-                ExecOutput::Stderr(b) => (err_buf.push(&b), true),
-                ExecOutput::Exit(code) => {
-                    let tail: Vec<AgentEvent> = out_buf
-                        .flush()
-                        .map(|l| parser.parse_line(&l))
-                        .unwrap_or_default()
-                        .into_iter()
-                        .chain(err_buf.flush().map(|t| AgentEvent::Stderr { text: t }))
-                        .collect();
-                    for ev in tail {
-                        saw_result |= matches!(ev, AgentEvent::Result { .. });
-                        apply_event(&app2, &st, &agent_id, ev).await;
-                    }
-                    if !saw_result {
-                        let msg = format!("the agent process exited with code {code} before reporting a result");
-                        let _ = update_meta(&st, &agent_id, |m| {
-                            if !matches!(m.status, AgentStatus::Done | AgentStatus::Failed { .. } | AgentStatus::Stopped) {
-                                m.status = AgentStatus::Failed { message: msg.clone() };
-                            }
-                        })
-                        .await;
-                    }
-                    if let Ok(meta) = update_meta(&st, &agent_id, |_| {}).await {
-                        push(&app2, &st, &agent_id, Some(AgentEvent::Exit { code }), meta).await;
-                    }
-                    break;
-                }
-                ExecOutput::Error(message) => {
-                    if let Ok(meta) =
-                        update_meta(&st, &agent_id, |m| m.status = AgentStatus::Failed { message: message.clone() }).await
-                    {
-                        push(&app2, &st, &agent_id, Some(AgentEvent::Stderr { text: message }), meta).await;
-                    }
-                    break;
-                }
-            };
-            for line in lines {
-                let events = if is_err {
-                    if line.trim().is_empty() {
-                        vec![]
-                    } else {
-                        vec![AgentEvent::Stderr { text: line }]
-                    }
-                } else {
-                    parser.parse_line(&line)
-                };
-                for ev in events {
-                    saw_result |= matches!(ev, AgentEvent::Result { .. });
-                    apply_event(&app2, &st, &agent_id, ev).await;
-                }
-            }
-        }
-        st.runs.lock().await.remove(&agent_id);
-    });
-
-    state.runs.lock().await.insert(id, RunHandle { input, abort: reader.abort_handle() });
+    if let Err(e) = detached::launch(p.as_ref(), &meta.machine_id, &id, &turn_id, &command, &prompt, env).await {
+        let msg = e.to_string();
+        let meta = update_meta(&state, &id, |m| {
+            m.status = AgentStatus::Failed { message: msg.clone() };
+            m.turn = None;
+        })
+        .await?;
+        push(&app, &state, &id, Some(AgentEvent::Stderr { text: msg.clone() }), meta).await;
+        return Err(msg);
+    }
+    spawn_follower(&app, &state, id).await;
     Ok(())
 }
 
-async fn meta_machine(state: &AppState, id: &str) -> CmdResult<String> {
-    state
-        .agents
-        .read()
-        .await
-        .iter()
-        .find(|a| a.id == id)
-        .map(|a| a.machine_id.clone())
-        .ok_or_else(|| "agent not found".to_string())
+/// Starts following the agent's turn in the background.
+async fn spawn_follower(app: &AppHandle, state: &AppState, id: String) {
+    // The lock is held across the spawn so the task's own removal at the end
+    // cannot run before this insert.
+    let mut runs = state.runs.lock().await;
+    let task = tauri::async_runtime::spawn(follow_turn(app.clone(), id.clone()));
+    if let Some(old) = runs.insert(id, task.inner().abort_handle()) {
+        old.abort();
+    }
+}
+
+/// Shows that the turn is not attached, unless a result already came in.
+async fn set_reconnecting(app: &AppHandle, state: &AppState, id: &str, message: String) {
+    let still_running = state.agents.read().await.iter().any(|a| a.id == id && is_busy(&a.status));
+    if !still_running {
+        return;
+    }
+    if let Ok(meta) = update_meta(state, id, |m| m.status = AgentStatus::Reconnecting { message }).await {
+        push(app, state, id, None, meta).await;
+    }
+}
+
+/// Ends a turn that will produce nothing more. Without an exit code the
+/// failure itself goes into the transcript.
+async fn end_turn(app: &AppHandle, state: &AppState, id: &str, code: Option<i32>, failure: Option<String>) {
+    let meta = update_meta(state, id, |m| {
+        if let Some(msg) = &failure {
+            if !matches!(m.status, AgentStatus::Done | AgentStatus::Failed { .. } | AgentStatus::Stopped) {
+                m.status = AgentStatus::Failed { message: msg.clone() };
+            }
+        }
+        m.turn = None;
+    })
+    .await;
+    let event = match (code, failure) {
+        (Some(code), _) => Some(AgentEvent::Exit { code }),
+        (None, Some(text)) => Some(AgentEvent::Stderr { text }),
+        (None, None) => None,
+    };
+    if let Ok(meta) = meta {
+        push(app, state, id, event, meta).await;
+    }
+}
+
+/// Follows the agent's detached turn until it ends, following again from
+/// the saved offsets whenever the stream drops or the box is not running.
+async fn follow_turn(app: AppHandle, id: String) {
+    let st = app.state::<AppState>();
+    let Some(harness) = st.agents.read().await.iter().find(|a| a.id == id).map(|a| a.harness) else { return };
+    let mut parser = agent::parser_for(harness);
+    let mut saw_result = false;
+    let mut attempt = 0u32;
+    // What to show again once the stream is back.
+    let mut resume: Option<AgentStatus> = None;
+    loop {
+        let Some(meta) = st.agents.read().await.iter().find(|a| a.id == id).cloned() else { break };
+        let Some(cursor) = meta.turn.clone() else { break };
+        if !matches!(meta.status, AgentStatus::Reconnecting { .. }) {
+            resume = Some(meta.status.clone());
+        }
+        let wait = match st.provider().await {
+            Err(e) => Some((e, detached::backoff_secs(attempt))),
+            Ok(p) => match p.get_machine(&meta.machine_id).await {
+                Err(e) => Some((format!("cannot reach the box: {e}"), detached::backoff_secs(attempt))),
+                Ok(m) => match m.status {
+                    MachineStatus::Running => match detached::follow(p.as_ref(), &meta.machine_id, &id, &cursor).await {
+                        Err(e) => Some((format!("cannot follow the turn: {e}"), detached::backoff_secs(attempt))),
+                        Ok(mut stream) => {
+                            if matches!(meta.status, AgentStatus::Reconnecting { .. }) {
+                                let back = resume.clone().unwrap_or(AgentStatus::Thinking);
+                                if let Ok(meta) = update_meta(&st, &id, |m| {
+                                    if matches!(m.status, AgentStatus::Reconnecting { .. }) {
+                                        m.status = back;
+                                    }
+                                })
+                                .await
+                                {
+                                    push(&app, &st, &id, None, meta).await;
+                                }
+                            }
+                            let end = loop {
+                                let item = stream.next().await;
+                                let cursor = match &item {
+                                    FollowItem::End(end) => break end.clone(),
+                                    FollowItem::Out { cursor, .. } | FollowItem::Err { cursor, .. } => cursor.clone(),
+                                };
+                                attempt = 0;
+                                let events = detached::line_events(parser.as_mut(), &item);
+                                let last = events.len().saturating_sub(1);
+                                for (i, ev) in events.into_iter().enumerate() {
+                                    saw_result |= matches!(ev, AgentEvent::Result { .. });
+                                    // The cursor moves with the line's last event, in the same write.
+                                    apply_event(&app, &st, &id, ev, (i == last).then_some(&cursor)).await;
+                                }
+                            };
+                            match end {
+                                FollowEnd::Exited(code) => {
+                                    let failure = (!saw_result).then(|| format!("the agent process exited with code {code} before reporting a result"));
+                                    end_turn(&app, &st, &id, Some(code), failure).await;
+                                    break;
+                                }
+                                FollowEnd::Lost => {
+                                    let msg = "the turn's process ended without an exit code; the box may have restarted".to_string();
+                                    end_turn(&app, &st, &id, None, Some(msg)).await;
+                                    break;
+                                }
+                                FollowEnd::Missing => {
+                                    end_turn(&app, &st, &id, None, Some("the turn's files are no longer in the box".into())).await;
+                                    break;
+                                }
+                                FollowEnd::Dropped(e) => Some((format!("the stream dropped ({e})"), detached::backoff_secs(attempt))),
+                            }
+                        }
+                    },
+                    // The turn is frozen with the box; exec would wake it, so wait instead.
+                    MachineStatus::Suspended | MachineStatus::Hibernated => {
+                        Some((format!("the box is {}; the turn continues when it runs again", if m.status == MachineStatus::Suspended { "in standby" } else { "hibernated" }), 5))
+                    }
+                    MachineStatus::Stopped | MachineStatus::Failed => {
+                        end_turn(&app, &st, &id, None, Some("the box stopped while the turn was running".into())).await;
+                        break;
+                    }
+                    _ => Some(("waiting for the box to start".to_string(), 3)),
+                },
+            },
+        };
+        if let Some((why, secs)) = wait {
+            set_reconnecting(&app, &st, &id, why).await;
+            attempt += 1;
+            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+        }
+    }
+    st.runs.lock().await.remove(&id);
 }
 
 fn title_from(prompt: &str) -> String {
@@ -529,47 +616,52 @@ fn title_from(prompt: &str) -> String {
 }
 
 /// Folds one parsed event into the agent's metadata, then pushes it.
-async fn apply_event(app: &AppHandle, state: &AppState, id: &str, ev: AgentEvent) {
-    let Ok(meta) = update_meta(state, id, |m| match &ev {
-        AgentEvent::Init { session_id, model, .. } => {
-            if !session_id.is_empty() {
-                m.session_id = Some(session_id.clone());
-            }
-            if m.model.is_none() {
-                m.model = model.clone();
-            }
-            m.status = AgentStatus::Thinking;
+async fn apply_event(app: &AppHandle, state: &AppState, id: &str, ev: AgentEvent, cursor: Option<&TurnCursor>) {
+    let Ok(meta) = update_meta(state, id, |m| {
+        if let Some(c) = cursor.filter(|c| m.turn.as_ref().is_some_and(|t| t.id == c.id)) {
+            m.turn = Some(c.clone());
         }
-        AgentEvent::Assistant { blocks } => {
-            if let Some(Block::ToolUse { name, .. }) = blocks.iter().find(|b| matches!(b, Block::ToolUse { .. })) {
-                m.status = AgentStatus::Tool { name: name.clone() };
-            } else {
+        match &ev {
+            AgentEvent::Init { session_id, model, .. } => {
+                if !session_id.is_empty() {
+                    m.session_id = Some(session_id.clone());
+                }
+                if m.model.is_none() {
+                    m.model = model.clone();
+                }
                 m.status = AgentStatus::Thinking;
             }
-        }
-        AgentEvent::ToolResult { .. } => m.status = AgentStatus::Thinking,
-        AgentEvent::TextDelta { .. } => {
-            if matches!(m.status, AgentStatus::Starting) {
-                m.status = AgentStatus::Thinking;
+            AgentEvent::Assistant { blocks } => {
+                if let Some(Block::ToolUse { name, .. }) = blocks.iter().find(|b| matches!(b, Block::ToolUse { .. })) {
+                    m.status = AgentStatus::Tool { name: name.clone() };
+                } else {
+                    m.status = AgentStatus::Thinking;
+                }
             }
-        }
-        AgentEvent::Result { ok, subtype, message, cost_usd, turns, session_id, input_tokens, output_tokens, .. } => {
-            if let Some(c) = cost_usd {
-                m.total_cost_usd += c;
+            AgentEvent::ToolResult { .. } => m.status = AgentStatus::Thinking,
+            AgentEvent::TextDelta { .. } => {
+                if matches!(m.status, AgentStatus::Starting | AgentStatus::Reconnecting { .. }) {
+                    m.status = AgentStatus::Thinking;
+                }
             }
-            m.turns += turns.unwrap_or(1);
-            m.input_tokens += input_tokens.unwrap_or(0);
-            m.output_tokens += output_tokens.unwrap_or(0);
-            if let Some(s) = session_id.as_ref().filter(|s| !s.is_empty()) {
-                m.session_id = Some(s.clone());
+            AgentEvent::Result { ok, subtype, message, cost_usd, turns, session_id, input_tokens, output_tokens, .. } => {
+                if let Some(c) = cost_usd {
+                    m.total_cost_usd += c;
+                }
+                m.turns += turns.unwrap_or(1);
+                m.input_tokens += input_tokens.unwrap_or(0);
+                m.output_tokens += output_tokens.unwrap_or(0);
+                if let Some(s) = session_id.as_ref().filter(|s| !s.is_empty()) {
+                    m.session_id = Some(s.clone());
+                }
+                m.status = if *ok {
+                    AgentStatus::Done
+                } else {
+                    AgentStatus::Failed { message: message.clone().unwrap_or_else(|| subtype.replace('_', " ")) }
+                };
             }
-            m.status = if *ok {
-                AgentStatus::Done
-            } else {
-                AgentStatus::Failed { message: message.clone().unwrap_or_else(|| subtype.replace('_', " ")) }
-            };
+            AgentEvent::UserMessage { .. } | AgentEvent::Stderr { .. } | AgentEvent::Exit { .. } => {}
         }
-        AgentEvent::UserMessage { .. } | AgentEvent::Stderr { .. } | AgentEvent::Exit { .. } => {}
     })
     .await
     else {
@@ -909,16 +1001,19 @@ pub fn run() {
                 eprintln!("stowbox: could not read agents.json: {e}");
                 Vec::new()
             });
-            // Nothing is running right after launch; turns do not survive restarts.
-            let agents = agents
+            // Turns run detached in the box, so one that was running when the
+            // app closed may still be; follow it again from the saved offsets.
+            // A busy agent without a turn record cannot be found again.
+            let agents: Vec<AgentMeta> = agents
                 .into_iter()
                 .map(|mut a| {
-                    if matches!(a.status, AgentStatus::Starting | AgentStatus::Thinking | AgentStatus::Tool { .. }) {
+                    if is_busy(&a.status) && a.turn.is_none() {
                         a.status = AgentStatus::Stopped;
                     }
                     a
                 })
                 .collect();
+            let reattach: Vec<String> = agents.iter().filter(|a| a.turn.is_some()).map(|a| a.id.clone()).collect();
 
             let presets = tauri::async_runtime::block_on(store.load_presets()).unwrap_or_else(|e| {
                 eprintln!("stowbox: could not read presets.json: {e}");
@@ -949,6 +1044,13 @@ pub fn run() {
                 preset_secrets,
                 setup_runs: RwLock::new(setup_runs),
                 setups: Mutex::new(HashMap::new()),
+            });
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let st = handle.state::<AppState>();
+                for id in reattach {
+                    spawn_follower(&handle, &st, id).await;
+                }
             });
             Ok(())
         })

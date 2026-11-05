@@ -122,6 +122,9 @@ const Transcript = (p: { agent: AgentMeta }) => {
             <Show when={live()}>
               <div class="msg-text msg-live" innerHTML={renderMarkdown(live())} />
             </Show>
+            <Show when={p.agent.status.kind === "reconnecting" && (p.agent.status as { message: string }).message}>
+              {(msg) => <div class="msg-note">Reconnecting to the turn, which keeps running in the box: {msg()}.</div>}
+            </Show>
             <Show when={!live() && p.agent.status.kind === "starting"}>
               <div class="msg-note">Starting {p.agent.harness === "claude-code" ? "claude" : "codex"} in {machine()?.name ?? p.agent.machineName}…</div>
             </Show>

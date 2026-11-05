@@ -57,6 +57,8 @@ export function agentStatusLabel(s: AgentStatus): string {
       return "Thinking";
     case "tool":
       return "Running " + s.name;
+    case "reconnecting":
+      return "Reconnecting";
     case "done":
       return "Finished";
     case "failed":
@@ -67,7 +69,7 @@ export function agentStatusLabel(s: AgentStatus): string {
 }
 
 export function isBusy(s: AgentStatus): boolean {
-  return s.kind === "starting" || s.kind === "thinking" || s.kind === "tool";
+  return s.kind === "starting" || s.kind === "thinking" || s.kind === "tool" || s.kind === "reconnecting";
 }
 
 export function relTime(ms: number, now = Date.now()): string {

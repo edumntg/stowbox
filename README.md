@@ -30,6 +30,14 @@ few tens of megabytes instead of an Electron process per window.
   id is kept so the next message continues the same conversation. Text
   streams as the model types; tool calls and their output fold into cards;
   cost, turns and tokens accumulate per agent. Transcripts persist on disk.
+  Turns keep running when Stowbox is closed, the laptop sleeps or the
+  network drops: each one runs detached inside the box and writes its
+  output to `~/.stowbox/turns/<agent>/<turn>/` there (the last five turns
+  per agent are kept). Stowbox follows those files from the last line it
+  applied, so after a drop or a restart it reconnects and picks up where it
+  left off, with no line shown twice or skipped. While the box is in
+  standby or hibernated the agent says so and waits instead of waking it;
+  Stop kills the turn's process group in the box.
 - **Terminal**: an interactive login shell in the box over boxd's exec
   stream (xterm.js on this side). Standby and hibernated boxes wake on open.
 - **Cost**: account balance and not-yet-charged usage in the sidebar, metered
@@ -141,7 +149,10 @@ Sandboxes later.
 - Exec: one bidirectional `Exec` stream per terminal or agent turn. Commands
   are wrapped in `bash -lc`, so `cd`, pipes and env exports behave the same
   whether the server execs directly or through a shell. Dropping the stream
-  kills the remote process group, which is how Stop works.
+  kills the remote process group, which is how a terminal closes. Agent
+  turns are started with `setsid` in their own session so they outlive the
+  stream that launched them; a second exec follows their output files with
+  `tail -f`, and Stop kills the turn's process group by the pid it wrote.
 - Costs: the sidebar estimate multiplies the box's vCPU, RAM and disk by the
   rate card from `GetOrgUsage`; running boxes pay all three, standby pays RAM
   and disk, hibernated and stopped pay disk only. Metered numbers come from

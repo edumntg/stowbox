@@ -126,6 +126,26 @@ let agents: AgentMeta[] = [
     inputTokens: 900,
     outputTokens: 40,
   },
+  {
+    // A turn left running when the app closed, on a box that went to standby
+    // since: the app waits for the box instead of waking it.
+    id: "ag_4",
+    title: "Upgrade the image pipeline to sharp 0.34",
+    harness: "claude-code",
+    machineId: "vm_mock_2",
+    machineName: "mock-web",
+    cwd: "/home/user/web",
+    model: null,
+    sessionId: "mock-session-4",
+    status: { kind: "reconnecting", message: "the box is in standby; the turn continues when it runs again" },
+    skipPermissions: true,
+    createdAt: Date.now() - 5_400_000,
+    updatedAt: Date.now() - 3_000_000,
+    totalCostUsd: 0,
+    turns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+  },
 ];
 
 const transcripts: Record<string, AgentEvent[]> = {
@@ -150,6 +170,7 @@ const transcripts: Record<string, AgentEvent[]> = {
     },
     { type: "result", ok: true, subtype: "success", message: "Done.", cost_usd: 0.0412, duration_ms: 48_210, turns: 6, session_id: "mock-session-1", input_tokens: 18_204, output_tokens: 1_311 },
   ],
+  ag_4: [{ type: "user_message", text: "Upgrade the image pipeline to sharp 0.34 and fix whatever breaks" }],
   ag_3: [
     { type: "user_message", text: "Migrate the landing page to the new design tokens" },
     { type: "stderr", text: "claude: command not found" },
@@ -173,6 +194,19 @@ function record(id: string, ev: AgentEvent) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const stopped = (id: string) => agents.find((a) => a.id === id)?.status.kind === "stopped";
+
+/** Mimics the follower losing the stream and picking the turn up again. */
+async function simulateReconnect(id: string, resume: AgentMeta["status"]) {
+  setStatus(id, { kind: "reconnecting", message: "the stream dropped (connection reset by peer)" });
+  emit(id, null);
+  await sleep(2500);
+  if (stopped(id)) return false;
+  setStatus(id, resume);
+  emit(id, null);
+  return true;
+}
+
 async function simulateTurn(id: string, text: string) {
   record(id, { type: "user_message", text });
   setStatus(id, { kind: "starting" });
@@ -189,12 +223,33 @@ async function simulateTurn(id: string, text: string) {
   setStatus(id, { kind: "tool", name: "Bash" });
   record(id, { type: "assistant", blocks: [{ type: "tool_use", id: "x1", name: "Bash", input: { command: "git status --short" } }] });
   await sleep(900);
+  if (stopped(id) || !(await simulateReconnect(id, { kind: "tool", name: "Bash" }))) return;
   record(id, { type: "tool_result", tool_use_id: "x1", content: " M src/app.ts", is_error: false });
   setStatus(id, { kind: "thinking" });
   await sleep(700);
   record(id, { type: "assistant", blocks: [{ type: "text", text: "One modified file. Tell me whether to commit it or keep going." }] });
   agents = agents.map((a) => (a.id === id ? { ...a, totalCostUsd: a.totalCostUsd + 0.0031, turns: a.turns + 2, status: { kind: "done" } } : a));
   record(id, { type: "result", ok: true, subtype: "success", message: null, cost_usd: 0.0031, duration_ms: 3200, turns: 2, session_id: "mock-session", input_tokens: 1200, output_tokens: 80 });
+}
+
+/** A box came back: turns that waited for it are followed again. */
+async function resumeWaitingTurns(machineId: string) {
+  const waiting = agents.filter((a) => a.machineId === machineId && a.status.kind === "reconnecting");
+  for (const a of waiting) {
+    setStatus(a.id, { kind: "reconnecting", message: "following the turn again" });
+    emit(a.id, null);
+  }
+  await sleep(1200);
+  for (const a of waiting) {
+    if (stopped(a.id)) continue;
+    setStatus(a.id, { kind: "thinking" });
+    record(a.id, { type: "init", session_id: a.sessionId ?? "mock-session", model: "claude-sonnet", cwd: a.cwd });
+    await sleep(800);
+    if (stopped(a.id)) continue;
+    record(a.id, { type: "assistant", blocks: [{ type: "text", text: "sharp is on 0.34 now; the resize tests pass." }] });
+    agents = agents.map((x) => (x.id === a.id ? { ...x, turns: x.turns + 1, totalCostUsd: x.totalCostUsd + 0.0112, status: { kind: "done" } } : x));
+    record(a.id, { type: "result", ok: true, subtype: "success", message: null, cost_usd: 0.0112, duration_ms: 812_000, turns: 1, session_id: a.sessionId, input_tokens: 4100, output_tokens: 220 });
+  }
 }
 
 // Setup presets. Secret values are kept here only to mimic the keychain;
@@ -340,6 +395,7 @@ export const mockApi: Api = {
       return;
     }
     machines = machines.map((m) => (m.id === id ? machine({ ...m, status: next[action] }) : m));
+    if (next[action] === "running") void resumeWaitingTurns(id);
   },
   async machineUsage(id) {
     const m = await mockApi.getMachine(id);

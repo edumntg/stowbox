@@ -17,6 +17,7 @@ import type {
   SetupPush,
   SetupRun,
 } from "../bridge/types";
+import { isBusy } from "../ui/format";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
 export type BoxTab = "agents" | "setup" | "terminal" | "details";
@@ -433,7 +434,7 @@ export const actions = {
   },
 
   confirmDestroy(m: Machine) {
-    const running = agentsForMachine(m.id).filter((a) => a.status.kind === "thinking" || a.status.kind === "tool" || a.status.kind === "starting");
+    const running = agentsForMachine(m.id).filter((a) => isBusy(a.status));
     actions.openDialog({
       kind: "confirm",
       title: `Delete ${m.name}?`,
