@@ -42,10 +42,19 @@ jobs:
           key: smoke
           cache-on-failure: true
 
-      # A release build without installers: the same exe the installers
-      # carry (no console window, no devtools), minus the bundling time.
+      # A release build without installers: the exe the installers carry (no
+      # console window, no devtools UI), with one change for WebDriver: its
+      # WebView2 opens a DevTools port. The app sets WebView2's browser
+      # arguments itself (Tauri's defaults), and WebView2 then ignores the
+      # WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS that msedgedriver and
+      # tauri-driver rely on, so the port goes in through the window config,
+      # next to Tauri's defaults, for this build only.
       - name: Build the app
-        run: pnpm tauri build --no-bundle
+        shell: pwsh
+        run: |
+          node -e "const c=require('./src-tauri/tauri.conf.json'); const w=c.app.windows[0]; w.additionalBrowserArgs='--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222'; require('fs').writeFileSync('smoke.conf.json', JSON.stringify({app:{windows:[w]}}))"
+          Get-Content smoke.conf.json
+          pnpm tauri build --no-bundle --config smoke.conf.json
 
       # msedgedriver has to match the WebView2 runtime's version, which the
       # runner image updates on its own schedule.

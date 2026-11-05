@@ -79,16 +79,14 @@ function windowInfo() {
   return Array.isArray(v) ? v : [v];
 }
 
-// The app is started here with WebView2's DevTools port open, and
-// msedgedriver attaches to it. Letting msedgedriver start the exe (what
-// tauri-driver asks for) failed on the runner: its log shows the exe
-// launched, then 60 s waiting for a DevToolsActivePort file that never
-// appeared, while the same exe opened its window when started directly.
+// The app is started here and msedgedriver attaches to its WebView2 on the
+// DevTools port the smoke build opens (see windows-smoke.yml). Letting
+// msedgedriver start the exe, which is what tauri-driver asks for, failed
+// on the runner: it passes the port in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+// which WebView2 ignores when the app sets its own browser arguments, as
+// Tauri does, and then waits 60 s for a DevToolsActivePort file.
 const DEVTOOLS = 9222;
-const appProc = spawn(resolve(app), [], {
-  stdio: "inherit",
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${DEVTOOLS}` },
-});
+const appProc = spawn(resolve(app), [], { stdio: "inherit" });
 const driver = spawn(nativeDriver, ["--port=4444", "--verbose", `--log-path=${join(out, "msedgedriver.log")}`], { stdio: "inherit" });
 let failed = false;
 try {
