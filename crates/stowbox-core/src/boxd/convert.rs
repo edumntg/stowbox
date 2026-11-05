@@ -1,6 +1,7 @@
 //! Wire shapes → provider-neutral types.
 
 use super::pb;
+use crate::ports::{forward_address, https_url, HttpsRoute, PortForward};
 use crate::types::*;
 
 pub fn machine(vm: pb::GetVmResponse, desktop_url: &dyn Fn(&str) -> String) -> Machine {
@@ -101,5 +102,45 @@ pub fn org_billing(r: pb::GetOrgBillingResponse) -> OrgBilling {
         accruing_micro: r.accruing_micro,
         vm_count: r.vm_count,
         max_vms: r.max_vms,
+    }
+}
+
+pub fn route(p: pb::ProxyInfo) -> HttpsRoute {
+    HttpsRoute {
+        url: https_url(&p.domain),
+        // Older servers leave `effective_port` unset; `port` is the stored one.
+        port: if p.effective_port != 0 { p.effective_port } else { p.port },
+        name: p.name,
+        domain: p.domain,
+        port_mode: p.port_mode,
+        is_default: p.is_default,
+    }
+}
+
+pub fn created_route(r: pb::CreateProxyResponse) -> HttpsRoute {
+    HttpsRoute { url: https_url(&r.domain), name: r.name, domain: r.domain, port: r.port, port_mode: "locked".into(), is_default: false }
+}
+
+pub fn forward(f: pb::ExposePortResponse) -> PortForward {
+    PortForward { address: forward_address(&f.dns, f.public_port), dns: f.dns, public_port: f.public_port, vm_port: f.vm_port, protocol: f.protocol }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn routes_take_the_effective_port_and_boxd_domain() {
+        let r = route(pb::ProxyInfo { name: "default".into(), domain: "mock-api.boxd.sh".into(), port: 0, is_default: true, port_mode: "auto".into(), effective_port: 3000, ..Default::default() });
+        assert_eq!((r.url.as_deref(), r.port, r.is_default, r.port_mode.as_str()), (Some("https://mock-api.boxd.sh"), 3000, true, "auto"));
+        // An older server without `effective_port`, and one with no domain: no link is invented.
+        let r = route(pb::ProxyInfo { name: "api".into(), port: 8080, ..Default::default() });
+        assert_eq!((r.url, r.port), (None, 8080));
+    }
+
+    #[test]
+    fn forwards_keep_what_boxd_returned() {
+        let f = forward(pb::ExposePortResponse { vm_name: "mock-api".into(), dns: "mock-api.boxd.sh".into(), public_port: 48211, vm_port: 5432, protocol: "tcp".into(), vm_id: "vm_1".into() });
+        assert_eq!((f.address.as_deref(), f.vm_port, f.protocol.as_str()), (Some("mock-api.boxd.sh:48211"), 5432, "tcp"));
     }
 }

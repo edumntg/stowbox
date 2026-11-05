@@ -11,6 +11,7 @@ pub mod pb {
     tonic::include_proto!("boxd.api.v1");
 }
 
+use crate::ports::{HttpsRoute, PortForward};
 use crate::provider::Provider;
 use crate::types::*;
 use crate::{Error, Result};
@@ -371,6 +372,55 @@ impl Provider for Boxd {
             .await?
             .into_inner();
         Ok(Some(r.ssh_host_key).filter(|k| !k.trim().is_empty()))
+    }
+
+    async fn https_routes(&self, id: &str) -> Result<Vec<HttpsRoute>> {
+        let r = self.api().await?.list_proxies(pb::ListProxiesRequest { vm: id.into(), ..Default::default() }).await?.into_inner();
+        Ok(r.proxies.into_iter().map(convert::route).collect())
+    }
+
+    async fn add_https_route(&self, id: &str, name: &str, port: u16) -> Result<HttpsRoute> {
+        crate::ports::validate_route_name(name)?;
+        let r = self
+            .api()
+            .await?
+            .create_proxy(pb::CreateProxyRequest { name: name.into(), port: port as u32, vm: id.into(), ..Default::default() })
+            .await?
+            .into_inner();
+        Ok(convert::created_route(r))
+    }
+
+    async fn remove_https_route(&self, id: &str, name: &str) -> Result<()> {
+        self.api().await?.delete_proxy(pb::DeleteProxyRequest { name: name.into(), vm: id.into(), ..Default::default() }).await?;
+        Ok(())
+    }
+
+    async fn set_default_route_port(&self, id: &str, port: Option<u16>) -> Result<()> {
+        // An empty name addresses the default route; "auto" is accepted only there.
+        let port = port.map(|p| p.to_string()).unwrap_or_else(|| "auto".into());
+        self.api().await?.set_proxy_port(pb::SetProxyPortRequest { name: String::new(), port, vm: id.into(), ..Default::default() }).await?;
+        Ok(())
+    }
+
+    async fn port_forwards(&self, id: &str) -> Result<Vec<PortForward>> {
+        let r = self.api().await?.list_exposed_ports(pb::ListExposedPortsRequest { vm: id.into() }).await?.into_inner();
+        Ok(r.forwards.into_iter().map(convert::forward).collect())
+    }
+
+    async fn expose_port(&self, id: &str, port: u16, protocol: &str) -> Result<PortForward> {
+        crate::ports::validate_protocol(protocol)?;
+        let r = self
+            .api()
+            .await?
+            .expose_port(pb::ExposePortRequest { vm_port: port as u32, protocol: protocol.into(), vm: id.into(), ..Default::default() })
+            .await?
+            .into_inner();
+        Ok(convert::forward(r))
+    }
+
+    async fn unexpose_port(&self, id: &str, port: u16) -> Result<()> {
+        self.api().await?.unexpose_port(pb::UnexposePortRequest { vm_port: port as u32, vm: id.into(), ..Default::default() }).await?;
+        Ok(())
     }
 
     async fn rates(&self) -> Result<(String, Rates)> {

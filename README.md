@@ -91,6 +91,25 @@ few tens of megabytes instead of an Electron process per window.
   says so; refusals such as a rejected push show git's message verbatim. A
   box in standby or hibernated is only read when you ask, since that wakes
   it; the tab reads again when the agent's turn ends.
+- **Ports**: a tab on every box for seeing a dev server in the browser.
+  It lists the box's HTTPS links (boxd proxies): the box address
+  `https://<box>.<domain>`, which serves the first of 80, 443, 8080, 8000,
+  3000, 5000 and 5173 that something listens on (else 8000) unless a port
+  is pinned, and named links `https://<name>.<box>.<domain>` pinned to one
+  port. Open or copy a link, add one (port and name), remove one, pin the
+  box address to a port or let boxd detect it again. Raw TCP/UDP forwards
+  (boxd's `ExposePort`, up to three per box, no TLS) are listed, added and
+  removed in the same tab for databases and other non-HTTP servers. The
+  addresses shown are the ones boxd returns; when it returns none the row
+  says so instead of building one. The tab also lists what listens inside
+  the box (`ss -ltnp`, or `/proc/net/tcp` where `ss` is missing, read
+  only), marks a server bound to localhost only, which a link cannot
+  reach, and offers *Create link* for the others. Before anything is
+  exposed the form says it is public: anyone with the address reaches the
+  server, and Stowbox puts no login in front of it. Links and forwards are
+  read without waking the box; listing its ports runs a command in it, so
+  a box in standby is only read when you ask. The command palette has
+  *Ports and links of <box>* and *Open <box> in the browser*.
 - **Terminal**: an interactive login shell in the box over boxd's exec
   stream (xterm.js on this side). Standby and hibernated boxes wake on open.
 - **Cost**: account balance and not-yet-charged usage in the sidebar, metered

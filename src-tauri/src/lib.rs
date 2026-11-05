@@ -17,6 +17,7 @@ use stowbox_core::git::{self, GitReview, PrOutcome};
 use stowbox_core::guard::{self, BoxActivity, IdlePolicy, IdleWatch, SpendCheck, SpendFigure, Verdict};
 use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
+use stowbox_core::ports;
 use stowbox_core::provider::Provider;
 use stowbox_core::provision::{self, Preset, Prepared, ProvisionRun, RunEvent, Variable};
 use stowbox_core::search::{SearchLimits, SearchResults};
@@ -470,6 +471,66 @@ async fn git_open_pr(state: State<'_, AppState>, machine_id: String, cwd: Option
     state.touch(&machine_id);
     let p = state.provider().await?;
     git::open_pr(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
+}
+
+// ---------------------------------------------------------------- ports
+
+// HTTPS links and raw forwards are provider calls that do not wake the box;
+// reading what listens inside it is one exec, which does, so it only runs
+// on a sleeping box when `wake` is set. Parsing lives in stowbox_core::ports.
+
+#[tauri::command]
+async fn https_routes(state: State<'_, AppState>, machine_id: String) -> CmdResult<Vec<ports::HttpsRoute>> {
+    state.provider().await?.https_routes(&machine_id).await.map_err(err)
+}
+
+#[tauri::command]
+async fn add_https_route(state: State<'_, AppState>, machine_id: String, name: String, port: u32) -> CmdResult<ports::HttpsRoute> {
+    let port = ports::validate_port(port).map_err(err)?;
+    ports::validate_route_name(&name).map_err(err)?;
+    state.touch(&machine_id);
+    state.provider().await?.add_https_route(&machine_id, &name, port).await.map_err(err)
+}
+
+#[tauri::command]
+async fn remove_https_route(state: State<'_, AppState>, machine_id: String, name: String) -> CmdResult<()> {
+    state.touch(&machine_id);
+    state.provider().await?.remove_https_route(&machine_id, &name).await.map_err(err)
+}
+
+/// `port` None goes back to detecting the port.
+#[tauri::command]
+async fn set_default_route_port(state: State<'_, AppState>, machine_id: String, port: Option<u32>) -> CmdResult<()> {
+    let port = port.map(ports::validate_port).transpose().map_err(err)?;
+    state.touch(&machine_id);
+    state.provider().await?.set_default_route_port(&machine_id, port).await.map_err(err)
+}
+
+#[tauri::command]
+async fn port_forwards(state: State<'_, AppState>, machine_id: String) -> CmdResult<Vec<ports::PortForward>> {
+    state.provider().await?.port_forwards(&machine_id).await.map_err(err)
+}
+
+#[tauri::command]
+async fn expose_port(state: State<'_, AppState>, machine_id: String, port: u32, protocol: String) -> CmdResult<ports::PortForward> {
+    let port = ports::validate_port(port).map_err(err)?;
+    ports::validate_protocol(&protocol).map_err(err)?;
+    state.touch(&machine_id);
+    state.provider().await?.expose_port(&machine_id, port, &protocol).await.map_err(err)
+}
+
+#[tauri::command]
+async fn unexpose_port(state: State<'_, AppState>, machine_id: String, port: u32) -> CmdResult<()> {
+    let port = ports::validate_port(port).map_err(err)?;
+    state.touch(&machine_id);
+    state.provider().await?.unexpose_port(&machine_id, port).await.map_err(err)
+}
+
+/// `None` when the box is not running and was left alone.
+#[tauri::command]
+async fn listening_ports(state: State<'_, AppState>, machine_id: String, wake: Option<bool>) -> CmdResult<Option<ports::Listening>> {
+    let p = state.provider().await?;
+    ports::listening(p.as_ref(), &machine_id, wake.unwrap_or(false)).await.map_err(err)
 }
 
 // ---------------------------------------------------------------- editor over SSH
@@ -1589,6 +1650,14 @@ pub fn run() {
             git_commit,
             git_push,
             git_open_pr,
+            https_routes,
+            add_https_route,
+            remove_https_route,
+            set_default_route_port,
+            port_forwards,
+            expose_port,
+            unexpose_port,
+            listening_ports,
             ssh_plan,
             open_in_editor,
             terminal_open,

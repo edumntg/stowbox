@@ -12,11 +12,14 @@ import type {
   GitFileChange,
   GitReview,
   GuardVerdict,
+  HttpsRoute,
   IdlePolicy,
+  ListeningPort,
   Machine,
   MachineMetrics,
   Notice,
   NoticeTarget,
+  PortForward,
   Preset,
   SearchHit,
   SearchResults,
@@ -771,6 +774,44 @@ function mockSshPlan(m: Machine): SshPlan {
   };
 }
 
+// Ports per box: what listens inside it, its named HTTPS routes, the
+// default route's pinned port (null = detected) and its raw forwards.
+const mockListening: Record<string, ListeningPort[]> = {
+  vm_mock_1: [
+    { port: 22, addresses: ["0.0.0.0", "::"], process: null, localOnly: false },
+    { port: 3000, addresses: ["0.0.0.0"], process: "node", localOnly: false },
+    { port: 5173, addresses: ["127.0.0.1", "::1"], process: "node", localOnly: true },
+    { port: 5432, addresses: ["127.0.0.1"], process: null, localOnly: true },
+  ],
+  vm_mock_2: [{ port: 22, addresses: ["0.0.0.0"], process: null, localOnly: false }, { port: 8000, addresses: ["0.0.0.0"], process: "python3", localOnly: false }],
+  vm_mock_5: [{ port: 22, addresses: ["0.0.0.0"], process: null, localOnly: false }, { port: 9090, addresses: ["0.0.0.0"], process: "python3", localOnly: false }],
+};
+const mockRoutes: Record<string, { name: string; port: number }[]> = { vm_mock_1: [{ name: "docs", port: 4000 }] };
+const mockDefaultPort: Record<string, number | null> = {};
+const mockForwards: Record<string, { vmPort: number; publicPort: number; protocol: string }[]> = { vm_mock_1: [{ vmPort: 5432, publicPort: 48211, protocol: "tcp" }] };
+/** The ports boxd's default route tries, in order, before falling back to 8000. */
+const AUTO_PORTS = [80, 443, 8080, 8000, 3000, 5000, 5173];
+
+function mockRouteList(m: Machine): HttpsRoute[] {
+  const host = `${m.name}.${m.accessDomain || "boxd.sh"}`;
+  const pinned = mockDefaultPort[m.id] ?? null;
+  const listening = new Set((mockListening[m.id] ?? []).map((l) => l.port));
+  const detected = AUTO_PORTS.find((p) => listening.has(p)) ?? 8000;
+  const def: HttpsRoute = { name: "default", domain: host, url: `https://${host}`, port: pinned ?? detected, portMode: pinned === null ? "auto" : "locked", isDefault: true };
+  const named = (mockRoutes[m.id] ?? []).map((r): HttpsRoute => ({ name: r.name, domain: `${r.name}.${host}`, url: `https://${r.name}.${host}`, port: r.port, portMode: "locked", isDefault: false }));
+  return [def, ...named];
+}
+
+function mockForwardList(m: Machine): PortForward[] {
+  const dns = `${m.name}.${m.accessDomain || "boxd.sh"}`;
+  return (mockForwards[m.id] ?? []).map((f) => ({ dns, publicPort: f.publicPort, vmPort: f.vmPort, protocol: f.protocol, address: `${dns}:${f.publicPort}` }));
+}
+
+function mockPort(port: number): number {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${port} is not a port: use 1 to 65535`);
+  return port;
+}
+
 function requireRepo(machineId: string, cwd: string | null): MockRepo {
   const r = mockRepo(machineId, cwd);
   if (typeof r === "string") throw new Error(r === "no-dir" ? "the directory does not exist in the box" : "the directory is not inside a git repository");
@@ -1126,6 +1167,62 @@ export const mockApi: Api = {
       via: "compare",
       existing: false,
     };
+  },
+  async httpsRoutes(machineId) {
+    await sleep(200);
+    return mockRouteList(await mockApi.getMachine(machineId));
+  },
+  async addHttpsRoute(machineId, name, port) {
+    const m = await mockApi.getMachine(machineId);
+    mockPort(port);
+    if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) throw new Error(`"${name}" cannot be a link name: use lowercase letters, digits and hyphens, up to 63, not starting or ending with a hyphen`);
+    const list = (mockRoutes[m.id] ??= []);
+    if (name === "default" || list.some((r) => r.name === name)) throw new Error(`proxy "${name}" already exists on ${m.name}`);
+    await sleep(400);
+    list.push({ name, port });
+    return mockRouteList(m).find((r) => r.name === name)!;
+  },
+  async removeHttpsRoute(machineId, name) {
+    const m = await mockApi.getMachine(machineId);
+    await sleep(250);
+    mockRoutes[m.id] = (mockRoutes[m.id] ?? []).filter((r) => r.name !== name);
+  },
+  async setDefaultRoutePort(machineId, port) {
+    const m = await mockApi.getMachine(machineId);
+    await sleep(250);
+    mockDefaultPort[m.id] = port === null ? null : mockPort(port);
+  },
+  async portForwards(machineId) {
+    await sleep(200);
+    return mockForwardList(await mockApi.getMachine(machineId));
+  },
+  async exposePort(machineId, port, protocol) {
+    const m = await mockApi.getMachine(machineId);
+    mockPort(port);
+    if (!["tcp", "udp", "both"].includes(protocol)) throw new Error(`"${protocol}" is not a protocol: use tcp, udp or both`);
+    const list = (mockForwards[m.id] ??= []);
+    const had = list.find((f) => f.vmPort === port);
+    if (!had && list.length >= 3) throw new Error(`${m.name} already has 3 exposed ports, the most boxd allows; unexpose one first`);
+    await sleep(400);
+    if (had) had.protocol = protocol;
+    else list.push({ vmPort: port, publicPort: 40000 + Math.floor(Math.random() * 20000), protocol });
+    return mockForwardList(m).find((f) => f.vmPort === port)!;
+  },
+  async unexposePort(machineId, port) {
+    const m = await mockApi.getMachine(machineId);
+    const list = mockForwards[m.id] ?? [];
+    if (!list.some((f) => f.vmPort === port)) throw new Error(`nothing is exposed on port ${port}`);
+    await sleep(250);
+    mockForwards[m.id] = list.filter((f) => f.vmPort !== port);
+  },
+  async listeningPorts(machineId, wake) {
+    const m = await mockApi.getMachine(machineId);
+    const asleep = m.status === "suspended" || m.status === "hibernated";
+    if (m.status !== "running" && !(wake && asleep)) return null;
+    // exec wakes a box in standby, as it does in boxd.
+    if (asleep) await mockApi.machinePower(machineId, m.status === "suspended" ? "resume" : "wake");
+    await sleep(350);
+    return { ports: structuredClone(mockListening[m.id] ?? []), source: "ss", sampledAtMs: Date.now() };
   },
   async sshPlan(machineId) {
     await sleep(120);

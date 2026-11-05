@@ -8,6 +8,7 @@ import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, u
 
 const Terminal = lazy(() => import("./Terminal"));
 const Changes = lazy(() => import("./Changes"));
+const Ports = lazy(() => import("./Ports"));
 
 /** Works with any key linked to the boxd account; "Open in editor" sets up the `stowbox-<name>` alias. */
 const sshCommand = (m: Machine) => (m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "");
@@ -380,6 +381,9 @@ export default function BoxView(p: { machine: Machine }) {
         <button class="subtab" role="tab" aria-selected={tab() === "changes"} onClick={() => actions.setBoxTab("changes")}>
           Changes
         </button>
+        <button class="subtab" role="tab" aria-selected={tab() === "ports"} onClick={() => actions.setBoxTab("ports")}>
+          Ports
+        </button>
         <button class="subtab" role="tab" aria-selected={tab() === "terminal"} onClick={() => actions.setBoxTab("terminal")}>
           Terminal
         </button>
@@ -403,6 +407,13 @@ export default function BoxView(p: { machine: Machine }) {
           <div class="view-body scroll">
             <Show when={m().id} keyed>
               <Changes machine={m()} cwd={boxRepoDir(m().id)} editable suggestions={repoDirs(m().id)} />
+            </Show>
+          </div>
+        </Match>
+        <Match when={tab() === "ports"}>
+          <div class="view-body scroll">
+            <Show when={m().id} keyed>
+              <Ports machine={m()} />
             </Show>
           </div>
         </Match>
