@@ -322,6 +322,16 @@ impl Provider for Boxd {
         Ok(convert::usage(r))
     }
 
+    async fn org_usage(&self, org: &str, since: i64, until: i64) -> Result<OrgUsage> {
+        let r = self
+            .api()
+            .await?
+            .get_org_usage(pb::GetOrgUsageRequest { org: org.into(), since, until })
+            .await?
+            .into_inner();
+        Ok(convert::org_usage(r))
+    }
+
     async fn org_billing(&self, org: &str) -> Result<OrgBilling> {
         let r = self
             .api()

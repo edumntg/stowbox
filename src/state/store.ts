@@ -8,6 +8,8 @@ import type {
   AgentPush,
   CreateSpec,
   Editor,
+  GuardEntry,
+  IdlePolicy,
   Machine,
   MachineMetrics,
   NewAgent,
@@ -21,9 +23,10 @@ import type {
   RateCard,
   SetupPush,
   SetupRun,
+  SpendCheck,
   VariableValues,
 } from "../bridge/types";
-import { isBusy } from "../ui/format";
+import { isBusy, money, spendLine } from "../ui/format";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
 export type BoxTab = "agents" | "setup" | "changes" | "terminal" | "details";
@@ -45,10 +48,37 @@ export interface NotifyPrefs {
   /** Also while the Stowbox window is in front. */
   whenFocused: boolean;
 }
+/** The cost guards. The numbers are kept while a guard is off, so turning
+ * it on again restores the last choice. */
+export interface GuardPrefs {
+  idleOn: boolean;
+  idleMinutes: number;
+  /** Boxes the idle guard leaves alone. */
+  optedOut: string[];
+  spendOn: boolean;
+  /** In whole units of the rate card's currency. */
+  spendLimit: number;
+}
+/** One box the idle guard put in standby. */
+export interface GuardAction {
+  machineId: string;
+  machineName: string;
+  atMs: number;
+  idleSinceMs: number;
+  hourlyBeforeMicro: number;
+  hourlyAfterMicro: number;
+  currency: string;
+}
 export interface Toast {
   id: number;
   kind: "error" | "info";
   text: string;
+  /** A second line under the text. */
+  detail?: string;
+  /** Shown as a button; the toast stays until it is used or dismissed. */
+  action?: { label: string; run: () => void };
+  /** A countdown to this moment, shown next to the text. */
+  untilMs?: number;
 }
 
 interface AppState {
@@ -75,6 +105,14 @@ interface AppState {
   /** The latest setup run per box id. */
   setupRuns: Record<string, SetupRun>;
   notify: NotifyPrefs & { permission: NotifyPermission | null };
+  guard: GuardPrefs & {
+    /** Countdowns running before a box is suspended, by machine id. */
+    pending: Record<string, { untilMs: number; toastId: number }>;
+    /** What the guard did, newest first, kept for a day. */
+    log: GuardAction[];
+    spend: SpendCheck | null;
+    spendError: string;
+  };
   ui: {
     theme: Theme;
     selection: Selection;
@@ -96,6 +134,34 @@ function loadNotifyPrefs(): NotifyPrefs {
     return { enabled: raw.enabled !== false, whenFocused: raw.whenFocused === true };
   } catch {
     return { enabled: true, whenFocused: false };
+  }
+}
+
+const GUARD_DEFAULTS: GuardPrefs = { idleOn: false, idleMinutes: 30, optedOut: [], spendOn: false, spendLimit: 5 };
+const LOG_KEEP_MS = 24 * 3_600_000;
+
+function loadGuardPrefs(): GuardPrefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem("stowbox.guards") ?? "{}") as Partial<GuardPrefs>;
+    const pos = (n: unknown, d: number) => (typeof n === "number" && Number.isFinite(n) && n > 0 ? n : d);
+    return {
+      idleOn: raw.idleOn === true,
+      idleMinutes: Math.round(pos(raw.idleMinutes, GUARD_DEFAULTS.idleMinutes)),
+      optedOut: Array.isArray(raw.optedOut) ? raw.optedOut.filter((x) => typeof x === "string") : [],
+      spendOn: raw.spendOn === true,
+      spendLimit: pos(raw.spendLimit, GUARD_DEFAULTS.spendLimit),
+    };
+  } catch {
+    return { ...GUARD_DEFAULTS };
+  }
+}
+
+function loadGuardLog(): GuardAction[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem("stowbox.guardLog") ?? "[]") as GuardAction[];
+    return Array.isArray(raw) ? raw.filter((a) => a && typeof a.machineId === "string" && Date.now() - a.atMs < LOG_KEEP_MS) : [];
+  } catch {
+    return [];
   }
 }
 
@@ -129,6 +195,7 @@ export const [state, setState] = createStore<AppState>({
   presetsLoaded: false,
   setupRuns: {},
   notify: { ...loadNotifyPrefs(), permission: null },
+  guard: { ...loadGuardPrefs(), pending: {}, log: loadGuardLog(), spend: null, spendError: "" },
   ui: {
     theme: initialTheme(),
     selection: { kind: "fleet" },
@@ -175,6 +242,91 @@ let unlistenNotify: (() => void) | null = null;
 /** Notifications shown since the window was last in front; the badge count. */
 let unseen = 0;
 let pollTimer: number | undefined;
+let guardTimer: number | undefined;
+let spendTimer: number | undefined;
+let guardBusy = false;
+const countdowns = new Map<string, number>();
+/** When Undo was last pressed per box, so a check already in flight cannot
+ * start a new countdown right after it. */
+const keptAt = new Map<string, number>();
+
+/** How long the countdown with Undo runs before a box is suspended. */
+export const GUARD_COUNTDOWN_MS = 30_000;
+const GUARD_EVERY_MS = 30_000;
+const SPEND_EVERY_MS = 5 * 60_000;
+
+export const guardPolicy = (): IdlePolicy => ({ idleMinutes: state.guard.idleOn ? state.guard.idleMinutes : 0, optedOut: [...state.guard.optedOut] });
+
+const keepWhy: Record<string, string> = {
+  "agent-working": "an agent started working",
+  "setup-running": "a setup run started",
+  "terminal-open": "a terminal is open",
+  "opted-out": "it was excluded from idle standby",
+  "not-running": "it is no longer running",
+  "guard-off": "idle standby was turned off",
+};
+
+function saveGuard() {
+  try {
+    const g = state.guard;
+    localStorage.setItem("stowbox.guards", JSON.stringify({ idleOn: g.idleOn, idleMinutes: g.idleMinutes, optedOut: g.optedOut, spendOn: g.spendOn, spendLimit: g.spendLimit }));
+    localStorage.setItem("stowbox.guardLog", JSON.stringify(g.log));
+  } catch {
+    /* private mode: the choice just does not persist */
+  }
+}
+
+function localMidnightSecs(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+}
+
+function startCountdown(e: GuardEntry) {
+  if (state.guard.pending[e.machineId] || Date.now() - (keptAt.get(e.machineId) ?? 0) < GUARD_EVERY_MS * 2) return;
+  const untilMs = Date.now() + GUARD_COUNTDOWN_MS;
+  const toastId = actions.toast(`${e.machineName} goes to standby`, "info", {
+    untilMs,
+    detail: `Nothing has happened in it for ${state.guard.idleMinutes} min: no agent working, no setup, no terminal open.`,
+    action: { label: "Undo", run: () => void actions.keepRunning(e.machineId) },
+  });
+  setState("guard", "pending", e.machineId, { untilMs, toastId });
+  countdowns.set(e.machineId, window.setTimeout(() => void finishCountdown(e.machineId), GUARD_COUNTDOWN_MS));
+}
+
+function dropCountdown(machineId: string) {
+  window.clearTimeout(countdowns.get(machineId));
+  countdowns.delete(machineId);
+  const p = state.guard.pending[machineId];
+  if (p) actions.dismiss(p.toastId);
+  setState("guard", "pending", machineId, undefined!);
+}
+
+async function finishCountdown(machineId: string) {
+  if (!state.guard.pending[machineId]) return;
+  dropCountdown(machineId);
+  try {
+    const r = await api.guardSuspend(machineId, guardPolicy());
+    if (r.suspended && r.verdict.kind === "suspend") {
+      const entry: GuardAction = {
+        machineId,
+        machineName: r.machineName,
+        atMs: Date.now(),
+        idleSinceMs: r.verdict.idleSinceMs,
+        hourlyBeforeMicro: r.hourlyBeforeMicro,
+        hourlyAfterMicro: r.hourlyAfterMicro,
+        currency: r.currency,
+      };
+      setState("guard", "log", (l) => [entry, ...l.filter((a) => a.machineId !== machineId && Date.now() - a.atMs < LOG_KEEP_MS)].slice(0, 50));
+      saveGuard();
+      await actions.refreshMachines();
+    } else if (r.verdict.kind === "keep") {
+      actions.toast(`Kept ${r.machineName} running: ${keepWhy[r.verdict.reason] ?? r.verdict.reason}.`, "info");
+    }
+  } catch (e) {
+    actions.toast("Idle standby failed: " + message(e));
+  }
+}
 
 function message(e: unknown): string {
   if (typeof e === "string") return e;
@@ -269,10 +421,11 @@ export const setupRunFor = (machineId: string): SetupRun | undefined => state.se
 export const setupActive = (r: SetupRun | undefined) => !!r && (r.status === "waiting" || r.status === "running");
 
 export const actions = {
-  toast(text: string, kind: Toast["kind"] = "error") {
+  toast(text: string, kind: Toast["kind"] = "error", extra: Pick<Toast, "detail" | "action" | "untilMs"> = {}): number {
     const id = ++toastSeq;
-    setState("ui", "toasts", (t) => [...t, { id, kind, text }]);
-    if (kind === "info") window.setTimeout(() => actions.dismiss(id), 4000);
+    setState("ui", "toasts", (t) => [...t, { id, kind, text, ...extra }]);
+    if (kind === "info" && !extra.action) window.setTimeout(() => actions.dismiss(id), 4000);
+    return id;
   },
   dismiss(id: number) {
     setState("ui", "toasts", (t) => t.filter((x) => x.id !== id));
@@ -333,6 +486,91 @@ export const actions = {
         if (state.ui.selection.kind === "fleet") void actions.refreshMetrics();
       });
     }, 15_000);
+    // The guards run whether or not the window is visible: walking away is
+    // when a box sits idle.
+    window.clearInterval(guardTimer);
+    guardTimer = window.setInterval(() => void actions.runGuard(), GUARD_EVERY_MS);
+    window.clearInterval(spendTimer);
+    spendTimer = window.setInterval(() => void actions.checkSpend(), SPEND_EVERY_MS);
+    void actions.runGuard();
+    void actions.checkSpend();
+  },
+
+  /** Starts a countdown for every box the idle guard says is due, and
+   * drops countdowns for boxes that are no longer idle. */
+  async runGuard() {
+    if (guardBusy) return;
+    if (!state.guard.idleOn) {
+      for (const id of Object.keys(state.guard.pending)) dropCountdown(id);
+      return;
+    }
+    guardBusy = true;
+    try {
+      const entries = await api.guardCheck(guardPolicy());
+      for (const e of entries) {
+        if (e.verdict.kind === "suspend") startCountdown(e);
+        else if (state.guard.pending[e.machineId]) dropCountdown(e.machineId);
+      }
+    } catch (e) {
+      console.warn("idle guard check failed", e);
+    } finally {
+      guardBusy = false;
+    }
+  },
+
+  /** Undo on the countdown: the box stays up and its idle clock restarts. */
+  async keepRunning(machineId: string) {
+    keptAt.set(machineId, Date.now());
+    dropCountdown(machineId);
+    try {
+      await api.guardTouch(machineId);
+    } catch (e) {
+      actions.toast("Could not restart the idle clock: " + message(e));
+    }
+  },
+
+  async checkSpend() {
+    const g = state.guard;
+    if (!g.spendOn) {
+      setState("guard", { spend: null, spendError: "" });
+      return;
+    }
+    try {
+      const check = await api.spendToday(localMidnightSecs(), Math.round(g.spendLimit * 1_000_000));
+      setState("guard", { spend: check, spendError: "" });
+      const today = new Date().toDateString();
+      let warned = "";
+      try {
+        warned = localStorage.getItem("stowbox.spendWarned") ?? "";
+      } catch {
+        /* private mode */
+      }
+      if (check.over && warned !== today) {
+        try {
+          localStorage.setItem("stowbox.spendWarned", today);
+        } catch {
+          /* private mode: it may warn again after a restart */
+        }
+        void deliver({ kind: "spend", title: `Today's spend passed ${money(check.limitMicro, check.currency)}`, body: spendLine(check), agentId: null, machineId: "" });
+      }
+    } catch (e) {
+      setState("guard", { spend: null, spendError: message(e) });
+    }
+  },
+
+  setGuard(patch: Partial<GuardPrefs>) {
+    setState("guard", patch);
+    saveGuard();
+    if ("idleOn" in patch || "idleMinutes" in patch || "optedOut" in patch) {
+      for (const id of state.guard.optedOut) if (state.guard.pending[id]) dropCountdown(id);
+      void actions.runGuard();
+    }
+    if ("spendOn" in patch || "spendLimit" in patch) void actions.checkSpend();
+  },
+
+  setOptOut(machineId: string, out: boolean) {
+    const rest = state.guard.optedOut.filter((id) => id !== machineId);
+    actions.setGuard({ optedOut: out ? [...rest, machineId] : rest });
   },
 
   async saveKey(key: string) {
@@ -345,6 +583,10 @@ export const actions = {
   async signOut() {
     await api.clearApiKey();
     window.clearInterval(pollTimer);
+    window.clearInterval(guardTimer);
+    window.clearInterval(spendTimer);
+    for (const id of Object.keys(state.guard.pending)) dropCountdown(id);
+    setState("guard", { spend: null, spendError: "" });
     setState({
       phase: "needs-key",
       account: null,

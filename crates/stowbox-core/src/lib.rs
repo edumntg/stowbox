@@ -7,6 +7,7 @@
 //! - `cost`: live €/h estimates from the provider's rate card.
 //! - `git`: the repository review (status, diff) and commit, push and pull
 //!   request, run inside the box.
+//! - `guard`: idle auto-standby decisions and the daily spend check.
 //! - `metrics`: CPU, memory, disk and uptime sampled inside a running box.
 //! - `notify`: which agent and setup outcomes deserve a desktop notification.
 //! - `provision`: setup presets (commands and secrets) run in a new box.
@@ -20,6 +21,7 @@ pub mod boxd;
 pub mod cost;
 pub mod error;
 pub mod git;
+pub mod guard;
 pub mod metrics;
 pub mod notify;
 pub mod provider;

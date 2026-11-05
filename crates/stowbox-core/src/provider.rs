@@ -21,6 +21,11 @@ pub trait Provider: Send + Sync {
 
     async fn machine_usage(&self, id: &str) -> Result<Usage>;
     async fn org_billing(&self, org: &str) -> Result<OrgBilling>;
+    /// Metered cost of the org's machines over `[since, until)` (unix
+    /// seconds, 0 = now). `org` "" is the key's own org.
+    async fn org_usage(&self, _org: &str, _since: i64, _until: i64) -> Result<OrgUsage> {
+        Err(crate::Error::Provider(format!("{} does not report usage", self.id())))
+    }
     /// The live rate card, used for the €/h estimate in the sidebar.
     async fn rates(&self) -> Result<(String, Rates)>;
 

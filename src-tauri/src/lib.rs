@@ -14,6 +14,7 @@ use stowbox_core::agent::{self, AgentEvent, AgentMeta, AgentStatus, Block, Harne
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::cost;
 use stowbox_core::git::{self, GitReview, PrOutcome};
+use stowbox_core::guard::{self, BoxActivity, IdlePolicy, IdleWatch, SpendCheck, SpendFigure, Verdict};
 use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::provider::Provider;
@@ -29,6 +30,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::AbortHandle;
 
 struct RunHandle {
+    machine: String,
     input: mpsc::Sender<ExecInput>,
     abort: AbortHandle,
 }
@@ -51,6 +53,8 @@ struct AppState {
     setups: Mutex<HashMap<String, AbortHandle>>,
     /// Decides which pushes carry a desktop notification.
     notifier: std::sync::Mutex<Notifier>,
+    /// When each box was last seen doing something, for the idle guard.
+    idle: std::sync::Mutex<IdleWatch>,
     /// The app's data directory (agents, presets, this install's device id).
     data_dir: std::path::PathBuf,
     /// The person's home, where `~/.ssh` is; None when the OS reports none.
@@ -85,6 +89,40 @@ impl AppState {
     async fn view(&self, p: &Arc<dyn Provider>, m: Machine) -> MachineView {
         let (currency, rates) = self.rates(p).await;
         MachineView { est_hourly_micro: cost::hourly_micro(&m, &rates), currency, machine: m }
+    }
+
+    /// Something the person did in the box restarts its idle clock.
+    fn touch(&self, machine_id: &str) {
+        self.idle.lock().unwrap().touch(machine_id, now_ms());
+    }
+
+    fn observe(&self, machines: &[Machine]) {
+        let now = now_ms();
+        let mut w = self.idle.lock().unwrap();
+        for m in machines {
+            w.observe(&m.id, m.status, now);
+        }
+    }
+
+    /// Everything the idle guard weighs for one box.
+    async fn activity(&self, m: &Machine) -> BoxActivity {
+        let now = now_ms();
+        let mut signals = Vec::new();
+        let mut agents_busy = 0;
+        for a in self.agents.read().await.iter().filter(|a| a.machine_id == m.id) {
+            signals.push(a.updated_at);
+            if guard::agent_holds_box(a) {
+                agents_busy += 1;
+            }
+        }
+        let mut setup_active = false;
+        for r in self.setup_runs.read().await.iter().filter(|r| r.machine_id == m.id) {
+            signals.push(r.finished_at.unwrap_or(r.started_at));
+            setup_active |= r.is_active();
+        }
+        let terminals_open = self.terminals.lock().await.values().filter(|t| t.machine == m.id && !t.abort.is_finished()).count() as u32;
+        let last_activity_ms = self.idle.lock().unwrap().last_activity(&m.id, signals, now);
+        BoxActivity { machine_id: m.id.clone(), status: m.status, agents_busy, setup_active, terminals_open, last_activity_ms }
     }
 
     async fn persist_agents(&self) -> CmdResult<()> {
@@ -205,6 +243,7 @@ async fn whoami(state: State<'_, AppState>) -> CmdResult<Account> {
 async fn list_machines(state: State<'_, AppState>) -> CmdResult<Vec<MachineView>> {
     let p = state.provider().await?;
     let machines = p.list_machines().await.map_err(err)?;
+    state.observe(&machines);
     let mut out = Vec::with_capacity(machines.len());
     for m in machines {
         out.push(state.view(&p, m).await);
@@ -311,6 +350,93 @@ async fn org_billing(state: State<'_, AppState>, org: String) -> CmdResult<OrgBi
     state.provider().await?.org_billing(&org).await.map_err(err)
 }
 
+// ---------------------------------------------------------------- cost guards
+
+// The idle guard runs from the UI, which shows a countdown with an Undo
+// before anything is suspended; `guard_suspend` decides again from fresh
+// state at the end of it. The decisions live in stowbox_core::guard.
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuardEntry {
+    machine_id: String,
+    machine_name: String,
+    verdict: Verdict,
+}
+
+#[tauri::command]
+async fn guard_check(state: State<'_, AppState>, policy: IdlePolicy) -> CmdResult<Vec<GuardEntry>> {
+    let p = state.provider().await?;
+    let machines = p.list_machines().await.map_err(err)?;
+    state.observe(&machines);
+    let now = now_ms();
+    let mut out = Vec::new();
+    for m in machines {
+        let verdict = guard::decide(&state.activity(&m).await, &policy, now);
+        out.push(GuardEntry { machine_id: m.id, machine_name: m.name, verdict });
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuardOutcome {
+    /// The verdict at the moment of acting; anything but `suspend` means
+    /// the box was left running.
+    verdict: Verdict,
+    suspended: bool,
+    machine_name: String,
+    /// The estimate before and after, from the rate card.
+    hourly_before_micro: i64,
+    hourly_after_micro: i64,
+    currency: String,
+}
+
+#[tauri::command]
+async fn guard_suspend(state: State<'_, AppState>, machine_id: String, policy: IdlePolicy) -> CmdResult<GuardOutcome> {
+    let p = state.provider().await?;
+    let m = p.get_machine(&machine_id).await.map_err(err)?;
+    state.observe(std::slice::from_ref(&m));
+    let verdict = guard::decide(&state.activity(&m).await, &policy, now_ms());
+    let (currency, rates) = state.rates(&p).await;
+    let hourly_before_micro = cost::hourly_micro(&m, &rates);
+    let suspended = matches!(verdict, Verdict::Suspend { .. });
+    let hourly_after_micro = if suspended {
+        p.power(&m.id, PowerAction::Pause).await.map_err(err)?;
+        cost::hourly_micro(&Machine { status: MachineStatus::Suspended, ..m.clone() }, &rates)
+    } else {
+        hourly_before_micro
+    };
+    Ok(GuardOutcome { verdict, suspended, machine_name: m.name, hourly_before_micro, hourly_after_micro, currency })
+}
+
+/// Undo on the countdown: the box counts as used just now.
+#[tauri::command]
+async fn guard_touch(state: State<'_, AppState>, machine_id: String) -> CmdResult<()> {
+    state.touch(&machine_id);
+    Ok(())
+}
+
+/// Today's spend against `limit_micro`. `since` is local midnight in unix
+/// seconds, which only the UI knows. boxd's meter needs an org admin; any
+/// other key gets the current hourly estimate projected over a day.
+#[tauri::command]
+async fn spend_today(state: State<'_, AppState>, since: i64, limit_micro: i64) -> CmdResult<SpendCheck> {
+    let p = state.provider().await?;
+    let (rate_currency, rates) = state.rates(&p).await;
+    match p.org_usage("", since, 0).await {
+        Ok(u) => {
+            let currency = if u.currency.is_empty() { rate_currency } else { u.currency };
+            Ok(guard::check_spend(SpendFigure::Metered { total_micro: u.total_cost_micro, complete: u.complete }, limit_micro, &currency))
+        }
+        Err(e) => {
+            let machines = p.list_machines().await.map_err(err)?;
+            let hourly_micro = machines.iter().map(|m| cost::hourly_micro(m, &rates)).sum();
+            Ok(guard::check_spend(SpendFigure::Projected { hourly_micro, why: e.to_string() }, limit_micro, &rate_currency))
+        }
+    }
+}
+
 // ---------------------------------------------------------------- git review
 
 // The repository that holds `cwd` in the box. Each call is one exec; the
@@ -318,24 +444,28 @@ async fn org_billing(state: State<'_, AppState>, org: String) -> CmdResult<OrgBi
 
 #[tauri::command]
 async fn git_review(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<GitReview> {
+    state.touch(&machine_id);
     let p = state.provider().await?;
     git::review(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
 }
 
 #[tauri::command]
 async fn git_commit(state: State<'_, AppState>, machine_id: String, cwd: Option<String>, message: String) -> CmdResult<String> {
+    state.touch(&machine_id);
     let p = state.provider().await?;
     git::commit(p.as_ref(), &machine_id, cwd.as_deref(), &message).await.map_err(err)
 }
 
 #[tauri::command]
 async fn git_push(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<String> {
+    state.touch(&machine_id);
     let p = state.provider().await?;
     git::push(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
 }
 
 #[tauri::command]
 async fn git_open_pr(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<PrOutcome> {
+    state.touch(&machine_id);
     let p = state.provider().await?;
     git::open_pr(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
 }
@@ -397,6 +527,7 @@ async fn open_in_editor(app: AppHandle, state: State<'_, AppState>, machine_id: 
         return Err(blocker);
     }
     let device = ssh_device(&state)?;
+    state.touch(&m.id);
     let mut applied = ssh::setup(p.as_ref(), &files, &m, &device, "ssh-keygen").await.map_err(err)?;
     // The editor connects as soon as it opens; wake the box first, as the
     // terminal does, rather than leave the editor waiting on a sleeping one.
@@ -1121,7 +1252,8 @@ async fn terminal_open(
             }
         }
     });
-    state.terminals.lock().await.insert(id.clone(), RunHandle { input, abort: pump.abort_handle() });
+    state.touch(&machine);
+    state.terminals.lock().await.insert(id.clone(), RunHandle { machine, input, abort: pump.abort_handle() });
     Ok(id)
 }
 
@@ -1130,6 +1262,7 @@ async fn terminal_write(state: State<'_, AppState>, id: String, data: String) ->
     let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(err)?;
     let terms = state.terminals.lock().await;
     let t = terms.get(&id).ok_or("terminal is closed")?;
+    state.touch(&t.machine);
     t.input.send(ExecInput::Data(bytes)).await.map_err(|_| "terminal is closed".to_string())
 }
 
@@ -1144,6 +1277,7 @@ async fn terminal_resize(state: State<'_, AppState>, id: String, cols: u16, rows
 async fn terminal_close(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     if let Some(t) = state.terminals.lock().await.remove(&id) {
         t.abort.abort();
+        state.touch(&t.machine);
     }
     Ok(())
 }
@@ -1222,6 +1356,7 @@ pub fn run() {
                 setup_runs: RwLock::new(setup_runs),
                 setups: Mutex::new(HashMap::new()),
                 notifier: std::sync::Mutex::new(notifier),
+                idle: std::sync::Mutex::new(IdleWatch::new()),
                 data_dir: data.clone(),
                 home,
             });
@@ -1248,6 +1383,10 @@ pub fn run() {
             machine_metrics,
             org_billing,
             rates,
+            guard_check,
+            guard_suspend,
+            guard_touch,
+            spend_today,
             list_agents,
             create_agent,
             agent_events,

@@ -178,7 +178,8 @@ export interface SetupRun {
 /** Mirrors stowbox_core::notify::Notice: set on a push that is a real
  * outcome (a turn finished or failed, a setup run ended), once per outcome. */
 export interface Notice {
-  kind: "agent-done" | "agent-failed" | "setup-done" | "setup-failed";
+  /** "spend" is raised by the UI itself, from the daily spend check. */
+  kind: "agent-done" | "agent-failed" | "setup-done" | "setup-failed" | "spend";
   title: string;
   body: string;
   agentId: string | null;
@@ -370,6 +371,40 @@ export interface ProviderStatus {
   consoleUrl: string;
 }
 
+/** Mirrors stowbox_core::guard::IdlePolicy. `idleMinutes` 0 is off. */
+export interface IdlePolicy {
+  idleMinutes: number;
+  optedOut: string[];
+}
+
+export type KeepReason = "guard-off" | "not-running" | "opted-out" | "agent-working" | "setup-running" | "terminal-open";
+
+export type GuardVerdict = { kind: "suspend"; idleSinceMs: number } | { kind: "wait"; dueAtMs: number } | { kind: "keep"; reason: KeepReason };
+
+export interface GuardEntry {
+  machineId: string;
+  machineName: string;
+  verdict: GuardVerdict;
+}
+
+/** The guard's second look at the end of the countdown. */
+export interface GuardOutcome {
+  verdict: GuardVerdict;
+  suspended: boolean;
+  machineName: string;
+  hourlyBeforeMicro: number;
+  hourlyAfterMicro: number;
+  currency: string;
+}
+
+/** Mirrors stowbox_core::guard::SpendCheck. "metered" is boxd's meter since
+ * local midnight; "projected" is the current hourly estimate over a full
+ * day, used when the key cannot read the meter (`why` says why). */
+export type SpendCheck = (
+  | { basis: "metered"; totalMicro: number; complete: boolean }
+  | { basis: "projected"; hourlyMicro: number; why: string }
+) & { amountMicro: number; limitMicro: number; currency: string; over: boolean };
+
 export interface Api {
   providerStatus(): Promise<ProviderStatus>;
   setApiKey(key: string): Promise<Account>;
@@ -384,6 +419,14 @@ export interface Api {
   machineMetrics(id: string): Promise<MachineMetrics | null>;
   orgBilling(org: string): Promise<OrgBilling>;
   rates(): Promise<RateCard>;
+  /** One verdict per box from the idle guard. Nothing is suspended here. */
+  guardCheck(policy: IdlePolicy): Promise<GuardEntry[]>;
+  /** Decides again from fresh state and suspends only if still idle. */
+  guardSuspend(machineId: string, policy: IdlePolicy): Promise<GuardOutcome>;
+  /** Restarts the box's idle clock (Undo on the countdown). */
+  guardTouch(machineId: string): Promise<void>;
+  /** `since` is local midnight, unix seconds. */
+  spendToday(since: number, limitMicro: number): Promise<SpendCheck>;
   listAgents(): Promise<AgentMeta[]>;
   createAgent(spec: NewAgent): Promise<AgentMeta>;
   agentEvents(id: string): Promise<AgentEvent[]>;

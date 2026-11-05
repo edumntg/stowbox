@@ -2,9 +2,9 @@ import { For, Match, Show, Switch, createResource, createSignal, onCleanup, onMo
 import { api } from "../bridge/api";
 import type { Editor, Harness, Preset, VariableValues } from "../bridge/types";
 import { presetVariables } from "../bridge/variables";
-import { actions, machineById, state, type Dialog } from "../state/store";
+import { GUARD_COUNTDOWN_MS, actions, machineById, state, type Dialog } from "../state/store";
 import * as I from "../icons";
-import { isBusy, money } from "./format";
+import { currencySymbol, isBusy, money, spendLine } from "./format";
 
 const GIB = 1024 ** 3;
 
@@ -382,6 +382,73 @@ const Settings = () => {
               </Match>
             </Switch>
           </Show>
+        </dd>
+        <dt>Idle standby</dt>
+        <dd class="stack">
+          <label class="check">
+            <input type="checkbox" checked={state.guard.idleOn} onChange={(e) => actions.setGuard({ idleOn: e.currentTarget.checked })} />
+            <span>
+              <strong>Put a box in standby when nothing happens in it.</strong> No agent working, no setup running, no terminal open.
+            </span>
+          </label>
+          <div class="guard-num" classList={{ off: !state.guard.idleOn }}>
+            <label for="guard-idle">After</label>
+            <input
+              id="guard-idle"
+              class="input mono"
+              type="number"
+              min="5"
+              step="5"
+              value={state.guard.idleMinutes}
+              disabled={!state.guard.idleOn}
+              onChange={(e) => {
+                const n = Math.round(Number(e.currentTarget.value));
+                if (Number.isFinite(n) && n >= 5) actions.setGuard({ idleMinutes: n });
+                else e.currentTarget.value = String(state.guard.idleMinutes);
+              }}
+            />
+            <span>minutes</span>
+          </div>
+          <p class="hint">
+            A {GUARD_COUNTDOWN_MS / 1000} s countdown with Undo comes first. A box can opt out in its Details tab. Stowbox sees only its own agents and terminals: an
+            editor or ssh session opened elsewhere does not count.
+          </p>
+        </dd>
+        <dt>Spend warning</dt>
+        <dd class="stack">
+          <label class="check">
+            <input type="checkbox" checked={state.guard.spendOn} onChange={(e) => actions.setGuard({ spendOn: e.currentTarget.checked })} />
+            <span>
+              <strong>Warn me when today's spend passes a limit.</strong> In the Fleet alerts, and once a day as a notification.
+            </span>
+          </label>
+          <div class="guard-num" classList={{ off: !state.guard.spendOn }}>
+            <label for="guard-spend">Limit {currencySymbol(state.rateCard?.currency ?? state.account?.billing.currency ?? "eur")}</label>
+            <input
+              id="guard-spend"
+              class="input mono"
+              type="number"
+              min="0.5"
+              step="0.5"
+              value={state.guard.spendLimit}
+              disabled={!state.guard.spendOn}
+              onChange={(e) => {
+                const n = Math.round(Number(e.currentTarget.value) * 100) / 100;
+                if (Number.isFinite(n) && n > 0) actions.setGuard({ spendLimit: n });
+                else e.currentTarget.value = String(state.guard.spendLimit);
+              }}
+            />
+            <span>per day</span>
+          </div>
+          <Show when={state.guard.spendOn}>
+            <Switch>
+              <Match when={state.guard.spendError}>
+                <p class="hint danger-text">Could not read today's spend: {state.guard.spendError}</p>
+              </Match>
+              <Match when={state.guard.spend}>{(c) => <p class="hint">{spendLine(c())}</p>}</Match>
+            </Switch>
+          </Show>
+          <p class="hint">Uses boxd's metered usage since midnight when the key can read it (org owners and admins); otherwise the current hourly estimate over a full day, and the warning says so.</p>
         </dd>
         <dt>Version</dt>
         <dd class="mono">0.1.0</dd>

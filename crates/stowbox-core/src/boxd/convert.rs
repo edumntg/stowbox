@@ -86,6 +86,10 @@ pub fn usage(r: pb::GetVmUsageResponse) -> Usage {
     }
 }
 
+pub fn org_usage(r: pb::GetOrgUsageResponse) -> OrgUsage {
+    OrgUsage { period_start: r.period_start, period_end: r.period_end, currency: r.currency, total_cost_micro: r.total_cost_micro, complete: r.complete }
+}
+
 pub fn org_billing(r: pb::GetOrgBillingResponse) -> OrgBilling {
     OrgBilling {
         id: r.id,

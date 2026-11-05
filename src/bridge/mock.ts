@@ -10,6 +10,8 @@ import type {
   GitDiffFile,
   GitFileChange,
   GitReview,
+  GuardVerdict,
+  IdlePolicy,
   Machine,
   MachineMetrics,
   Notice,
@@ -53,9 +55,10 @@ function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "stat
     autoSuspendSecs: 0,
     autoHibernateSecs: 14_400,
     autoDestroySecs: 0,
-    estHourlyMicro: Math.round(est),
     currency: "eur",
     ...partial,
+    // Always from the state passed in, so a power change re-prices the box.
+    estHourlyMicro: Math.round(est),
   };
 }
 
@@ -437,6 +440,36 @@ function startMockSetup(m: Machine, presetId: string, given: VariableValues): Se
 
 const clickListeners = new Set<(t: NoticeTarget) => void>();
 
+// The idle guard, by the same rules as stowbox_core::guard. mock-worker has
+// sat idle since well before the page loaded, so enabling the guard in
+// Settings shows the countdown at once.
+const runningSince: Record<string, number> = { vm_mock_5: Date.now() - 3 * 3_600_000 };
+const touchedAt: Record<string, number> = {};
+const openTerminals = new Map<string, string>();
+let terminalSeq = 0;
+const touch = (machineId: string) => (touchedAt[machineId] = Math.max(touchedAt[machineId] ?? 0, Date.now()));
+
+function observe() {
+  for (const m of machines) {
+    if (m.status === "running") runningSince[m.id] ??= Date.now();
+    else delete runningSince[m.id];
+  }
+}
+
+function decide(m: Machine, policy: IdlePolicy, now: number): GuardVerdict {
+  if (policy.idleMinutes <= 0) return { kind: "keep", reason: "guard-off" };
+  if (m.status !== "running") return { kind: "keep", reason: "not-running" };
+  if (policy.optedOut.includes(m.id)) return { kind: "keep", reason: "opted-out" };
+  const mine = agents.filter((a) => a.machineId === m.id);
+  if (mine.some((a) => busyKinds.has(a.status.kind))) return { kind: "keep", reason: "agent-working" };
+  const runs = setupRuns.filter((r) => r.machineId === m.id);
+  if (runs.some((r) => r.status === "waiting" || r.status === "running")) return { kind: "keep", reason: "setup-running" };
+  if ([...openTerminals.values()].includes(m.id)) return { kind: "keep", reason: "terminal-open" };
+  const last = Math.max(runningSince[m.id] ?? now, touchedAt[m.id] ?? 0, ...mine.map((a) => a.updatedAt), ...runs.map((r) => r.finishedAt ?? r.startedAt));
+  const due = last + policy.idleMinutes * 60_000;
+  return now >= due ? { kind: "suspend", idleSinceMs: last } : { kind: "wait", dueAtMs: due };
+}
+
 // Git repositories by "machineId:dir". The api repo has an agent's work
 // waiting for review; the worker repo's remote moved on, so a push there is
 // rejected the way git words it.
@@ -729,6 +762,33 @@ export const mockApi: Api = {
   async rates() {
     return { currency: "eur", rates: { vcpuHourMicro: 39_000, ramGibHourMicro: 12_000, diskGibHourMicro: 80 } };
   },
+  async guardCheck(policy) {
+    observe();
+    const now = Date.now();
+    return machines.map((m) => ({ machineId: m.id, machineName: m.name, verdict: decide(m, policy, now) }));
+  },
+  async guardSuspend(machineId, policy) {
+    observe();
+    const m = await mockApi.getMachine(machineId);
+    const verdict = decide(m, policy, Date.now());
+    const suspended = verdict.kind === "suspend";
+    if (suspended) await mockApi.machinePower(m.id, "pause");
+    const after = suspended ? machine({ ...m, status: "suspended" }).estHourlyMicro : m.estHourlyMicro;
+    return { verdict, suspended, machineName: m.name, hourlyBeforeMicro: m.estHourlyMicro, hourlyAfterMicro: after, currency: m.currency };
+  },
+  async guardTouch(machineId) {
+    touch(machineId);
+  },
+  // `?spend=projected` previews a key that cannot read boxd's meter.
+  async spendToday(_since, limitMicro) {
+    await sleep(200);
+    const amount = (over: number) => ({ amountMicro: over, limitMicro, currency: "eur", over: limitMicro > 0 && over >= limitMicro });
+    if (window.location.search.includes("spend=projected")) {
+      const hourlyMicro = machines.reduce((s, m) => s + m.estHourlyMicro, 0);
+      return { basis: "projected", hourlyMicro, why: "permission denied: usage is visible to org owners and admins", ...amount(hourlyMicro * 24) };
+    }
+    return { basis: "metered", totalMicro: 1_840_000, complete: false, ...amount(1_840_000) };
+  },
   async orgBilling() {
     return { id: "org_mock", name: "mock-org", isAdmin: true, currency: "eur", mode: "credits", balanceMicro: 24_310_000, accruingMicro: 410_000, vmCount: machines.length, maxVms: 50 };
   },
@@ -949,15 +1009,25 @@ export const mockApi: Api = {
     console.info("mock: would open", url);
     return { url, alias: plan.alias, changes };
   },
-  async terminalOpen(_machine, _cols, _rows, onEvent) {
+  async terminalOpen(machineId, _cols, _rows, onEvent) {
     const enc = new TextEncoder();
     const send = (s: string) => onEvent({ type: "data", b64: btoa(String.fromCharCode(...enc.encode(s))) } as TermEvent);
     setTimeout(() => send("mock terminal: the desktop build runs a real shell inside the box.\r\n$ "), 100);
-    return "term_mock";
+    const id = `term_mock_${++terminalSeq}`;
+    openTerminals.set(id, machineId);
+    touch(machineId);
+    return id;
   },
-  async terminalWrite() {},
+  async terminalWrite(id) {
+    const m = openTerminals.get(id);
+    if (m) touch(m);
+  },
   async terminalResize() {},
-  async terminalClose() {},
+  async terminalClose(id) {
+    const m = openTerminals.get(id);
+    openTerminals.delete(id);
+    if (m) touch(m);
+  },
   // The browser's own Notification API stands in for the OS notifications.
   async notifyPermission() {
     return "Notification" in window ? Notification.permission : "unsupported";

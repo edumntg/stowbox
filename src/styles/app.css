@@ -2608,3 +2608,56 @@ select.input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- cost guards ---------- */
+
+.guard-num {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 21px;
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+}
+
+.guard-num > * {
+  flex: none;
+  white-space: nowrap;
+}
+
+.guard-num.off {
+  opacity: 0.5;
+}
+
+.guard-num .input {
+  width: 76px;
+  height: 28px;
+}
+
+.hint.danger-text {
+  color: var(--danger);
+}
+
+.toast-text {
+  display: grid;
+  gap: 2px;
+}
+
+.toast-detail {
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+}
+
+.toast-count {
+  color: var(--muted-foreground);
+}
+
+.toast .btn {
+  flex: none;
+  align-self: center;
+}
+
+.alert[data-level="info"] svg {
+  color: var(--muted-foreground);
+}
