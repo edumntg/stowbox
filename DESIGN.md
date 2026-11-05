@@ -69,6 +69,17 @@ shadows, except the floating shadow under dialogs and toasts.
   values in the same name and value rows, prefilled with the defaults;
   the run shows "With name=value" above its steps, and the steps show the
   commands as they ran.
+- The chat composer: attached files sit inside it above the text as
+  bordered chips (paperclip, the name in monospace, the size or "copying";
+  a failed one turns red with the reason and blocks Send until removed),
+  and the paperclip button sits next to Send. While a turn runs the
+  buttons are Queue and Stop. Queued messages list between the transcript
+  and the composer under a "QUEUED · n" title with one line on when they
+  go out and a Clear button: one bordered row per message with a 6x10
+  square (orange while the queue will send, grey once Stop paused it),
+  the text cut at three lines, its files below, and edit and remove on
+  hover. A paused queue says why and offers Send next. Sent files show
+  under the message in the transcript, the path in the box on hover.
 - An agent has two sub-tabs, Chat and Changes; a box has a Changes tab
   next to Setup, with a path field for the repository. Changes reads top
   down: the branch in monospace with "ahead, behind upstream" and the

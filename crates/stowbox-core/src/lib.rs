@@ -14,6 +14,7 @@
 //! - `ssh`: the key, `~/.ssh/config` block and editor links that open a box
 //!   in VS Code or Cursor over Remote-SSH.
 //! - `store`: on-disk persistence of agent sessions and transcripts.
+//! - `upload`: files attached to a message, copied into the box.
 //! - `worktree`: one git worktree and branch per agent, next to the repository.
 
 pub mod agent;
@@ -31,6 +32,7 @@ pub mod store;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod types;
+pub mod upload;
 pub mod worktree;
 
 pub use error::{Error, Result};

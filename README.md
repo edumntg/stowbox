@@ -39,6 +39,25 @@ few tens of megabytes instead of an Electron process per window.
   left off, with no line shown twice or skipped. While the box is in
   standby or hibernated the agent says so and waits instead of waking it;
   Stop kills the turn's process group in the box.
+- **Queued messages**: while a turn runs, the composer queues what you
+  write instead of sending it. Queued messages show under the transcript,
+  can be edited or removed until they go out, and are sent one per turn,
+  each only once the previous turn has really ended (finished or failed;
+  a reconnecting turn is still running). The queue is saved with the
+  agent, so it carries on after the window reloads or Stowbox restarts.
+  Stop pauses it: nothing more goes out until you press *Send next* (the
+  rest then follow turn by turn) or clear it; a queued message that cannot
+  be sent goes back to the front and pauses the queue the same way. A turn
+  with more queued after it does not notify; the last one does. A queue
+  that will send on its own keeps the box from idle standby.
+- **Attachments**: attach files with the paperclip, paste images or drop
+  files on the composer. Each one is copied into the box right away, to
+  `~/.stowbox/uploads/<agent>/<tag>-<name>` (boxd's `UploadFile`, streamed
+  with `UploadFileStream` over 3 MB), and the prompt lists the paths, so
+  Claude Code or Codex reads the file from there (Claude Code opens images
+  from a path). Up to 10 files of 20 MB each per message; a file over the
+  limit, or an upload boxd refuses, shows the reason on the file and
+  blocks sending until you remove it. Nothing falls back to another route.
 - **Own branch per agent**: in *New agent*, "Work on its own branch" makes
   a git worktree for the agent before its first turn, so several agents can
   work on one repository in the same box without touching each other's
@@ -79,7 +98,8 @@ few tens of megabytes instead of an Electron process per window.
 - **Cost guards** (Settings, both off by default): *Idle standby* puts a
   running box in standby after N minutes (30 by default) in which nothing
   happened in it: no agent starting, working or reconnecting (a detached
-  turn counts until its exit is read, with or without a client attached),
+  turn counts until its exit is read, with or without a client attached)
+  or holding queued messages it will send,
   no setup run, no terminal open, and no agent update, setup run, terminal
   keystroke or Changes action in the window. The idle clock never starts
   before Stowbox first saw the box running, and restarts when a box wakes.

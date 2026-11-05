@@ -972,7 +972,9 @@ ul {
 /* ---------- chat ---------- */
 
 .transcript {
-  flex: 1;
+  /* A 0px basis, not 0%: a percentage against the column's height let a
+     long transcript push the queue and composer out of the window. */
+  flex: 1 1 0px;
   min-height: 0;
   padding: 18px 0 10px;
   user-select: text;
@@ -1275,6 +1277,213 @@ ul {
 
 .composer textarea::placeholder {
   color: var(--muted-foreground);
+}
+
+.composer-box.dragging {
+  border-color: var(--ring);
+  border-style: dashed;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Files on the next message, inside the composer above the text. */
+.attach-list {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 0 0 2px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--secondary);
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.attach svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.attach-name {
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 18rem;
+}
+
+.attach-note {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.attach[data-state="uploading"] {
+  opacity: 0.7;
+}
+
+.attach[data-state="failed"] {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+
+.attach .icon-btn {
+  width: 20px;
+  height: 20px;
+}
+
+/* Files on a message in the transcript or the queue. */
+.msg-files {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-2xs);
+  white-space: normal;
+}
+
+.msg-user > .msg-files:first-child {
+  margin-top: 0;
+}
+
+.msg-files li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.msg-files svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--muted-foreground);
+}
+
+.msg-files .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+/* Messages queued behind the running turn. */
+.queue {
+  padding: 0 22px;
+}
+
+.queue-head,
+.queue-list {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.queue-head .section-title {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.queue-why {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+}
+
+.queue-list {
+  list-style: none;
+  padding: 0;
+  max-height: 30vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+}
+
+.queue-row {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 6px 4px 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.queue-row > .sq {
+  margin-top: 4px;
+}
+
+.queue-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.queue-text.muted {
+  color: var(--muted-foreground);
+}
+
+.queue-edit {
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+}
+
+.queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.queue-row .queue-actions .icon-btn {
+  opacity: 0;
+  transition: opacity 150ms;
+}
+
+.queue-row:hover .queue-actions .icon-btn,
+.queue-row:focus-within .queue-actions .icon-btn {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .queue-row .queue-actions .icon-btn {
+    opacity: 1;
+  }
 }
 
 .composer-foot {
@@ -1681,7 +1890,8 @@ select.input {
   }
 
   .chat,
-  .composer {
+  .composer,
+  .queue {
     padding-left: 12px;
     padding-right: 12px;
   }

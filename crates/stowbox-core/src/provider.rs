@@ -45,6 +45,14 @@ pub trait Provider: Send + Sync {
         Ok(None)
     }
 
+    /// Writes `data` to `path` in the box, an absolute path whose directory
+    /// exists, replacing any file there. Returns the bytes written. The
+    /// default sends the bytes base64-encoded over exec stdin; providers
+    /// with a file API override it.
+    async fn upload_file(&self, id: &str, path: &str, data: Vec<u8>) -> Result<u64> {
+        crate::upload::upload_over_exec(self, id, path, data).await
+    }
+
     async fn metrics(&self, id: &str) -> Result<Option<crate::metrics::MachineMetrics>> {
         crate::metrics::sample(self, id).await
     }
