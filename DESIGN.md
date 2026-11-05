@@ -64,6 +64,21 @@ shadows, except the floating shadow under dialogs and toasts.
   run: one row per command with a 6x10 square (green while it runs, a
   neutral foreground square once it exits 0, red on failure, faded grey
   when pending or skipped) and the output below in a monospace well.
+- An agent has two sub-tabs, Chat and Changes; a box has a Changes tab
+  next to Setup, with a path field for the repository. Changes reads top
+  down: the branch in monospace with "ahead, behind upstream" and the
+  repository root, then one row of actions (commit message input, Commit
+  all as the primary button, Push, Open pull request) with a line saying
+  how the pull request will open, then the changed files as a bordered
+  list (status letter, path, +added in green, -removed in red), then one
+  collapsible card per file with the diff in the transcript's diff
+  styles and hunk headers on the muted background. Files over 400 lines
+  start folded. An action's result is a card under the actions: a neutral
+  square and git's output when it worked, a red square, a red-tinted
+  border and git's message verbatim when it did not ("Push rejected").
+  Empty states name the directory: not a repository, missing, git not
+  installed, no changes; a box in standby offers "Wake and read" instead
+  of waking on its own.
 - Right panel (280px) when an agent is open: a toolbar of icon buttons, the
   box card with the hourly estimate and power controls, the session facts.
 - A 24px status bar: account, balance, how many boxes are running and the

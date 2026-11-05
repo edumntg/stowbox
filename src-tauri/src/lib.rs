@@ -13,6 +13,7 @@ use stowbox_core::agent::detached::{self, FollowEnd, FollowItem, TurnCursor};
 use stowbox_core::agent::{self, AgentEvent, AgentMeta, AgentStatus, Block, Harness, TurnSpec};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::cost;
+use stowbox_core::git::{self, GitReview, PrOutcome};
 use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::provider::Provider;
@@ -292,6 +293,35 @@ async fn rates(state: State<'_, AppState>) -> CmdResult<RateCard> {
 #[tauri::command]
 async fn org_billing(state: State<'_, AppState>, org: String) -> CmdResult<OrgBilling> {
     state.provider().await?.org_billing(&org).await.map_err(err)
+}
+
+// ---------------------------------------------------------------- git review
+
+// The repository that holds `cwd` in the box. Each call is one exec; the
+// scripts and the parsing live in stowbox_core::git. `cwd` None is $HOME.
+
+#[tauri::command]
+async fn git_review(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<GitReview> {
+    let p = state.provider().await?;
+    git::review(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
+}
+
+#[tauri::command]
+async fn git_commit(state: State<'_, AppState>, machine_id: String, cwd: Option<String>, message: String) -> CmdResult<String> {
+    let p = state.provider().await?;
+    git::commit(p.as_ref(), &machine_id, cwd.as_deref(), &message).await.map_err(err)
+}
+
+#[tauri::command]
+async fn git_push(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<String> {
+    let p = state.provider().await?;
+    git::push(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
+}
+
+#[tauri::command]
+async fn git_open_pr(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<PrOutcome> {
+    let p = state.provider().await?;
+    git::open_pr(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
 }
 
 // ---------------------------------------------------------------- agents
@@ -1093,6 +1123,10 @@ pub fn run() {
             setup_start,
             setup_cancel,
             setup_runs,
+            git_review,
+            git_commit,
+            git_push,
+            git_open_pr,
             terminal_open,
             terminal_write,
             terminal_resize,

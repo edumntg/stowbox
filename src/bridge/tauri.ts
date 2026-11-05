@@ -43,6 +43,10 @@ export const tauriApi: Api = {
   setupCancel: (machineId) => invoke("setup_cancel", { machineId }),
   setupRuns: () => invoke("setup_runs"),
   onSetupEvent: (cb) => listen<SetupPush>("setup-event", (e) => cb(e.payload)),
+  gitReview: (machineId, cwd) => invoke("git_review", { machineId, cwd }),
+  gitCommit: (machineId, cwd, message) => invoke("git_commit", { machineId, cwd, message }),
+  gitPush: (machineId, cwd) => invoke("git_push", { machineId, cwd }),
+  gitOpenPr: (machineId, cwd) => invoke("git_open_pr", { machineId, cwd }),
   terminalOpen: (machine, cols, rows, onEvent) => {
     const onData = new Channel<TermEvent>();
     onData.onmessage = onEvent;

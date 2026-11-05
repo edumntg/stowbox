@@ -38,6 +38,24 @@ few tens of megabytes instead of an Electron process per window.
   left off, with no line shown twice or skipped. While the box is in
   standby or hibernated the agent says so and waits instead of waking it;
   Stop kills the turn's process group in the box.
+- **Changes**: a tab on every agent (and on every box, pointed at any
+  directory) that reads the repository in the agent's working directory
+  inside the box: the branch, how far it is ahead of or behind its
+  upstream, the changed files from `git status`, and the full diff against
+  the last commit with untracked files shown as new. From there: commit
+  everything with a message (`git add -A`, hooks run), push (setting the
+  upstream on a branch's first push), and open a pull request. The pull
+  request is created by `gh pr create --fill` in the box when `gh` is
+  installed and signed in, a `GH_TOKEN` or `GITHUB_TOKEN` from a setup
+  preset counts; otherwise the host's compare page opens in the browser
+  (GitHub, GitLab, Bitbucket). With a token set, pushes to
+  `https://github.com` remotes use it too. Nothing waits for a prompt: git
+  runs with terminal prompts off, ssh in batch mode (unless you set
+  `GIT_SSH_COMMAND` or `core.sshCommand`, which are kept) and no editor, and every
+  call has a deadline. The diff is cut at 512 KB inside the box and the tab
+  says so; refusals such as a rejected push show git's message verbatim. A
+  box in standby or hibernated is only read when you ask, since that wakes
+  it; the tab reads again when the agent's turn ends.
 - **Terminal**: an interactive login shell in the box over boxd's exec
   stream (xterm.js on this side). Standby and hibernated boxes wake on open.
 - **Cost**: account balance and not-yet-charged usage in the sidebar, metered
