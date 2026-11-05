@@ -30,7 +30,7 @@ import type {
 import { isBusy, money, spendLine } from "../ui/format";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
-export type BoxTab = "agents" | "setup" | "changes" | "terminal" | "details";
+export type BoxTab = "agents" | "setup" | "changes" | "ports" | "terminal" | "details";
 export type AgentTab = "chat" | "changes";
 export type Theme = "dark" | "light";
 export type Dialog =

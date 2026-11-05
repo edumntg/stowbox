@@ -10,6 +10,8 @@
 //! - `guard`: idle auto-standby decisions and the daily spend check.
 //! - `metrics`: CPU, memory, disk and uptime sampled inside a running box.
 //! - `notify`: which agent and setup outcomes deserve a desktop notification.
+//! - `ports`: HTTPS links and raw port forwards into a box, and the ports
+//!   something listens on inside it.
 //! - `provision`: setup presets (commands and secrets) run in a new box.
 //! - `search`: full-text search across the persisted transcripts.
 //! - `ssh`: the key, `~/.ssh/config` block and editor links that open a box
@@ -26,6 +28,7 @@ pub mod git;
 pub mod guard;
 pub mod metrics;
 pub mod notify;
+pub mod ports;
 pub mod provider;
 pub mod provision;
 pub mod search;

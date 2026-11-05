@@ -1,6 +1,7 @@
 //! The surface the desktop shell programs against. boxd is the first
 //! implementation; boat.dev and Cloudflare Sandboxes can slot in behind it.
 
+use crate::ports::{HttpsRoute, PortForward};
 use crate::types::*;
 use crate::Result;
 use async_trait::async_trait;
@@ -55,5 +56,33 @@ pub trait Provider: Send + Sync {
 
     async fn metrics(&self, id: &str) -> Result<Option<crate::metrics::MachineMetrics>> {
         crate::metrics::sample(self, id).await
+    }
+
+    /// HTTPS routes into the box: the default one at the box's own address
+    /// and any named ones. Reading them does not wake the box.
+    async fn https_routes(&self, _id: &str) -> Result<Vec<HttpsRoute>> {
+        Err(crate::Error::Provider(format!("{} has no HTTPS links", self.id())))
+    }
+    /// A named route to `port`. Returns the route as the provider made it.
+    async fn add_https_route(&self, _id: &str, _name: &str, _port: u16) -> Result<HttpsRoute> {
+        Err(crate::Error::Provider(format!("{} has no HTTPS links", self.id())))
+    }
+    async fn remove_https_route(&self, _id: &str, _name: &str) -> Result<()> {
+        Err(crate::Error::Provider(format!("{} has no HTTPS links", self.id())))
+    }
+    /// Pins the default route to `port`, or `None` to detect it again.
+    async fn set_default_route_port(&self, _id: &str, _port: Option<u16>) -> Result<()> {
+        Err(crate::Error::Provider(format!("{} has no HTTPS links", self.id())))
+    }
+    /// Raw TCP/UDP forwards on the box's public address.
+    async fn port_forwards(&self, _id: &str) -> Result<Vec<PortForward>> {
+        Err(crate::Error::Provider(format!("{} has no port forwards", self.id())))
+    }
+    /// `protocol` is "tcp", "udp" or "both".
+    async fn expose_port(&self, _id: &str, _port: u16, _protocol: &str) -> Result<PortForward> {
+        Err(crate::Error::Provider(format!("{} has no port forwards", self.id())))
+    }
+    async fn unexpose_port(&self, _id: &str, _port: u16) -> Result<()> {
+        Err(crate::Error::Provider(format!("{} has no port forwards", self.id())))
     }
 }

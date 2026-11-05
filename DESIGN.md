@@ -95,6 +95,24 @@ shadows, except the floating shadow under dialogs and toasts.
   Empty states name the directory: not a repository, missing, git not
   installed, no changes; a box in standby offers "Wake and read" instead
   of waking on its own.
+- A box's Ports tab, after Changes: one row of buttons (New link,
+  Forward a port, Refresh on the right), then three sections, each a
+  bordered list. HTTPS LINKS: the host in monospace as a link (the box
+  address marked "box address"), the port in monospace with "detected" or
+  "pinned" muted, then open, copy, and Remove (red on hover) or Port… on
+  the box address, which opens an inline row to pin a port or detect it
+  again. LISTENING IN THE BOX: the port, the program, the bound addresses
+  in faint monospace, and on the right the link that serves it, "localhost
+  only, so boxd cannot reach it", or Create link. RAW FORWARDS with "n of
+  3": the address, the protocol as a tag, the port in the box, copy and
+  Unexpose. Every row starts with a 6x10 square for what listens on its
+  port: green when something reachable does, orange when it listens on
+  localhost only, grey when nothing does or the box was not read (the
+  title says which). New link and Forward a port open a card above the
+  lists with the port, then the name or the protocol, and a "This is
+  public." line with the warning icon before the primary button, which
+  says "Create public link" or "Expose publicly". A box in standby offers
+  "Wake and check" instead of listing its ports on its own.
 - New agent has a "Work on its own branch" checkbox under the working
   directory (disabled, with the reason, while the directory is empty).
   An agent with its own worktree shows its branch last in the header's

@@ -46,6 +46,7 @@ function boxCommands(m: Machine, all: boolean): Command[] {
     cmds.push(
       { id: `term:${m.id}`, kind: "Action", label: `Open terminal in ${m.name}`, keywords: "shell ssh console", icon: () => <I.Terminal />, run: () => actions.openBoxTab(m.id, "terminal") },
       { id: `changes:${m.id}`, kind: "Action", label: `Changes in ${m.name}`, keywords: "git diff commit push", icon: () => <I.FileDiff />, run: () => actions.openBoxTab(m.id, "changes") },
+      { id: `ports:${m.id}`, kind: "Action", label: `Ports and links of ${m.name}`, keywords: "open port expose forward preview browser https url localhost dev server", icon: () => <I.Link />, run: () => actions.openBoxTab(m.id, "ports") },
       { id: `setup:${m.id}`, kind: "Action", label: `Setup in ${m.name}`, keywords: "preset run", icon: () => <I.ListChecks />, run: () => actions.openBoxTab(m.id, "setup") },
       { id: `details:${m.id}`, kind: "Action", label: `Details of ${m.name}`, keywords: "usage cost ssh", icon: () => <I.Info />, run: () => actions.openBoxTab(m.id, "details") },
     );
@@ -58,6 +59,12 @@ function boxCommands(m: Machine, all: boolean): Command[] {
     icon: () => <I.Plus />,
     run: () => actions.openDialog({ kind: "new-agent", machineId: m.id }),
   });
+  if (!all) {
+    cmds.push({ id: `ports:${m.id}`, kind: "Action", label: `Ports and links of ${m.name}`, keywords: "open port expose forward preview browser https url localhost dev server", icon: () => <I.Link />, run: () => actions.openBoxTab(m.id, "ports") });
+  }
+  if (m.url) {
+    cmds.push({ id: `browse:${m.id}`, kind: "Action", label: `Open ${m.name} in the browser`, detail: m.url.replace("https://", ""), keywords: "port preview https url link dev server", icon: () => <I.External />, run: () => void actions.open(m.url) });
+  }
   if (!all) cmds.push({ id: `term:${m.id}`, kind: "Action", label: `Open terminal in ${m.name}`, keywords: "shell ssh console", icon: () => <I.Terminal />, run: () => actions.openBoxTab(m.id, "terminal") });
   for (const b of powerButtons(m)) {
     cmds.push({ id: `power:${b.action}:${m.id}`, kind: "Action", label: `${b.label} ${m.name}`, detail: b.title, keywords: where, icon: () => <b.icon />, run: () => void actions.power(m.id, b.action) });

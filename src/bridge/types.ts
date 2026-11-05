@@ -450,6 +450,44 @@ export interface SearchResults {
   scanned: number;
 }
 
+/** One HTTPS route into a box (a boxd proxy). Mirrors core ports::HttpsRoute. */
+export interface HttpsRoute {
+  name: string;
+  /** The host boxd returned, verbatim. */
+  domain: string;
+  /** `https://<domain>`, or null when boxd returned no domain. */
+  url: string | null;
+  /** Where traffic lands: the pinned port, else the detected one. 0 = boxd did not say. */
+  port: number;
+  /** "locked", "auto", or "" when boxd did not say. */
+  portMode: string;
+  isDefault: boolean;
+}
+
+/** One raw TCP/UDP forward on the box's public address. */
+export interface PortForward {
+  dns: string;
+  publicPort: number;
+  vmPort: number;
+  protocol: "tcp" | "udp" | "both" | string;
+  /** `<dns>:<publicPort>`, or null when boxd returned no host or port. */
+  address: string | null;
+}
+
+export interface ListeningPort {
+  port: number;
+  addresses: string[];
+  process: string | null;
+  /** Bound to loopback only: boxd's proxy cannot reach it. */
+  localOnly: boolean;
+}
+
+export interface Listening {
+  ports: ListeningPort[];
+  source: "ss" | "proc" | string;
+  sampledAtMs: number;
+}
+
 export interface Api {
   providerStatus(): Promise<ProviderStatus>;
   setApiKey(key: string): Promise<Account>;
@@ -505,6 +543,16 @@ export interface Api {
   gitCommit(machineId: string, cwd: string | null, message: string): Promise<string>;
   gitPush(machineId: string, cwd: string | null): Promise<string>;
   gitOpenPr(machineId: string, cwd: string | null): Promise<PrOutcome>;
+  httpsRoutes(machineId: string): Promise<HttpsRoute[]>;
+  addHttpsRoute(machineId: string, name: string, port: number): Promise<HttpsRoute>;
+  removeHttpsRoute(machineId: string, name: string): Promise<void>;
+  /** `port` null goes back to detecting the port. */
+  setDefaultRoutePort(machineId: string, port: number | null): Promise<void>;
+  portForwards(machineId: string): Promise<PortForward[]>;
+  exposePort(machineId: string, port: number, protocol: string): Promise<PortForward>;
+  unexposePort(machineId: string, port: number): Promise<void>;
+  /** Reads what listens in the box over exec. null when the box is not running and `wake` is false. */
+  listeningPorts(machineId: string, wake?: boolean): Promise<Listening | null>;
   sshPlan(machineId: string): Promise<SshPlan>;
   /** Sets up SSH for the box (key, link, ~/.ssh/config block), wakes it, and opens `dir` (null = home) in the editor. */
   openInEditor(machineId: string, editor: Editor, dir: string | null): Promise<EditorOpened>;

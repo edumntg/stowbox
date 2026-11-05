@@ -3117,3 +3117,142 @@ select.input {
     display: none;
   }
 }
+
+/* ---------- ports ---------- */
+
+.ports {
+  display: grid;
+  gap: 22px;
+  max-width: 880px;
+  font-size: var(--text-xs);
+}
+
+.ports .setup-bar .spacer {
+  flex: 1;
+}
+
+.ports-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ports-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.ports-row {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 8px 4px 12px;
+}
+
+.ports-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ports-host {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.ports-addrs {
+  font-size: var(--text-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ports-target {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.ports-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ports-pin {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-bottom: 4px;
+}
+
+.ports-pin .input,
+.ports-fields .input[inputmode="numeric"] {
+  width: 96px;
+}
+
+.ports-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.ports-form .section-title {
+  margin: 0;
+}
+
+.ports-fields {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ports-fields label {
+  display: grid;
+  gap: 4px;
+}
+
+.ports-fields label:last-child .input:not([inputmode]) {
+  width: 260px;
+  max-width: 100%;
+}
+
+.ports-public {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.ports-public strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.ports-public svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 2px;
+  color: var(--foreground);
+}
+
+.ports-form-actions {
+  display: flex;
+  gap: 6px;
+}
