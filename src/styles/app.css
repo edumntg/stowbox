@@ -2556,3 +2556,55 @@ select.input {
   font-weight: 400;
   color: var(--foreground);
 }
+
+/* ---------- open in editor ---------- */
+
+.plan-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: plan;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.plan-list li {
+  counter-increment: plan;
+  position: relative;
+  padding: 7px 12px 7px 30px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.plan-list li::before {
+  content: counter(plan);
+  position: absolute;
+  left: 12px;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+}
+
+.plan-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.plan-list .mono {
+  color: var(--foreground);
+}
+
+.ssh-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.ssh-line .mono {
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

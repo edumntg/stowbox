@@ -9,7 +9,8 @@ import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, u
 const Terminal = lazy(() => import("./Terminal"));
 const Changes = lazy(() => import("./Changes"));
 
-const sshCommand = (m: Machine) => `ssh ${m.name}.boxd`;
+/** Works with any key linked to the boxd account; "Open in editor" sets up the `stowbox-<name>` alias. */
+const sshCommand = (m: Machine) => (m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "");
 
 /** The directories this box's agents work in, most recently active first. */
 const repoDirs = (id: string) => [...new Set(agentsForMachine(id).sort((a, b) => b.updatedAt - a.updatedAt).map((a) => a.cwd ?? "~"))];
@@ -226,10 +227,15 @@ const DetailsTab = (p: { machine: Machine }) => {
           </dd>
           <dt>SSH</dt>
           <dd>
-            <span class="mono">{sshCommand(m())}</span>
-            <button class="icon-btn" title="Copy SSH command" aria-label="Copy SSH command" onClick={() => void actions.copy(sshCommand(m()), "SSH command copied")}>
-              <I.Copy />
-            </button>
+            <Show when={sshCommand(m())} fallback={<span class="faint">no SSH port from boxd yet</span>}>
+              <span class="mono">{sshCommand(m())}</span>
+              <button class="icon-btn" title="Copy SSH command" aria-label="Copy SSH command" onClick={() => void actions.copy(sshCommand(m()), "SSH command copied")}>
+                <I.Copy />
+              </button>
+              <button class="icon-btn" title="Open in VS Code or Cursor" aria-label="Open in editor" onClick={() => actions.openDialog({ kind: "open-editor", machineId: m().id, dir: boxRepoDir(m().id) })}>
+                <I.Code />
+              </button>
+            </Show>
           </dd>
           <dt>Desktop</dt>
           <dd>
@@ -255,8 +261,8 @@ const DetailsTab = (p: { machine: Machine }) => {
           </Show>
         </dl>
         <p class="note">
-          The SSH alias works once the boxd CLI has written its block to <span class="mono">~/.ssh/config</span> (any <span class="mono">boxd connect</span> does
-          that). The Terminal tab needs nothing installed.
+          The SSH command works with a key linked to your boxd account. Open in editor makes Stowbox's own key, links it and adds a{" "}
+          <span class="mono">Host stowbox-{m().name}</span> entry to <span class="mono">~/.ssh/config</span>. The Terminal tab needs nothing installed.
         </p>
       </section>
 
@@ -334,6 +340,9 @@ export default function BoxView(p: { machine: Machine }) {
           </button>
           <button class="btn ghost" title="Open the live desktop in the browser" onClick={() => void actions.open(m().desktopUrl)}>
             <I.Desktop /> Desktop
+          </button>
+          <button class="btn ghost" title="Open in VS Code or Cursor over Remote-SSH" onClick={() => actions.openDialog({ kind: "open-editor", machineId: m().id, dir: boxRepoDir(m().id) })}>
+            <I.Code /> Editor
           </button>
           <button class="btn ghost danger" title="Destroy the machine and its disk" disabled={!!state.pending[m().id]} onClick={() => actions.confirmDestroy(m())}>
             <I.Trash /> Delete

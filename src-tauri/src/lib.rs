@@ -18,11 +18,13 @@ use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::provider::Provider;
 use stowbox_core::provision::{self, Preset, Prepared, ProvisionRun, RunEvent, Variable};
+use stowbox_core::ssh;
 use stowbox_core::store::Store;
 use stowbox_core::types::*;
 use stowbox_core::worktree;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::AbortHandle;
 
@@ -49,6 +51,10 @@ struct AppState {
     setups: Mutex<HashMap<String, AbortHandle>>,
     /// Decides which pushes carry a desktop notification.
     notifier: std::sync::Mutex<Notifier>,
+    /// The app's data directory (agents, presets, this install's device id).
+    data_dir: std::path::PathBuf,
+    /// The person's home, where `~/.ssh` is; None when the OS reports none.
+    home: Option<std::path::PathBuf>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -332,6 +338,82 @@ async fn git_push(state: State<'_, AppState>, machine_id: String, cwd: Option<St
 async fn git_open_pr(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<PrOutcome> {
     let p = state.provider().await?;
     git::open_pr(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
+}
+
+// ---------------------------------------------------------------- editor over SSH
+
+// Opening a box in VS Code or Cursor. Only `open_in_editor` writes: the
+// Stowbox key, the managed block in ~/.ssh/config and Stowbox's
+// known_hosts, all in stowbox_core::ssh. `ssh_plan` only reads.
+
+fn ssh_files(state: &AppState) -> CmdResult<ssh::Files> {
+    let home = state.home.as_ref().ok_or("the OS reports no home directory, so there is no ~/.ssh to write")?;
+    Ok(ssh::Files::new(home.join(".ssh"), "~/.ssh"))
+}
+
+/// This install's id for `LinkSshKey`, so linking again replaces Stowbox's
+/// earlier key on this computer instead of adding one per click.
+fn ssh_device(state: &AppState) -> CmdResult<ssh::Device> {
+    let path = state.data_dir.join("ssh-device-id");
+    let id = match std::fs::read_to_string(&path) {
+        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => {
+            let id = format!("stowbox-{}", uuid::Uuid::new_v4().simple());
+            std::fs::create_dir_all(&state.data_dir).map_err(err)?;
+            std::fs::write(&path, &id).map_err(err)?;
+            id
+        }
+    };
+    let label = std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "this computer".into());
+    Ok(ssh::Device { id, label })
+}
+
+#[tauri::command]
+async fn ssh_plan(state: State<'_, AppState>, machine_id: String) -> CmdResult<ssh::Plan> {
+    let p = state.provider().await?;
+    let m = p.get_machine(&machine_id).await.map_err(err)?;
+    ssh::plan(&ssh_files(&state)?, &m).map_err(err)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorOpened {
+    url: String,
+    alias: String,
+    changes: Vec<String>,
+}
+
+#[tauri::command]
+async fn open_in_editor(app: AppHandle, state: State<'_, AppState>, machine_id: String, editor: ssh::Editor, dir: Option<String>) -> CmdResult<EditorOpened> {
+    let p = state.provider().await?;
+    let m = p.get_machine(&machine_id).await.map_err(err)?;
+    let files = ssh_files(&state)?;
+    if let Some(blocker) = ssh::plan(&files, &m).map_err(err)?.blocker {
+        return Err(blocker);
+    }
+    let device = ssh_device(&state)?;
+    let mut applied = ssh::setup(p.as_ref(), &files, &m, &device, "ssh-keygen").await.map_err(err)?;
+    // The editor connects as soon as it opens; wake the box first, as the
+    // terminal does, rather than leave the editor waiting on a sleeping one.
+    let wake = match m.status {
+        MachineStatus::Suspended => Some(PowerAction::Resume),
+        MachineStatus::Hibernated => Some(PowerAction::Wake),
+        _ => None,
+    };
+    if let Some(action) = wake {
+        p.power(&m.id, action).await.map_err(err)?;
+        applied.changes.push(format!("Woke {}", m.name));
+    }
+    let url = ssh::editor_url(editor, &applied.alias, &ssh::remote_path(dir.as_deref()));
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| format!("Could not hand the link to {}: {e}. Is it installed?", editor.label()))?;
+    Ok(EditorOpened { url, alias: applied.alias, changes: applied.changes })
 }
 
 // ---------------------------------------------------------------- agents
@@ -1076,6 +1158,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data = app.path().app_data_dir()?;
+            let home = app.path().home_dir().ok();
             let secrets = secrets::Secrets::new(data.join("secrets"));
             let store = Store::new(data.join("state"));
             let preset_secrets = secrets::PresetSecrets::new(data.join("secrets"));
@@ -1139,6 +1222,8 @@ pub fn run() {
                 setup_runs: RwLock::new(setup_runs),
                 setups: Mutex::new(HashMap::new()),
                 notifier: std::sync::Mutex::new(notifier),
+                data_dir: data.clone(),
+                home,
             });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1180,6 +1265,8 @@ pub fn run() {
             git_commit,
             git_push,
             git_open_pr,
+            ssh_plan,
+            open_in_editor,
             terminal_open,
             terminal_write,
             terminal_resize,
