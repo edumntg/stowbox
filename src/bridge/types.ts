@@ -260,6 +260,17 @@ export interface AgentMeta {
   turns: number;
   inputTokens: number;
   outputTokens: number;
+  /** The agent's own worktree and branch; `cwd` is inside it. */
+  worktree?: AgentWorktree | null;
+}
+
+export interface AgentWorktree {
+  /** The worktree's top level, absolute, next to the repository in `<repo>-wt/`. */
+  path: string;
+  /** `stowbox/<slug>`. */
+  branch: string;
+  /** The repository's main worktree. */
+  repo: string;
 }
 
 export interface NewAgent {
@@ -270,6 +281,10 @@ export interface NewAgent {
   cwd?: string | null;
   model?: string | null;
   skipPermissions: boolean;
+  /** Make a worktree on a new branch from the repository that contains `cwd`. */
+  ownBranch?: boolean;
+  /** Text the branch is named after when there is no title (the first task). */
+  branchHint?: string | null;
 }
 
 export type Block =
@@ -333,7 +348,8 @@ export interface Api {
   agentEvents(id: string): Promise<AgentEvent[]>;
   agentSend(id: string, text: string): Promise<void>;
   agentStop(id: string): Promise<void>;
-  deleteAgent(id: string): Promise<void>;
+  /** `removeWorktree` removes the agent's worktree first (its branch stays); git's refusal keeps the agent. */
+  deleteAgent(id: string, removeWorktree?: boolean, force?: boolean): Promise<void>;
   renameAgent(id: string, title: string): Promise<AgentMeta>;
   onAgentEvent(cb: (push: AgentPush) => void): Promise<() => void>;
   listPresets(): Promise<Preset[]>;

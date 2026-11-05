@@ -61,7 +61,20 @@ export default function Inspector(p: { agent: AgentMeta }) {
             <dt>Model</dt>
             <dd>{p.agent.model || "harness default"}</dd>
             <dt>Directory</dt>
-            <dd class="mono">{p.agent.cwd || "home"}</dd>
+            <dd class="mono" style={{ "overflow-wrap": "anywhere" }}>{p.agent.cwd || "home"}</dd>
+            <Show when={p.agent.worktree}>
+              {(wt) => (
+                <>
+                  <dt>Branch</dt>
+                  <dd class="mono" style={{ "overflow-wrap": "anywhere" }}>
+                    {wt().branch}
+                    <span class="faint" style={{ display: "block", "font-family": "var(--font-sans)" }}>
+                      own worktree of <span class="mono">{wt().repo}</span>
+                    </span>
+                  </dd>
+                </>
+              )}
+            </Show>
             <dt>Session</dt>
             <dd class="mono">
               <Show when={p.agent.sessionId} fallback={<span class="faint">none yet</span>}>

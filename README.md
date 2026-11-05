@@ -38,6 +38,21 @@ few tens of megabytes instead of an Electron process per window.
   left off, with no line shown twice or skipped. While the box is in
   standby or hibernated the agent says so and waits instead of waking it;
   Stop kills the turn's process group in the box.
+- **Own branch per agent**: in *New agent*, "Work on its own branch" makes
+  a git worktree for the agent before its first turn, so several agents can
+  work on one repository in the same box without touching each other's
+  files. It runs `git worktree add -b stowbox/<slug> <repo>-wt/<slug> HEAD`
+  next to the repository (from another agent's worktree it still lands
+  next to the main one), named after the title or first task plus six
+  characters of the agent id, and the agent works in the same subdirectory
+  of it that it was pointed at. It starts from the commit checked out
+  there; uncommitted changes stay where they were. The branch shows in the
+  agent's header and box panel, and its Changes tab reads that worktree.
+  Removing the agent offers to remove the worktree too (`git worktree
+  remove`, the branch is kept); git refuses a worktree with uncommitted or
+  untracked files, and the dialog shows git's message and asks before
+  discarding them. A worktree already deleted by hand is only pruned from
+  git's list.
 - **Changes**: a tab on every agent (and on every box, pointed at any
   directory) that reads the repository in the agent's working directory
   inside the box: the branch, how far it is ahead of or behind its

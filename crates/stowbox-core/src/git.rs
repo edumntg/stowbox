@@ -167,7 +167,7 @@ pub fn cwd_word(cwd: Option<&str>) -> String {
 /// Settings every script starts with: no prompts, no editor, no pager, and
 /// the marker function. Then it enters the repository's top level or says
 /// why it cannot.
-fn prelude(cwd: Option<&str>, nonce: &str) -> String {
+pub(crate) fn prelude(cwd: Option<&str>, nonce: &str) -> String {
     let mark = marker(nonce);
     format!(
         concat!(
@@ -176,6 +176,8 @@ fn prelude(cwd: Option<&str>, nonce: &str) -> String {
             "command -v git >/dev/null 2>&1 || {{ stowbox_mark nogit; exit 0; }}\n",
             "cd -- {cwd} 2>/dev/null || {{ stowbox_mark nodir; exit 0; }}\n",
             "stowbox_top=$(git rev-parse --show-toplevel 2>&1) || {{ stowbox_mark norepo; printf '%s' \"$stowbox_top\"; exit 0; }}\n",
+            // Where the directory sits inside the repository ("web/" or empty).
+            "stowbox_prefix=$(git rev-parse --show-prefix 2>/dev/null)\n",
             "cd -- \"$stowbox_top\" || exit 1\n",
             // Batch-mode ssh by default, but never over the person's own
             // choice: an exported GIT_SSH_COMMAND or the repository's (or
@@ -318,11 +320,11 @@ pub fn sections(out: &[u8], nonce: &str) -> Vec<(String, Vec<u8>)> {
     res
 }
 
-fn section<'a>(secs: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8]> {
+pub(crate) fn section<'a>(secs: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8]> {
     secs.iter().find(|(n, _)| n == name).map(|(_, b)| b.as_slice())
 }
 
-fn text(b: Option<&[u8]>) -> String {
+pub(crate) fn text(b: Option<&[u8]>) -> String {
     b.map(|b| String::from_utf8_lossy(b).trim().to_string()).unwrap_or_default()
 }
 
@@ -623,7 +625,7 @@ fn now_ms() -> i64 {
 /// Where the prelude stopped, if it did. `Err` carries git's own words when
 /// the directory exists but git refuses it for another reason (for example
 /// "detected dubious ownership").
-fn early_state(secs: &[(String, Vec<u8>)]) -> Result<Option<RepoState>> {
+pub(crate) fn early_state(secs: &[(String, Vec<u8>)]) -> Result<Option<RepoState>> {
     if section(secs, "nogit").is_some() {
         return Ok(Some(RepoState::NoGit));
     }
@@ -640,7 +642,7 @@ fn early_state(secs: &[(String, Vec<u8>)]) -> Result<Option<RepoState>> {
     Ok(None)
 }
 
-fn script_failed(c: &Captured, what: &str) -> Error {
+pub(crate) fn script_failed(c: &Captured, what: &str) -> Error {
     let err = String::from_utf8_lossy(&c.stderr).trim().to_string();
     if err.is_empty() {
         Error::Provider(format!("{what} exited with code {} and printed nothing", c.code))
@@ -796,7 +798,7 @@ fn pr_outcome(secs: &[(String, Vec<u8>)]) -> Result<PrOutcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{has_bash, temp_dir, LocalBash};
+    use crate::testing::{fixture, has_bash, has_git, sh, temp_dir, LocalBash};
 
     #[test]
     fn cwd_words() {
@@ -994,34 +996,6 @@ index 0000000..5555555
         sh(&work, &home, "git config --unset core.sshCommand && git config --global core.sshCommand 'ssh -F ~/.ssh/cfg'");
         assert_eq!(ssh_of(vec![]).await, "unset");
         let _ = std::fs::remove_dir_all(&home);
-    }
-
-    fn sh(dir: &std::path::Path, home: &std::path::Path, cmd: &str) -> String {
-        let out = std::process::Command::new("bash")
-            .arg("-c")
-            .arg(cmd)
-            .current_dir(dir)
-            .env("HOME", home)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{cmd}: {}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    }
-
-    fn has_git() -> bool {
-        has_bash() && std::process::Command::new("git").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
-    }
-
-    /// A home with a git identity, a bare remote and a clone of it with one
-    /// pushed commit on `main`.
-    fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
-        let home = temp_dir("stowbox-git");
-        std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Test\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n").unwrap();
-        sh(&home, &home, "git init -q --bare remote.git && git clone -q remote.git work 2>/dev/null");
-        let work = home.join("work");
-        sh(&work, &home, "printf 'one\\ntwo\\n' > a.txt && git add a.txt && git commit -qm init && git push -q -u origin main 2>/dev/null");
-        (home, work)
     }
 
     #[tokio::test(flavor = "multi_thread")]

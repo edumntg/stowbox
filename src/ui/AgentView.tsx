@@ -300,6 +300,14 @@ export default function AgentView(p: { agent: AgentMeta }) {
               </span>
             </Show>
           </span>
+          <Show when={a().worktree}>
+            {(wt) => (
+              <span class="in-box branch mono" title={`Its own worktree: ${wt().path}`}>
+                <I.Fork />
+                <span>{wt().branch}</span>
+              </span>
+            )}
+          </Show>
         </div>
       </header>
       <nav class="subtabs" role="tablist" aria-label="Agent sections">

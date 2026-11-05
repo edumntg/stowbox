@@ -33,7 +33,7 @@ export const tauriApi: Api = {
   agentEvents: (id) => invoke("agent_events", { id }),
   agentSend: (id, text) => invoke("agent_send", { id, text }),
   agentStop: (id) => invoke("agent_stop", { id }),
-  deleteAgent: (id) => invoke("delete_agent", { id }),
+  deleteAgent: (id, removeWorktree, force) => invoke("delete_agent", { id, removeWorktree: removeWorktree ?? false, force: force ?? false }),
   renameAgent: (id, title) => invoke("rename_agent", { id, title }),
   onAgentEvent: (cb) => listen<AgentPush>("agent-event", (e) => cb(e.payload)),
   listPresets: () => invoke("list_presets"),

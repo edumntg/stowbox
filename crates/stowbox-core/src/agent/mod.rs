@@ -102,6 +102,10 @@ pub struct AgentMeta {
     /// The detached turn being followed, until its exit is applied.
     #[serde(default)]
     pub turn: Option<detached::TurnCursor>,
+    /// The agent's own worktree and branch, when it was created with one;
+    /// `cwd` is then inside it.
+    #[serde(default)]
+    pub worktree: Option<crate::worktree::Worktree>,
 }
 
 /// One content block of an assistant message, as the UI renders it.
