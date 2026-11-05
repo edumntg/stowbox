@@ -1,7 +1,7 @@
-import type { AgentEvent } from "../bridge/types";
+import type { AgentEvent, Attachment } from "../bridge/types";
 
 export type Item =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; attachments: Attachment[] }
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; result?: string; isError?: boolean }
@@ -16,7 +16,7 @@ export function toItems(events: AgentEvent[]): Item[] {
   for (const ev of events) {
     switch (ev.type) {
       case "user_message":
-        items.push({ kind: "user", text: ev.text });
+        items.push({ kind: "user", text: ev.text, attachments: ev.attachments ?? [] });
         break;
       case "assistant":
         for (const b of ev.blocks) {

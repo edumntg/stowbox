@@ -5,6 +5,7 @@ import type {
   Account,
   AgentEvent,
   AgentMeta,
+  Attachment,
   AgentPush,
   Api,
   GitDiffFile,
@@ -131,6 +132,14 @@ let agents: AgentMeta[] = [
     turns: 0,
     inputTokens: 0,
     outputTokens: 0,
+    queue: [
+      {
+        id: "q_seed_1",
+        text: "Once you know why, open an issue draft with the failing log lines.",
+        attachments: [{ name: "nightly-arm64.log", path: "/home/boxd/.stowbox/uploads/ag_2/3f9a1c-nightly-arm64.log", size: 48_213 }],
+        queuedAt: Date.now() - 60_000,
+      },
+    ],
   },
   {
     id: "ag_3",
@@ -246,10 +255,32 @@ async function simulateReconnect(id: string, resume: AgentMeta["status"]) {
   return true;
 }
 
-async function simulateTurn(id: string, text: string) {
-  record(id, { type: "user_message", text });
-  setStatus(id, { kind: "starting" });
+/** The shell's rule (AgentMeta::queue_ready): after a turn really ends,
+ * the next queued message goes out, unless Stop paused the queue.
+ * `resume` is the person asking for it after a Stop. */
+function drainQueue(id: string, resume = false) {
+  const a = agents.find((x) => x.id === id);
+  if (!a || !a.queue?.length || busyKinds.has(a.status.kind)) return;
+  if (!resume && (a.queuePaused || a.status.kind === "stopped")) return;
+  const [next, ...rest] = a.queue;
+  agents = agents.map((x) => (x.id === id ? { ...x, queue: rest } : x));
+  void simulateTurn(id, next.text, next.attachments);
+}
+
+function setQueue(id: string, f: (a: AgentMeta) => Partial<AgentMeta>): AgentMeta {
+  const a = agents.find((x) => x.id === id);
+  if (!a) throw new Error("agent not found");
+  agents = agents.map((x) => (x.id === id ? { ...x, ...f(x), updatedAt: Date.now() } : x));
   emit(id, null);
+  return agents.find((x) => x.id === id)!;
+}
+
+const UPLOAD_MAX = 20 * 1024 * 1024;
+const mb = (n: number) => (n / (1024 * 1024)).toFixed(1) + " MB";
+
+async function simulateTurn(id: string, text: string, attachments: Attachment[] = []) {
+  setStatus(id, { kind: "starting" });
+  record(id, { type: "user_message", text, ...(attachments.length ? { attachments } : {}) });
   await sleep(600);
   record(id, { type: "init", session_id: "mock-session", model: "claude-sonnet", cwd: null });
   setStatus(id, { kind: "thinking" });
@@ -270,6 +301,8 @@ async function simulateTurn(id: string, text: string) {
   record(id, { type: "assistant", blocks: [{ type: "text", text: "One modified file. Tell me whether to commit it or keep going." }] });
   agents = agents.map((a) => (a.id === id ? { ...a, totalCostUsd: a.totalCostUsd + 0.0031, turns: a.turns + 2, status: { kind: "done" } } : a));
   record(id, { type: "result", ok: true, subtype: "success", message: null, cost_usd: 0.0031, duration_ms: 3200, turns: 2, session_id: "mock-session", input_tokens: 1200, output_tokens: 80 });
+  await sleep(300);
+  drainQueue(id);
 }
 
 /** A box came back: turns that waited for it are followed again. */
@@ -289,6 +322,7 @@ async function resumeWaitingTurns(machineId: string) {
     record(a.id, { type: "assistant", blocks: [{ type: "text", text: "sharp is on 0.34 now; the resize tests pass." }] });
     agents = agents.map((x) => (x.id === a.id ? { ...x, turns: x.turns + 1, totalCostUsd: x.totalCostUsd + 0.0112, status: { kind: "done" } } : x));
     record(a.id, { type: "result", ok: true, subtype: "success", message: null, cost_usd: 0.0112, duration_ms: 812_000, turns: 1, session_id: a.sessionId, input_tokens: 4100, output_tokens: 220 });
+    drainQueue(a.id);
   }
 }
 
@@ -461,7 +495,8 @@ function decide(m: Machine, policy: IdlePolicy, now: number): GuardVerdict {
   if (m.status !== "running") return { kind: "keep", reason: "not-running" };
   if (policy.optedOut.includes(m.id)) return { kind: "keep", reason: "opted-out" };
   const mine = agents.filter((a) => a.machineId === m.id);
-  if (mine.some((a) => busyKinds.has(a.status.kind))) return { kind: "keep", reason: "agent-working" };
+  const queueGoesOn = (a: AgentMeta) => !!a.queue?.length && !a.queuePaused && a.status.kind !== "stopped";
+  if (mine.some((a) => busyKinds.has(a.status.kind) || queueGoesOn(a))) return { kind: "keep", reason: "agent-working" };
   const runs = setupRuns.filter((r) => r.machineId === m.id);
   if (runs.some((r) => r.status === "waiting" || r.status === "running")) return { kind: "keep", reason: "setup-running" };
   if ([...openTerminals.values()].includes(m.id)) return { kind: "keep", reason: "terminal-open" };
@@ -832,13 +867,56 @@ export const mockApi: Api = {
     // so handing out this array made every event show up twice.
     return [...(transcripts[id] ?? [])];
   },
-  async agentSend(id, text) {
+  async agentSend(id, text, attachments) {
     const a = agents.find((a) => a.id === id);
     if (!a) throw new Error("agent not found");
-    if (!a.title) agents = agents.map((x) => (x.id === id ? { ...x, title: text.slice(0, 64) } : x));
-    void simulateTurn(id, text);
+    if (busyKinds.has(a.status.kind)) throw new Error("this agent is still working on the previous message");
+    const title = text.trim() || attachments?.[0]?.name || "";
+    if (!a.title) agents = agents.map((x) => (x.id === id ? { ...x, title: title.slice(0, 64) } : x));
+    void simulateTurn(id, text, attachments ?? []);
+  },
+  async agentQueueAdd(id, text, attachments) {
+    if (!text.trim() && !attachments?.length) throw new Error("write something for the agent first");
+    const a = agents.find((x) => x.id === id);
+    if ((a?.queue?.length ?? 0) >= 20) throw new Error("the queue holds 20 messages; wait for some to be sent or remove one");
+    const msg = { id: "q_" + Math.random().toString(16).slice(2, 10), text: text.trimEnd(), attachments: attachments ?? [], queuedAt: Date.now() };
+    const meta = setQueue(id, (x) => ({ queue: [...(x.queue ?? []), msg] }));
+    drainQueue(id);
+    return agents.find((x) => x.id === id) ?? meta;
+  },
+  async agentQueueEdit(id, messageId, text) {
+    const a = agents.find((x) => x.id === id);
+    const m = a?.queue?.find((q) => q.id === messageId);
+    if (!m) throw new Error("not found: that message was already sent");
+    const remove = !text.trim() && !m.attachments.length;
+    return setQueue(id, (x) => ({ queue: remove ? x.queue!.filter((q) => q.id !== messageId) : x.queue!.map((q) => (q.id === messageId ? { ...q, text: text.trimEnd() } : q)) }));
+  },
+  async agentQueueRemove(id, messageId) {
+    return setQueue(id, (x) => {
+      const queue = (x.queue ?? []).filter((q) => q.id !== messageId);
+      return { queue, queuePaused: queue.length ? x.queuePaused : false };
+    });
+  },
+  async agentQueueClear(id) {
+    return setQueue(id, () => ({ queue: [], queuePaused: false }));
+  },
+  async agentQueueResume(id) {
+    setQueue(id, () => ({ queuePaused: false }));
+    drainQueue(id, true);
+  },
+  async agentUpload(id, name, bytes) {
+    const a = agents.find((x) => x.id === id);
+    if (!a) throw new Error("agent not found");
+    if (bytes.length === 0) throw new Error(`${name} is empty`);
+    if (bytes.length > UPLOAD_MAX) throw new Error(`${name} is ${mb(bytes.length)}; attachments are limited to 20 MB each`);
+    await sleep(400 + Math.min(1600, bytes.length / 4000));
+    const clean = (name.split(/[\\/]/).pop() ?? "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "") || "file";
+    const tag = Math.random().toString(16).slice(2, 8);
+    return { name, path: `/home/boxd/.stowbox/uploads/${id}/${tag}-${clean}`, size: bytes.length };
   },
   async agentStop(id) {
+    const a = agents.find((x) => x.id === id);
+    agents = agents.map((x) => (x.id === id ? { ...x, queuePaused: !!a?.queue?.length } : x));
     setStatus(id, { kind: "stopped" });
     record(id, { type: "exit", code: -1 });
   },

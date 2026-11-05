@@ -3,7 +3,8 @@
 //!
 //! Idleness is judged from what Stowbox knows about the box: its agents (a
 //! detached turn keeps running with no client attached, so an agent that is
-//! starting, working, reconnecting or has a turn on record holds the box),
+//! starting, working, reconnecting or has a turn on record holds the box,
+//! and so does one with queued messages it will send on its own),
 //! its setup run, its open terminals and the last time any of those did
 //! something. Client connections are not a signal on their own. Everything
 //! here is pure; the shell feeds it and acts on the verdict.
@@ -61,9 +62,10 @@ pub enum Verdict {
 
 /// An agent holds its box while a turn may be running there: any busy
 /// status, or a detached turn still on record (it runs with no client
-/// attached until its exit is read).
+/// attached until its exit is read). Queued messages that will be sent on
+/// their own hold it too, so the box is not suspended between two turns.
 pub fn agent_holds_box(a: &AgentMeta) -> bool {
-    a.turn.is_some() || matches!(a.status, AgentStatus::Starting | AgentStatus::Thinking | AgentStatus::Tool { .. } | AgentStatus::Reconnecting { .. })
+    a.turn.is_some() || a.queue_continues() || matches!(a.status, AgentStatus::Starting | AgentStatus::Thinking | AgentStatus::Tool { .. } | AgentStatus::Reconnecting { .. })
 }
 
 /// The guard's decision for one box. Conservative by construction: any
@@ -242,6 +244,18 @@ mod tests {
         assert!(agent_holds_box(&agent(AgentStatus::Done, true)));
         assert!(!agent_holds_box(&agent(AgentStatus::Done, false)));
         assert!(!agent_holds_box(&agent(AgentStatus::Idle, false)));
+    }
+
+    #[test]
+    fn queued_messages_hold_the_box_unless_paused() {
+        let mut a = agent(AgentStatus::Done, false);
+        a.queue.push(crate::agent::QueuedMessage { id: "q1".into(), text: "next".into(), attachments: vec![], queued_at: 0 });
+        assert!(agent_holds_box(&a), "between turns with more to send");
+        a.queue_paused = true;
+        assert!(!agent_holds_box(&a), "a paused queue waits for the person, not the box");
+        a.queue_paused = false;
+        a.status = AgentStatus::Stopped;
+        assert!(!agent_holds_box(&a));
     }
 
     #[test]

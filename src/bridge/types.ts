@@ -278,6 +278,26 @@ export interface AgentMeta {
   outputTokens: number;
   /** The agent's own worktree and branch; `cwd` is inside it. */
   worktree?: AgentWorktree | null;
+  /** Messages written while a turn ran, sent one per turn once it ends. */
+  queue?: QueuedMessage[];
+  /** Set by Stop or a message that could not be sent: the queue waits for the person. */
+  queuePaused?: boolean;
+}
+
+/** A file already copied into the box (stowbox_core::upload::Attachment). */
+export interface Attachment {
+  /** The name the person's file had. */
+  name: string;
+  /** Absolute path in the box, under ~/.stowbox/uploads/<agent>/. */
+  path: string;
+  size: number;
+}
+
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: Attachment[];
+  queuedAt: number;
 }
 
 export interface AgentWorktree {
@@ -309,7 +329,7 @@ export type Block =
   | { type: "tool_use"; id: string; name: string; input: unknown };
 
 export type AgentEvent =
-  | { type: "user_message"; text: string }
+  | { type: "user_message"; text: string; attachments?: Attachment[] }
   | { type: "init"; session_id: string; model: string | null; cwd: string | null }
   | { type: "text_delta"; text: string }
   | { type: "assistant"; blocks: Block[] }
@@ -430,7 +450,17 @@ export interface Api {
   listAgents(): Promise<AgentMeta[]>;
   createAgent(spec: NewAgent): Promise<AgentMeta>;
   agentEvents(id: string): Promise<AgentEvent[]>;
-  agentSend(id: string, text: string): Promise<void>;
+  agentSend(id: string, text: string, attachments?: Attachment[]): Promise<void>;
+  /** Queues a message for when the running turn ends; sent now if no turn runs and the queue is not paused. */
+  agentQueueAdd(id: string, text: string, attachments?: Attachment[]): Promise<AgentMeta>;
+  /** An emptied message without files is removed. */
+  agentQueueEdit(id: string, messageId: string, text: string): Promise<AgentMeta>;
+  agentQueueRemove(id: string, messageId: string): Promise<AgentMeta>;
+  agentQueueClear(id: string): Promise<AgentMeta>;
+  /** Unpauses the queue and sends its first message now. */
+  agentQueueResume(id: string): Promise<void>;
+  /** Copies a file into the box for the agent's next message. */
+  agentUpload(id: string, name: string, bytes: Uint8Array): Promise<Attachment>;
   agentStop(id: string): Promise<void>;
   /** `removeWorktree` removes the agent's worktree first (its branch stays); git's refusal keeps the agent. */
   deleteAgent(id: string, removeWorktree?: boolean, force?: boolean): Promise<void>;

@@ -1,10 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, lazy, on } from "solid-js";
-import type { AgentMeta } from "../bridge/types";
+import type { AgentMeta, Attachment } from "../bridge/types";
 import { actions, machineById, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot } from "./common";
 import { diffFor } from "./diff";
-import { agentStatusLabel, duration, isBusy, statusLabel, tokens, usd } from "./format";
+import { agentStatusLabel, duration, fileSize, isBusy, statusLabel, tokens, usd } from "./format";
 import { renderMarkdown } from "./markdown";
 import { toItems, toolSummary, type Item } from "./transcript";
 
@@ -80,7 +80,14 @@ const Transcript = (p: { agent: AgentMeta }) => {
               {(it) => {
                 switch (it.kind) {
                   case "user":
-                    return <div class="msg-user">{it.text}</div>;
+                    return (
+                      <div class="msg-user">
+                        <Show when={it.text}>{it.text}</Show>
+                        <Show when={it.attachments.length}>
+                          <FileList files={it.attachments} />
+                        </Show>
+                      </div>
+                    );
                   case "text":
                     return <div class="msg-text" innerHTML={renderMarkdown(it.text)} />;
                   case "thinking":
@@ -137,12 +144,147 @@ const Transcript = (p: { agent: AgentMeta }) => {
   );
 };
 
+/** Files on a sent or queued message: name and size, the path in the box on hover. */
+const FileList = (p: { files: Attachment[] }) => (
+  <ul class="msg-files">
+    <For each={p.files}>
+      {(f) => (
+        <li title={f.path}>
+          <I.Paperclip />
+          <span class="mono">{f.name}</span>
+          <span class="file-size">{fileSize(f.size)}</span>
+        </li>
+      )}
+    </For>
+  </ul>
+);
+
+/** Messages waiting for the running turn to end, editable until they go out. */
+const QueuePanel = (p: { agent: AgentMeta }) => {
+  const queue = () => p.agent.queue ?? [];
+  const paused = () => !!p.agent.queuePaused;
+  const working = () => isBusy(p.agent.status);
+  const [editing, setEditing] = createSignal<string | null>(null);
+  const [draft, setDraft] = createSignal("");
+  const why = () => {
+    if (paused()) return p.agent.status.kind === "stopped" ? "Paused after Stop. Nothing goes out until you send it." : "Paused: the first message could not be sent.";
+    return working() ? "Each one goes out after the current turn ends." : "Sending the next one…";
+  };
+  const save = (id: string) => {
+    setEditing(null);
+    void actions.editQueued(p.agent.id, id, draft());
+  };
+
+  return (
+    <Show when={queue().length > 0}>
+      <section class="queue" aria-label="Queued messages">
+        <div class="queue-head">
+          <span class="section-title">Queued · {queue().length}</span>
+          <span class="queue-why">{why()}</span>
+          <Show when={paused()}>
+            <button class="btn sm" disabled={working()} onClick={() => void actions.resumeQueue(p.agent.id)} title="Send the first message now; the rest follow turn by turn">
+              <I.Send /> Send next
+            </button>
+          </Show>
+          <button class="btn sm ghost" onClick={() => void actions.clearQueue(p.agent.id)} title="Remove every queued message">
+            Clear
+          </button>
+        </div>
+        <ol class="queue-list scroll">
+          <For each={queue()}>
+            {(m) => (
+              <li class="queue-row">
+                <span class="sq" data-state={paused() ? "idle" : "pending"} />
+                <div class="queue-body">
+                  <Show
+                    when={editing() === m.id}
+                    fallback={
+                      <div class="queue-text" classList={{ muted: !m.text }}>
+                        {m.text || "Files only"}
+                      </div>
+                    }
+                  >
+                    <textarea
+                      class="input queue-edit"
+                      rows={2}
+                      value={draft()}
+                      onInput={(e) => setDraft(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          save(m.id);
+                        }
+                        if (e.key === "Escape") setEditing(null);
+                      }}
+                      ref={(el) => queueMicrotask(() => el.focus())}
+                      aria-label="Queued message"
+                    />
+                  </Show>
+                  <Show when={m.attachments.length}>
+                    <FileList files={m.attachments} />
+                  </Show>
+                </div>
+                <div class="queue-actions">
+                  <Show
+                    when={editing() === m.id}
+                    fallback={
+                      <>
+                        <button
+                          class="icon-btn"
+                          title="Edit"
+                          aria-label="Edit queued message"
+                          onClick={() => {
+                            setDraft(m.text);
+                            setEditing(m.id);
+                          }}
+                        >
+                          <I.Pencil />
+                        </button>
+                        <button class="icon-btn" title="Remove" aria-label="Remove queued message" onClick={() => void actions.removeQueued(p.agent.id, m.id)}>
+                          <I.Close />
+                        </button>
+                      </>
+                    }
+                  >
+                    <button class="btn sm" onClick={() => save(m.id)}>
+                      Save
+                    </button>
+                    <button class="btn sm ghost" onClick={() => setEditing(null)}>
+                      Cancel
+                    </button>
+                  </Show>
+                </div>
+              </li>
+            )}
+          </For>
+        </ol>
+      </section>
+    </Show>
+  );
+};
+
+/** Mirrors stowbox_core::upload: MAX_BYTES and MAX_FILES. */
+const UPLOAD_MAX = 20 * 1024 * 1024;
+const FILES_MAX = 10;
+
+type PendingFile = { key: number; name: string; size: number; state: "uploading" | "ready" | "failed"; attachment?: Attachment; error?: string };
+let fileSeq = 0;
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 const Composer = (p: { agent: AgentMeta }) => {
   let box!: HTMLTextAreaElement;
+  let picker!: HTMLInputElement;
   const [text, setText] = createSignal("");
+  const [files, setFiles] = createSignal<PendingFile[]>([]);
   const [sending, setSending] = createSignal(false);
+  const [dragging, setDragging] = createSignal(false);
   const machine = () => machineById(p.agent.machineId);
-  const busy = () => isBusy(p.agent.status) || sending();
+  const working = () => isBusy(p.agent.status);
+  const uploading = () => files().some((f) => f.state === "uploading");
+  const failed = () => files().some((f) => f.state === "failed");
+  const ready = () => files().flatMap((f) => (f.state === "ready" && f.attachment ? [f.attachment] : []));
+  const canSend = () => (!!text().trim() || ready().length > 0) && !uploading() && !failed() && !sending() && !blocked();
   const blocked = () => {
     const m = machine();
     if (!m) return "This box no longer exists in boxd.";
@@ -151,18 +293,55 @@ const Composer = (p: { agent: AgentMeta }) => {
     return "";
   };
 
+  // Uploads belong to one agent's box: another agent starts with none.
+  // A memo, so a push that replaces the agent's record does not count as a change.
+  const agentId = createMemo(() => p.agent.id);
+  createEffect(on(agentId, () => setFiles([]), { defer: true }));
+
+  const update = (key: number, patch: Partial<PendingFile>) => setFiles((fs) => fs.map((f) => (f.key === key ? { ...f, ...patch } : f)));
+
+  const addFiles = (list: File[]) => {
+    const agentId = p.agent.id;
+    for (const file of list) {
+      const key = ++fileSeq;
+      const name = file.name || "pasted-image.png";
+      if (files().length >= FILES_MAX) {
+        setFiles((fs) => [...fs, { key, name, size: file.size, state: "failed", error: `up to ${FILES_MAX} files per message` }]);
+        continue;
+      }
+      if (file.size > UPLOAD_MAX) {
+        const error = `${fileSize(file.size)}; attachments are limited to 20 MB each`;
+        setFiles((fs) => [...fs, { key, name, size: file.size, state: "failed", error }]);
+        continue;
+      }
+      if (file.size === 0) {
+        setFiles((fs) => [...fs, { key, name, size: 0, state: "failed", error: "the file is empty" }]);
+        continue;
+      }
+      setFiles((fs) => [...fs, { key, name, size: file.size, state: "uploading" }]);
+      void file
+        .arrayBuffer()
+        .then((buf) => actions.upload(agentId, name, new Uint8Array(buf)))
+        .then((attachment) => update(key, { state: "ready", attachment }))
+        .catch((e) => update(key, { state: "failed", error: errText(e) }));
+    }
+  };
+
   const grow = () => {
     box.style.height = "auto";
     box.style.height = Math.min(box.scrollHeight, 200) + "px";
   };
 
   const submit = async () => {
+    if (!canSend()) return;
     const t = text().trim();
-    if (!t || busy() || blocked()) return;
+    const attached = ready();
     setSending(true);
     try {
-      await actions.send(p.agent.id, t);
+      if (working()) await actions.queue(p.agent.id, t, attached);
+      else await actions.send(p.agent.id, t, attached);
       setText("");
+      setFiles([]);
       queueMicrotask(grow);
     } catch {
       /* the store already showed the error */
@@ -172,18 +351,66 @@ const Composer = (p: { agent: AgentMeta }) => {
     }
   };
 
+  const foot = () => {
+    if (blocked()) return blocked();
+    if (failed()) return "Remove the files that could not be attached to send.";
+    if (uploading()) return "Copying files into the box…";
+    if (working()) return "Enter queues the message; it goes out when this turn ends.";
+    return "Enter sends, Shift+Enter adds a line. Paste or drop files to attach them.";
+  };
+
   return (
     <div class="composer">
-      <div class="composer-box">
+      <div
+        class="composer-box"
+        classList={{ dragging: dragging() }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer?.types.includes("Files") || blocked()) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          setDragging(false);
+          const dropped = Array.from(e.dataTransfer?.files ?? []);
+          if (!dropped.length || blocked()) return;
+          e.preventDefault();
+          addFiles(dropped);
+        }}
+      >
+        <Show when={files().length}>
+          <ul class="attach-list" aria-label="Attached files">
+            <For each={files()}>
+              {(f) => (
+                <li class="attach" data-state={f.state} title={f.attachment?.path ?? f.error ?? "Copying into the box"}>
+                  <Show when={f.state === "failed"} fallback={<I.Paperclip />}>
+                    <I.Warning />
+                  </Show>
+                  <span class="mono attach-name">{f.name}</span>
+                  <span class="attach-note">{f.state === "failed" ? f.error : f.state === "uploading" ? "copying" : fileSize(f.size)}</span>
+                  <button class="icon-btn" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => setFiles((fs) => fs.filter((x) => x.key !== f.key))}>
+                    <I.Close />
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
         <textarea
           ref={box}
           rows={1}
-          placeholder={p.agent.turns === 0 ? "What should the agent do?" : "Reply, or give the next task"}
+          placeholder={working() ? "Queue a follow-up for when this turn ends" : p.agent.turns === 0 ? "What should the agent do?" : "Reply, or give the next task"}
           value={text()}
           disabled={!!blocked()}
           onInput={(e) => {
             setText(e.currentTarget.value);
             grow();
+          }}
+          onPaste={(e) => {
+            const pasted = Array.from(e.clipboardData?.files ?? []);
+            if (!pasted.length) return;
+            e.preventDefault();
+            addFiles(pasted);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -193,23 +420,39 @@ const Composer = (p: { agent: AgentMeta }) => {
           }}
           aria-label="Message to the agent"
         />
-        <Show
-          when={!isBusy(p.agent.status)}
-          fallback={
-            <button class="btn danger" onClick={() => void actions.stop(p.agent.id)} title="Kill the running turn">
+        <div class="composer-actions">
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              addFiles(Array.from(e.currentTarget.files ?? []));
+              e.currentTarget.value = "";
+            }}
+          />
+          <button class="icon-btn" disabled={!!blocked()} onClick={() => picker.click()} title="Attach files (copied into the box, up to 20 MB each)" aria-label="Attach files">
+            <I.Paperclip />
+          </button>
+          <Show
+            when={working()}
+            fallback={
+              <button class="btn primary" disabled={!canSend()} onClick={() => void submit()} aria-label="Send">
+                <I.Send /> Send
+              </button>
+            }
+          >
+            <button class="btn" disabled={!canSend()} onClick={() => void submit()} title="Send when the current turn ends" aria-label="Queue">
+              <I.ListChecks /> Queue
+            </button>
+            <button class="btn danger" onClick={() => void actions.stop(p.agent.id)} title="Kill the running turn; queued messages wait">
               <I.Stop /> Stop
             </button>
-          }
-        >
-          <button class="btn primary" disabled={!text().trim() || busy() || !!blocked()} onClick={() => void submit()} aria-label="Send">
-            <I.Send /> Send
-          </button>
-        </Show>
+          </Show>
+        </div>
       </div>
       <div class="composer-foot">
-        <Show when={blocked()} fallback={<span>Enter sends, Shift+Enter adds a line.</span>}>
-          <span>{blocked()}</span>
-        </Show>
+        <span>{foot()}</span>
         <span>{p.agent.skipPermissions ? "Tools run without approval prompts." : "Tools that need approval are denied."}</span>
         <Show when={p.agent.cwd}>
           <span class="mono" style={{ "font-size": "var(--text-3xs)" }}>
@@ -332,6 +575,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
               </div>
             </Show>
             <Transcript agent={a()} />
+            <QueuePanel agent={a()} />
             <Composer agent={a()} />
           </>
         }

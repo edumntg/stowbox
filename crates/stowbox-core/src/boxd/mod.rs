@@ -350,6 +350,17 @@ impl Provider for Boxd {
         Ok(())
     }
 
+    async fn upload_file(&self, id: &str, path: &str, data: Vec<u8>) -> Result<u64> {
+        let expected = data.len() as u64;
+        let mut api = self.api().await?;
+        let written = if data.len() <= UNARY_UPLOAD_MAX {
+            api.upload_file(pb::UploadFileRequest { vm_id: id.into(), path: path.into(), data }).await?.into_inner().bytes_written
+        } else {
+            api.upload_file_stream(tokio_stream::iter(upload_chunks(id, path, data, UPLOAD_CHUNK))).await?.into_inner().bytes_written
+        };
+        crate::upload::confirm_written(written, expected, path)
+    }
+
     async fn ssh_host_key(&self) -> Result<Option<String>> {
         // Every machine's SSH ends at the proxy, which presents one key; it
         // only travels with a machine listing.
@@ -385,6 +396,23 @@ impl Boxd {
     }
 }
 
+/// Files up to this size go in one `UploadFile` message; gRPC caps a
+/// message at 4 MiB, so larger ones stream.
+const UNARY_UPLOAD_MAX: usize = 3 * 1024 * 1024;
+
+/// Bytes per `UploadFileStream` chunk.
+const UPLOAD_CHUNK: usize = 1024 * 1024;
+
+/// The `UploadFileStream` messages for one file: the first carries the
+/// machine, the path and the total size with the first slice; the rest
+/// carry bytes only. An empty file is one chunk with no bytes.
+fn upload_chunks(vm_id: &str, path: &str, data: Vec<u8>, chunk: usize) -> Vec<pb::UploadFileChunk> {
+    let total_size = data.len() as u64;
+    let mut slices = data.chunks(chunk.max(1)).map(<[u8]>::to_vec);
+    let first = pb::UploadFileChunk { vm_id: vm_id.into(), path: path.into(), total_size, data: slices.next().unwrap_or_default() };
+    std::iter::once(first).chain(slices.map(|data| pb::UploadFileChunk { data, ..Default::default() })).collect()
+}
+
 /// POSIX single-quote escaping: safe for any byte sequence except NUL.
 pub fn shell_quote(s: &str) -> String {
     if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./:=@%+".contains(&b)) {
@@ -405,7 +433,22 @@ pub fn shell_quote(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::shell_quote;
+    use super::{shell_quote, upload_chunks};
+
+    #[test]
+    fn upload_chunks_carry_the_header_once_and_every_byte() {
+        let data: Vec<u8> = (0..10u8).collect();
+        let chunks = upload_chunks("vm_1", "/home/boxd/a.png", data.clone(), 4);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!((chunks[0].vm_id.as_str(), chunks[0].path.as_str(), chunks[0].total_size), ("vm_1", "/home/boxd/a.png", 10));
+        assert!(chunks[1..].iter().all(|c| c.vm_id.is_empty() && c.path.is_empty() && c.total_size == 0));
+        assert_eq!(chunks.iter().flat_map(|c| c.data.clone()).collect::<Vec<u8>>(), data);
+        let empty = upload_chunks("vm_1", "/p", Vec::new(), 4);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].total_size, 0);
+        assert!(empty[0].data.is_empty());
+        assert_eq!(upload_chunks("vm_1", "/p", vec![1; 8], 4).len(), 2);
+    }
 
     #[test]
     fn quotes_only_when_needed() {

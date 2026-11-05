@@ -90,7 +90,9 @@ impl Notifier {
     /// just reached its outcome.
     pub fn agent(&mut self, meta: &AgentMeta, now_ms: i64) -> Option<Notice> {
         let prev = self.agents.insert(meta.id.clone(), meta.status.clone());
-        if !prev.as_ref().is_some_and(is_busy) || now_ms < self.quiet_until_ms {
+        // With queued messages to send the agent is not waiting for anyone:
+        // the turn that ends the queue notifies.
+        if !prev.as_ref().is_some_and(is_busy) || now_ms < self.quiet_until_ms || meta.queue_continues() {
             return None;
         }
         let (kind, title, body) = match &meta.status {
@@ -156,6 +158,8 @@ mod tests {
             output_tokens: 0,
             turn: None,
             worktree: None,
+            queue: vec![],
+            queue_paused: false,
         }
     }
 
@@ -201,6 +205,25 @@ mod tests {
     fn stop_and_idle_do_not_notify() {
         let mut n = Notifier::new(&[], T0);
         assert!(feed(&mut n, "a", &[AgentStatus::Idle, AgentStatus::Starting, AgentStatus::Thinking, AgentStatus::Stopped, AgentStatus::Done], LATER).is_empty());
+    }
+
+    #[test]
+    fn a_turn_with_queued_messages_after_it_does_not_notify() {
+        let mut n = Notifier::new(&[], T0);
+        let with_queue = |status: AgentStatus, paused: bool| {
+            let mut m = meta("a", status);
+            m.queue.push(crate::agent::QueuedMessage { id: "q".into(), text: "next".into(), attachments: vec![], queued_at: 0 });
+            m.queue_paused = paused;
+            m
+        };
+        assert!(n.agent(&with_queue(AgentStatus::Thinking, false), LATER).is_none());
+        assert!(n.agent(&with_queue(AgentStatus::Done, false), LATER).is_none(), "the next message goes out on its own");
+        // The last turn of the queue notifies.
+        assert!(n.agent(&meta("a", AgentStatus::Starting), LATER).is_none());
+        assert!(n.agent(&meta("a", AgentStatus::Done), LATER).is_some());
+        // A paused queue waits for the person: that is an outcome.
+        assert!(n.agent(&with_queue(AgentStatus::Thinking, true), LATER).is_none());
+        assert!(n.agent(&with_queue(AgentStatus::Done, true), LATER).is_some());
     }
 
     #[test]

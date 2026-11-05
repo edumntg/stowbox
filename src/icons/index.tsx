@@ -74,4 +74,5 @@ export const StopCircle = icon("<circle cx=\"12\" cy=\"12\" r=\"10\" /><rect x=\
 export const Bell = icon("<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /><path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" />");
 export const ArrowUp = icon("<path d=\"m5 12 7-7 7 7\" /><path d=\"M12 19V5\" />");
 export const ArrowDown = icon("<path d=\"M12 5v14\" /><path d=\"m19 12-7 7-7-7\" />");
+export const Paperclip = icon("<path d=\"m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551\" />");
 export const ListChecks = icon("<path d=\"m3 17 2 2 4-4\" /><path d=\"m3 7 2 2 4-4\" /><path d=\"M13 6h8\" /><path d=\"M13 12h8\" /><path d=\"M13 18h8\" />");

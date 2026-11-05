@@ -6,6 +6,7 @@ import type {
   AgentEvent,
   AgentMeta,
   AgentPush,
+  Attachment,
   CreateSpec,
   Editor,
   GuardEntry,
@@ -339,6 +340,10 @@ export const agentById = (id: string) => state.agents.find((a) => a.id === id);
 export const agentsForMachine = (id: string) => state.agents.filter((a) => a.machineId === id);
 export const selectedMachine = () => (state.ui.selection.kind === "box" ? machineById(state.ui.selection.id) : undefined);
 export const selectedAgent = () => (state.ui.selection.kind === "agent" ? agentById(state.ui.selection.id) : undefined);
+
+function putAgent(meta: AgentMeta) {
+  setState("agents", (as) => as.map((a) => (a.id === meta.id ? meta : a)));
+}
 
 function onPush(p: AgentPush) {
   if (!p || !p.meta || !p.agentId) return;
@@ -875,13 +880,60 @@ export const actions = {
     return meta;
   },
 
-  async send(id: string, text: string) {
+  async send(id: string, text: string, attachments: Attachment[] = []) {
     try {
-      await api.agentSend(id, text);
+      await api.agentSend(id, text, attachments);
     } catch (e) {
       actions.toast(message(e));
       throw e;
     }
+  },
+
+  /** Queues a follow-up for when the running turn ends. */
+  async queue(id: string, text: string, attachments: Attachment[] = []) {
+    try {
+      putAgent(await api.agentQueueAdd(id, text, attachments));
+    } catch (e) {
+      actions.toast("Could not queue the message: " + message(e));
+      throw e;
+    }
+  },
+
+  async editQueued(id: string, messageId: string, text: string) {
+    try {
+      putAgent(await api.agentQueueEdit(id, messageId, text));
+    } catch (e) {
+      actions.toast("Could not change the queued message: " + message(e));
+    }
+  },
+
+  async removeQueued(id: string, messageId: string) {
+    try {
+      putAgent(await api.agentQueueRemove(id, messageId));
+    } catch (e) {
+      actions.toast("Could not remove the queued message: " + message(e));
+    }
+  },
+
+  async clearQueue(id: string) {
+    try {
+      putAgent(await api.agentQueueClear(id));
+    } catch (e) {
+      actions.toast("Could not clear the queue: " + message(e));
+    }
+  },
+
+  async resumeQueue(id: string) {
+    try {
+      await api.agentQueueResume(id);
+    } catch (e) {
+      actions.toast(message(e));
+    }
+  },
+
+  /** Throws the provider's message; the composer shows it on the file. */
+  upload(id: string, name: string, bytes: Uint8Array): Promise<Attachment> {
+    return api.agentUpload(id, name, bytes);
   },
 
   async stop(id: string) {
