@@ -1,5 +1,5 @@
 # Builds the real app on Windows, starts it and drives its UI over WebDriver
-# (tauri-driver + msedgedriver against WebView2): with no API key the
+# (msedgedriver against WebView2): with no API key the
 # onboarding renders, a malformed key gets the app's validation message, an
 # invalid one boxd's refusal. Screenshots of the webview and of the whole
 # screen are attached to the run. Windows minutes bill 2x on a private repo,
@@ -40,14 +40,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: smoke
+          cache-on-failure: true
 
       # A release build without installers: the same exe the installers
       # carry (no console window, no devtools), minus the bundling time.
       - name: Build the app
         run: pnpm tauri build --no-bundle
-
-      - name: tauri-driver
-        run: cargo install tauri-driver --locked
 
       # msedgedriver has to match the WebView2 runtime's version, which the
       # runner image updates on its own schedule.
@@ -63,6 +61,21 @@ jobs:
           Expand-Archive "$dir\driver.zip" -DestinationPath $dir -Force
           & "$dir\msedgedriver.exe" --version
           "MSEDGEDRIVER=$dir\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Without WebDriver first: the exe starts on its own and opens a
+      # window, whatever happens to the driven run after it.
+      - name: Launch the app alone
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          $p = Start-Process -FilePath target\release\stowbox.exe -PassThru
+          Start-Sleep -Seconds 12
+          $info = Get-Process -Id $p.Id -ErrorAction SilentlyContinue | Select-Object Id, MainWindowTitle, Responding
+          $info | Format-List | Out-String | Write-Host
+          & .github\scripts\screen.ps1 (Join-Path (Resolve-Path smoke) '0-launched-screen.png')
+          if (-not $info -or $info.MainWindowTitle -ne 'Stowbox') { Write-Error 'stowbox.exe is not running with a window titled Stowbox' }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
 
       - name: Drive the app
         run: node .github/scripts/windows-smoke.mjs target/release/stowbox.exe "$env:MSEDGEDRIVER" smoke

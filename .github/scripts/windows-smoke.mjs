@@ -1,10 +1,12 @@
-// Drives the real Stowbox build on Windows over WebDriver (tauri-driver in
-// front of msedgedriver, which attaches to the app's WebView2), with no API
+// Drives the real Stowbox build on Windows over WebDriver (msedgedriver,
+// which starts the exe and attaches to its WebView2), with no API
 // key configured: the onboarding must render, a malformed key must get the
 // app's own validation message, and a well-formed but invalid key must come
 // back with boxd's refusal while the app stays on onboarding. Screenshots of
 // the webview and of the whole screen (to see the native window frame) go to
-// the output directory. No dependencies: WebDriver is plain HTTP.
+// the output directory with msedgedriver's verbose log. No dependencies:
+// WebDriver is plain HTTP. tauri-driver is not needed on Windows: all it
+// does there is turn `tauri:options` into the `ms:edgeOptions` sent below.
 //
 //   node windows-smoke.mjs <path to stowbox.exe> <path to msedgedriver.exe> <output dir>
 
@@ -59,8 +61,10 @@ const text = async (el) => wd("GET", `/session/${session}/element/${el}/text`);
 const run = (script, args = []) => wd("POST", `/session/${session}/execute/sync`, { script, args });
 
 async function shot(name) {
-  const png = await wd("GET", `/session/${session}/screenshot`);
-  writeFileSync(join(out, `${name}-webview.png`), Buffer.from(png, "base64"));
+  if (session) {
+    const png = await wd("GET", `/session/${session}/screenshot`);
+    writeFileSync(join(out, `${name}-webview.png`), Buffer.from(png, "base64"));
+  }
   try {
     execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(here, "screen.ps1"), join(out, `${name}-screen.png`)], { stdio: "inherit" });
   } catch (e) {
@@ -76,13 +80,13 @@ function windowInfo() {
   return Array.isArray(v) ? v : [v];
 }
 
-const driver = spawn("tauri-driver", ["--native-driver", nativeDriver], { stdio: "inherit" });
+const driver = spawn(nativeDriver, ["--port=4444", "--verbose", `--log-path=${join(out, "msedgedriver.log")}`], { stdio: "inherit" });
 let failed = false;
 try {
-  await until("tauri-driver", async () => (await fetch(base + "/status")).ok, 30000);
+  await until("msedgedriver", async () => (await fetch(base + "/status")).ok, 30000);
   session = (
     await wd("POST", "/session", {
-      capabilities: { alwaysMatch: { browserName: "wry", "tauri:options": { application: resolve(app) } } },
+      capabilities: { alwaysMatch: { browserName: "webview2", "ms:edgeChromium": true, "ms:edgeOptions": { binary: resolve(app), args: [] } } },
     })
   ).sessionId;
   console.log(`session ${session}`);
@@ -132,7 +136,7 @@ try {
 } catch (e) {
   failed = true;
   console.error(e);
-  if (session) await shot("error").catch(() => undefined);
+  await shot("error").catch(() => undefined);
 } finally {
   if (session) await wd("DELETE", `/session/${session}`).catch(() => undefined);
   driver.kill();
