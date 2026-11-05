@@ -2289,3 +2289,227 @@ select.input {
     grid-column: 1 / -1;
   }
 }
+
+/* ---------- Changes: the repository review of an agent or a box ---------- */
+
+.changes {
+  display: grid;
+  gap: 12px;
+  max-width: 1100px;
+  font-size: var(--text-xs);
+}
+
+.changes .setup-bar .input {
+  width: auto;
+  flex: 1;
+  min-width: 180px;
+  max-width: 420px;
+}
+
+.review {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.review .note {
+  margin: -4px 0 0;
+}
+
+.review-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.review-head strong {
+  font-weight: 600;
+}
+
+.review-head .spacer {
+  flex: 1;
+}
+
+.review-root {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.review-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.review-actions .input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.plus {
+  color: var(--diff-add);
+}
+
+.minus {
+  color: var(--diff-del);
+}
+
+.review-outcome {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.review-outcome.error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.review-outcome-title {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 6px 6px 12px;
+  min-width: 0;
+}
+
+.review-outcome-title .spacer {
+  flex: 1;
+}
+
+.review-outcome-title .link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-outcome pre {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  max-height: 240px;
+  overflow: auto;
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.review-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  max-height: 260px;
+  overflow: auto;
+}
+
+.review-files li + li {
+  border-top: 1px solid var(--border);
+}
+
+.review-file-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  text-align: left;
+  transition: background 150ms;
+}
+
+.review-file-row:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.review-file-row:disabled {
+  cursor: default;
+}
+
+.review-code {
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.review-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-counts {
+  white-space: nowrap;
+  font-size: var(--text-2xs);
+}
+
+.review-diff {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-file {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  overflow: hidden;
+  scroll-margin-top: 8px;
+}
+
+.review-file summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+
+.review-file summary::-webkit-details-marker {
+  display: none;
+}
+
+.review-file summary .caret {
+  width: 13px;
+  height: 13px;
+  color: var(--muted-foreground);
+  flex: none;
+  transition: transform 150ms;
+}
+
+.review-file[open] summary .caret {
+  transform: rotate(90deg);
+}
+
+.review-file summary .review-path {
+  flex: 1;
+}
+
+/* The review shows whole files; the page scrolls, not each file. */
+.review-file .diff {
+  max-height: none;
+}
+
+.diff .hunk {
+  color: var(--muted-foreground);
+  background: var(--muted);
+}
+
+.review-nopatch {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+}

@@ -692,85 +692,6 @@ mod tests {
         assert!(r.error.is_none());
     }
 
-    /// Runs exec scripts with local bash, so `run` is tested end to end.
-    struct LocalBash {
-        home: std::path::PathBuf,
-    }
-
-    #[async_trait::async_trait]
-    impl Provider for LocalBash {
-        fn id(&self) -> &'static str {
-            "local"
-        }
-        async fn whoami(&self) -> Result<Account> {
-            unimplemented!()
-        }
-        async fn list_machines(&self) -> Result<Vec<Machine>> {
-            unimplemented!()
-        }
-        async fn get_machine(&self, _: &str) -> Result<Machine> {
-            Ok(sample_machine())
-        }
-        async fn create_machine(&self, _: CreateSpec) -> Result<Machine> {
-            unimplemented!()
-        }
-        async fn fork_machine(&self, _: &str, _: Option<String>) -> Result<Machine> {
-            unimplemented!()
-        }
-        async fn power(&self, _: &str, _: PowerAction) -> Result<()> {
-            unimplemented!()
-        }
-        async fn set_auto_hibernate(&self, _: &str, _: u32) -> Result<()> {
-            unimplemented!()
-        }
-        async fn set_auto_suspend(&self, _: &str, _: u32) -> Result<()> {
-            unimplemented!()
-        }
-        async fn machine_usage(&self, _: &str) -> Result<Usage> {
-            unimplemented!()
-        }
-        async fn org_billing(&self, _: &str) -> Result<OrgBilling> {
-            unimplemented!()
-        }
-        async fn rates(&self) -> Result<(String, Rates)> {
-            unimplemented!()
-        }
-        async fn exec(&self, _: &str, spec: ExecSpec) -> Result<ExecHandle> {
-            use std::io::{Read, Write};
-            let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<ExecInput>(8);
-            let (out_tx, out_rx) = tokio::sync::mpsc::channel::<ExecOutput>(64);
-            let mut child = std::process::Command::new("bash")
-                .arg("-c")
-                .arg(&spec.script)
-                .env("HOME", &self.home)
-                .current_dir(&self.home)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?;
-            let mut stdin = child.stdin.take().unwrap();
-            let mut stdout = child.stdout.take().unwrap();
-            tokio::spawn(async move {
-                while let Some(ExecInput::Data(d)) = in_rx.recv().await {
-                    let _ = stdin.write_all(&d);
-                }
-                // Close or a dropped sender: stdin EOF.
-            });
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = stdout.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    let _ = out_tx.blocking_send(ExecOutput::Stdout(buf[..n].to_vec()));
-                }
-                let code = child.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
-                let _ = out_tx.blocking_send(ExecOutput::Exit(code));
-            });
-            Ok(ExecHandle { input: in_tx, output: out_rx })
-        }
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn run_end_to_end_with_local_bash() {
         if std::process::Command::new("bash").arg("-c").arg("true").status().is_err() {
@@ -778,7 +699,7 @@ mod tests {
         }
         let home = std::env::temp_dir().join(format!("stowbox-run-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&home).unwrap();
-        let p = LocalBash { home: home.clone() };
+        let p = crate::testing::LocalBash { home: home.clone(), env: vec![] };
         let commands = vec!["echo token is $API_TOKEN".to_string(), "false".to_string(), "echo never".to_string()];
         let secrets = vec![("API_TOKEN".to_string(), "tok-12345".to_string())];
         let mut events = Vec::new();

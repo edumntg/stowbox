@@ -183,6 +183,53 @@ export interface SetupPush {
   notice?: Notice | null;
 }
 
+/** Mirrors stowbox_core::git. Read inside the box over exec; paths are
+ * relative to `root`, the repository's top level. */
+export type RepoState = "ok" | "no-dir" | "not-repo" | "no-git";
+
+export interface GitFileChange {
+  path: string;
+  origPath: string | null;
+  /** M, A, D, R, C, T, U (conflict) or ? (untracked). */
+  code: string;
+  staged: boolean;
+}
+
+export interface GitDiffFile {
+  path: string;
+  oldPath: string | null;
+  change: "modified" | "added" | "deleted" | "renamed";
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  /** Hunks from the first @@ line on; empty for binary files and pure renames. */
+  patch: string;
+}
+
+export interface GitReview {
+  state: RepoState;
+  cwd: string;
+  root: string;
+  branch: { head: string | null; oid: string | null; upstream: string | null; ahead: number; behind: number };
+  remote: string | null;
+  remoteUrl: string | null;
+  base: string | null;
+  gh: boolean;
+  token: boolean;
+  files: GitFileChange[];
+  filesTruncated: boolean;
+  diff: GitDiffFile[];
+  diffTruncated: boolean;
+  sampledAtMs: number;
+}
+
+export interface PrOutcome {
+  url: string;
+  /** "gh": created (or found) by gh in the box; "compare": finish it in the browser. */
+  via: "gh" | "compare";
+  existing: boolean;
+}
+
 export type Harness = "claude-code" | "codex";
 
 export type AgentStatus =
@@ -296,6 +343,11 @@ export interface Api {
   setupCancel(machineId: string): Promise<void>;
   setupRuns(): Promise<SetupRun[]>;
   onSetupEvent(cb: (push: SetupPush) => void): Promise<() => void>;
+  /** `cwd` null means the home directory. Errors carry git's message verbatim. */
+  gitReview(machineId: string, cwd: string | null): Promise<GitReview>;
+  gitCommit(machineId: string, cwd: string | null, message: string): Promise<string>;
+  gitPush(machineId: string, cwd: string | null): Promise<string>;
+  gitOpenPr(machineId: string, cwd: string | null): Promise<PrOutcome>;
   terminalOpen(machine: string, cols: number, rows: number, onEvent: (ev: TermEvent) => void): Promise<string>;
   terminalWrite(id: string, bytes: Uint8Array): Promise<void>;
   terminalResize(id: string, cols: number, rows: number): Promise<void>;

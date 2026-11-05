@@ -23,7 +23,8 @@ import type {
 import { isBusy } from "../ui/format";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
-export type BoxTab = "agents" | "setup" | "terminal" | "details";
+export type BoxTab = "agents" | "setup" | "changes" | "terminal" | "details";
+export type AgentTab = "chat" | "changes";
 export type Theme = "dark" | "light";
 export type Dialog =
   | null
@@ -74,6 +75,7 @@ interface AppState {
     sidebar: boolean;
     inspector: boolean;
     boxTab: BoxTab;
+    agentTab: AgentTab;
     dialog: Dialog;
     toasts: Toast[];
     collapsed: Record<string, boolean>;
@@ -127,6 +129,7 @@ export const [state, setState] = createStore<AppState>({
     sidebar: true,
     inspector: true,
     boxTab: "agents",
+    agentTab: "chat",
     dialog: null,
     toasts: [],
     collapsed: {},
@@ -397,6 +400,7 @@ export const actions = {
   },
 
   select(sel: Selection) {
+    const prev = state.ui.selection;
     if (sel.kind === "box" || sel.kind === "agent") {
       if (!state.ui.tabs.some((t) => sameSel(t, sel))) {
         setState("ui", "tabs", (tabs) => [...tabs, sel]);
@@ -407,6 +411,8 @@ export const actions = {
     if (sel.kind === "fleet" && Date.now() - state.metricsAt > 5_000) void actions.refreshMetrics();
     if (sel.kind === "agent") void actions.loadTranscript(sel.id);
     if (sel.kind === "box" && !(state.ui.selection.kind === "box" && state.ui.selection.id === sel.id)) setState("ui", "boxTab", "agents");
+    // Another agent opens on its chat; the Changes tab is per visit.
+    if (sel.kind === "agent" && !(prev.kind === "agent" && prev.id === sel.id)) setState("ui", "agentTab", "chat");
   },
 
   closeTab(sel: Selection) {
@@ -488,6 +494,9 @@ export const actions = {
   },
   setBoxTab(tab: BoxTab) {
     setState("ui", "boxTab", tab);
+  },
+  setAgentTab(tab: AgentTab) {
+    setState("ui", "agentTab", tab);
   },
   toggleCollapsed(id: string) {
     setState("ui", "collapsed", id, (v) => !v);

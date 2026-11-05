@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, lazy, on } from "solid-js";
 import type { AgentMeta } from "../bridge/types";
 import { actions, machineById, state } from "../state/store";
 import * as I from "../icons";
@@ -7,6 +7,8 @@ import { diffFor } from "./diff";
 import { agentStatusLabel, duration, isBusy, statusLabel, tokens, usd } from "./format";
 import { renderMarkdown } from "./markdown";
 import { toItems, toolSummary, type Item } from "./transcript";
+
+const Changes = lazy(() => import("./Changes"));
 
 const ToolCard = (p: { item: Extract<Item, { kind: "tool" }> }) => {
   const summary = () => toolSummary(p.item.name, p.item.input);
@@ -300,17 +302,39 @@ export default function AgentView(p: { agent: AgentMeta }) {
           </span>
         </div>
       </header>
-      <Show when={a().status.kind === "failed"}>
-        <div class="msg-note" style={{ margin: "10px 22px 0" }}>
-          {(a().status as { message: string }).message}
-          <Show when={machine() && machine()!.status !== "running"}>
-            {" "}
-            · the box is {statusLabel[machine()!.status].toLowerCase()}
+      <nav class="subtabs" role="tablist" aria-label="Agent sections">
+        <button class="subtab" role="tab" aria-selected={state.ui.agentTab === "chat"} onClick={() => actions.setAgentTab("chat")}>
+          Chat
+        </button>
+        <button class="subtab" role="tab" aria-selected={state.ui.agentTab === "changes"} onClick={() => actions.setAgentTab("changes")} title="The repository in the agent's directory">
+          Changes
+        </button>
+      </nav>
+      <Show
+        when={state.ui.agentTab === "changes"}
+        fallback={
+          <>
+            <Show when={a().status.kind === "failed"}>
+              <div class="msg-note" style={{ margin: "10px 22px 0" }}>
+                {(a().status as { message: string }).message}
+                <Show when={machine() && machine()!.status !== "running"}>
+                  {" "}
+                  · the box is {statusLabel[machine()!.status].toLowerCase()}
+                </Show>
+              </div>
+            </Show>
+            <Transcript agent={a()} />
+            <Composer agent={a()} />
+          </>
+        }
+      >
+        <div class="view-body scroll">
+          {/* Keyed on the agent so another agent starts from its own directory. */}
+          <Show when={a().id} keyed>
+            <Changes machine={machine()} cwd={a().cwd} agentBusy={isBusy(a().status)} />
           </Show>
         </div>
       </Show>
-      <Transcript agent={a()} />
-      <Composer agent={a()} />
     </section>
   );
 }

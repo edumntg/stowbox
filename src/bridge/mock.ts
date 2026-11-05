@@ -1,7 +1,24 @@
 // Browser-only stand-in for the desktop shell. Used to develop and screenshot
 // the UI with `pnpm dev` outside Tauri. Every value here is a placeholder.
 
-import type { Account, AgentEvent, AgentMeta, AgentPush, Api, Machine, MachineMetrics, Notice, NoticeTarget, Preset, SetupPush, SetupRun, TermEvent } from "./types";
+import type {
+  Account,
+  AgentEvent,
+  AgentMeta,
+  AgentPush,
+  Api,
+  GitDiffFile,
+  GitFileChange,
+  GitReview,
+  Machine,
+  MachineMetrics,
+  Notice,
+  NoticeTarget,
+  Preset,
+  SetupPush,
+  SetupRun,
+  TermEvent,
+} from "./types";
 
 const GIB = 1024 ** 3;
 
@@ -378,6 +395,146 @@ function startMockSetup(m: Machine, presetId: string): SetupRun {
 
 const clickListeners = new Set<(t: NoticeTarget) => void>();
 
+// Git repositories by "machineId:dir". The api repo has an agent's work
+// waiting for review; the worker repo's remote moved on, so a push there is
+// rejected the way git words it.
+interface MockRepo {
+  review: Omit<GitReview, "cwd" | "sampledAtMs">;
+  rejectPush: boolean;
+}
+
+const healthPatch = `@@ -1,12 +1,15 @@
+ import express from "express";
++import { health } from "./health";
+ import { users } from "./users";
+
+ const app = express();
+ app.use(express.json());
+
++app.get("/health", health);
+ app.use("/users", users);
+
+-app.listen(3000);
++const port = Number(process.env.PORT ?? 3000);
++app.listen(port, () => console.log(\`listening on \${port}\`));
+
+ export default app;
+`;
+
+function mockRepos(): Record<string, MockRepo> {
+  const files: GitFileChange[] = [
+    { path: "src/server.ts", origPath: null, code: "M", staged: false },
+    { path: "package.json", origPath: null, code: "M", staged: false },
+    { path: "src/health.ts", origPath: null, code: "?", staged: false },
+    { path: "test/health.test.ts", origPath: null, code: "?", staged: false },
+  ];
+  const diff: GitDiffFile[] = [
+    { path: "src/server.ts", oldPath: null, change: "modified", binary: false, additions: 4, deletions: 1, patch: healthPatch },
+    {
+      path: "package.json",
+      oldPath: null,
+      change: "modified",
+      binary: false,
+      additions: 1,
+      deletions: 1,
+      patch: `@@ -6,7 +6,7 @@
+   "scripts": {
+     "start": "node dist/server.js",
+-    "test": "node --test"
++    "test": "node --test test/"
+   },
+`,
+    },
+    {
+      path: "src/health.ts",
+      oldPath: null,
+      change: "added",
+      binary: false,
+      additions: 5,
+      deletions: 0,
+      patch: `@@ -0,0 +1,5 @@
++import type { Request, Response } from "express";
++
++export function health(_req: Request, res: Response) {
++  res.json({ ok: true, uptime: process.uptime() });
++}
+`,
+    },
+    {
+      path: "test/health.test.ts",
+      oldPath: null,
+      change: "added",
+      binary: false,
+      additions: 9,
+      deletions: 0,
+      patch: `@@ -0,0 +1,9 @@
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import request from "supertest";
++import app from "../src/server";
++
++test("GET /health answers ok", async () => {
++  const res = await request(app).get("/health");
++  assert.equal(res.body.ok, true);
++});
+`,
+    },
+  ];
+  return {
+    "vm_mock_1:/home/user/api": {
+      rejectPush: false,
+      review: {
+        state: "ok",
+        root: "/home/user/api",
+        branch: { head: "add-health-endpoint", oid: "4f1c2a9e0b7d", upstream: "origin/add-health-endpoint", ahead: 0, behind: 0 },
+        remote: "origin",
+        remoteUrl: "git@github.com:mock-org/api.git",
+        base: "main",
+        gh: true,
+        token: true,
+        files,
+        filesTruncated: false,
+        diff,
+        diffTruncated: false,
+      },
+    },
+    "vm_mock_5:/home/user/worker": {
+      rejectPush: true,
+      review: {
+        state: "ok",
+        root: "/home/user/worker",
+        branch: { head: "main", oid: "9b0e33c1d2aa", upstream: "origin/main", ahead: 1, behind: 2 },
+        remote: "origin",
+        remoteUrl: "https://gitlab.com/mock-org/worker.git",
+        base: "main",
+        gh: false,
+        token: false,
+        files: [],
+        filesTruncated: false,
+        diff: [],
+        diffTruncated: false,
+      },
+    },
+  };
+}
+const repos = mockRepos();
+
+function mockRepo(machineId: string, cwd: string | null): MockRepo | GitReview["state"] {
+  const dir = (cwd ?? "~").replace(/^~(?=\/|$)/, "/home/user").replace(/\/+$/, "");
+  const hit = Object.entries(repos).find(([k]) => {
+    const [m, root] = k.split(/:(.*)/s);
+    return m === machineId && (dir === root || dir.startsWith(root + "/"));
+  });
+  if (hit) return hit[1];
+  return dir === "/home/user" || dir === "" ? "not-repo" : "no-dir";
+}
+
+function requireRepo(machineId: string, cwd: string | null): MockRepo {
+  const r = mockRepo(machineId, cwd);
+  if (typeof r === "string") throw new Error(r === "no-dir" ? "the directory does not exist in the box" : "the directory is not inside a git repository");
+  return r;
+}
+
 export const mockApi: Api = {
   async providerStatus() {
     // `?onboarding` previews the first-run screen.
@@ -577,6 +734,60 @@ export const mockApi: Api = {
   async onSetupEvent(cb) {
     setupListeners.add(cb);
     return () => setupListeners.delete(cb);
+  },
+  async gitReview(machineId, cwd) {
+    const m = await mockApi.getMachine(machineId);
+    // exec wakes a box in standby, as it does in boxd.
+    if (m.status === "suspended" || m.status === "hibernated") await mockApi.machinePower(machineId, m.status === "suspended" ? "resume" : "wake");
+    if (m.status === "stopped") throw new Error("the box is stopped");
+    await sleep(500);
+    const r = mockRepo(machineId, cwd);
+    const base = { cwd: cwd ?? "~", sampledAtMs: Date.now() };
+    if (typeof r === "string") {
+      return { ...base, state: r, root: "", branch: { head: null, oid: null, upstream: null, ahead: 0, behind: 0 }, remote: null, remoteUrl: null, base: null, gh: false, token: false, files: [], filesTruncated: false, diff: [], diffTruncated: false };
+    }
+    return structuredClone({ ...r.review, ...base });
+  },
+  async gitCommit(machineId, cwd, message) {
+    const r = requireRepo(machineId, cwd);
+    await sleep(600);
+    if (!message.trim()) throw new Error("write a commit message");
+    if (r.review.files.length === 0) throw new Error("On branch " + r.review.branch.head + "\nnothing to commit, working tree clean");
+    const n = r.review.files.length;
+    const adds = r.review.diff.reduce((t, f) => t + f.additions, 0);
+    const dels = r.review.diff.reduce((t, f) => t + f.deletions, 0);
+    r.review.files = [];
+    r.review.diff = [];
+    r.review.branch.ahead += 1;
+    r.review.branch.oid = Math.random().toString(16).slice(2, 14);
+    return `[${r.review.branch.head} ${r.review.branch.oid.slice(0, 7)}] ${message.trim().split("\n")[0]}\n ${n} files changed, ${adds} insertions(+), ${dels} deletions(-)`;
+  },
+  async gitPush(machineId, cwd) {
+    const r = requireRepo(machineId, cwd);
+    await sleep(900);
+    const b = r.review.branch;
+    const url = r.review.remoteUrl ?? "origin";
+    if (r.rejectPush) {
+      throw new Error(
+        `To ${url}\n ! [rejected]        ${b.head} -> ${b.head} (fetch first)\nerror: failed to push some refs to '${url}'\nhint: Updates were rejected because the remote contains work that you do not\nhint: have locally. This is usually caused by another repository pushing to\nhint: the same ref. If you want to integrate the remote changes, use\nhint: 'git pull' before pushing again.`,
+      );
+    }
+    const from = Math.random().toString(16).slice(2, 9);
+    b.ahead = 0;
+    b.upstream = b.upstream ?? `${r.review.remote}/${b.head}`;
+    return `To ${url}\n   ${from}..${(b.oid ?? "").slice(0, 7)}  ${b.head} -> ${b.head}`;
+  },
+  async gitOpenPr(machineId, cwd) {
+    const r = requireRepo(machineId, cwd);
+    await sleep(1200);
+    const b = r.review.branch;
+    if (!b.upstream) throw new Error("aborted: you must first push the current branch to a remote, or use the --head flag");
+    if (r.review.gh && r.review.token) return { url: "https://github.com/mock-org/api/pull/42", via: "gh", existing: false };
+    return {
+      url: `https://gitlab.com/mock-org/worker/-/merge_requests/new?merge_request%5Bsource_branch%5D=${b.head}&merge_request%5Btarget_branch%5D=${r.review.base}`,
+      via: "compare",
+      existing: false,
+    };
   },
   async terminalOpen(_machine, _cols, _rows, onEvent) {
     const enc = new TextEncoder();
