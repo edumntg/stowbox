@@ -92,6 +92,27 @@ few tens of megabytes instead of an Electron process per window.
   such as `{{.State}}` for `docker inspect`, is left alone. Values are not
   secrets: the run keeps them and they show in the log.
 - **Desktop**: one click opens boxd's live desktop view in the browser.
+- **Open in VS Code or Cursor**: *Editor* on a box (and the code button in
+  an agent's box panel, at the agent's directory or worktree) opens the
+  folder over Remote-SSH with a `vscode://` or `cursor://` link. The dialog
+  lists what will change before anything does, and nothing is written until
+  you click Open: Stowbox makes its own key at `~/.ssh/stowbox/id_ed25519`
+  with `ssh-keygen` if there is none (an existing one is never replaced, and
+  your other keys are not read), links it to your boxd account with
+  `LinkSshKey` (one Stowbox key per computer: linking again replaces it),
+  and writes `Host stowbox-<box>` (the box's address, its SSH port on
+  boxd's proxy, user `boxd`, that key) between `# BEGIN stowbox` and
+  `# END stowbox` in `~/.ssh/config`. The block goes at the top of the file
+  the first time, so its values win over a `Host *` further down; later
+  runs replace it in place; nothing outside the markers changes, the file
+  before each change is kept as `~/.ssh/config.stowbox-backup`, and a
+  symlinked config is written through to its target. The proxy's host key
+  goes in `~/.ssh/stowbox/known_hosts`, so the first connection does not
+  stop at a fingerprint prompt. A box in standby or hibernated is woken
+  first; a stopped box has to be started. The editor needs its Remote - SSH
+  extension. The Details tab shows `ssh -p <port> boxd@<box>.boxd.sh` with
+  a copy button, and the dialog copies `ssh stowbox-<box>` once the entry
+  is there.
 - **Notifications**: when an agent's turn finishes or fails, or a setup run
   ends, the OS shows a notification, by default only while Stowbox is not
   the window in front (Settings has both switches). One turn notifies once;

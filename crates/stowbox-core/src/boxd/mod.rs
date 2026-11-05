@@ -332,6 +332,26 @@ impl Provider for Boxd {
         Ok(convert::org_billing(r))
     }
 
+    async fn link_ssh_key(&self, pubkey: &str, device_id: &str, label: &str) -> Result<()> {
+        self.api()
+            .await?
+            .link_ssh_key(pb::LinkSshKeyRequest { pubkey: pubkey.into(), device_id: device_id.into(), label: label.into() })
+            .await?;
+        Ok(())
+    }
+
+    async fn ssh_host_key(&self) -> Result<Option<String>> {
+        // Every machine's SSH ends at the proxy, which presents one key; it
+        // only travels with a machine listing.
+        let r = self
+            .api()
+            .await?
+            .list_vms(pb::ListVmsRequest { org: String::new(), all_contexts: false })
+            .await?
+            .into_inner();
+        Ok(Some(r.ssh_host_key).filter(|k| !k.trim().is_empty()))
+    }
+
     async fn rates(&self) -> Result<(String, Rates)> {
         // The rate card only travels with a usage response. Ask for a window
         // that is cheap to compute: the last hour of the default org.

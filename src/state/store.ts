@@ -7,6 +7,7 @@ import type {
   AgentMeta,
   AgentPush,
   CreateSpec,
+  Editor,
   Machine,
   MachineMetrics,
   NewAgent,
@@ -35,6 +36,8 @@ export type Dialog =
   | { kind: "new-agent"; machineId?: string }
   | { kind: "settings" }
   | { kind: "delete-agent"; agentId: string }
+  /** `dir` is the directory in the box to open; null is the home directory. */
+  | { kind: "open-editor"; machineId: string; dir: string | null }
   | { kind: "confirm"; title: string; body: string; confirmLabel: string; danger: boolean; run: () => Promise<void> };
 export interface NotifyPrefs {
   /** Notify when an agent finishes or fails, or a setup run ends. */
@@ -674,6 +677,14 @@ export const actions = {
     await api.deleteAgent(id, removeWorktree, force);
     setState("agents", (as) => as.filter((x) => x.id !== id));
     actions.closeTab({ kind: "agent", id });
+  },
+
+  /** Throws the reason when the box cannot be opened; the dialog shows it. */
+  async openInEditor(machineId: string, editor: Editor, dir: string | null) {
+    const r = await api.openInEditor(machineId, editor, dir);
+    const name = editor === "vscode" ? "VS Code" : "Cursor";
+    actions.toast([`Opening ${r.alias.replace(/^stowbox-/, "")} in ${name}.`, ...r.changes.map((c) => c + ".")].join(" "), "info");
+    if (r.changes.some((c) => c.startsWith("Woke "))) void actions.refreshMachines();
   },
 
   async copy(text: string, what = "Copied") {

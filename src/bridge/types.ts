@@ -337,6 +337,32 @@ export interface AgentPush {
 
 export type TermEvent = { type: "data"; b64: string } | { type: "exit"; code: number } | { type: "error"; message: string };
 
+export type Editor = "vscode" | "cursor";
+
+/** What opening a box in an editor would do on this computer; read only. */
+export interface SshPlan {
+  /** `stowbox-<box>`, the Host written to ~/.ssh/config. */
+  alias: string;
+  /** `ssh <alias>` once the config is current, else the direct command. */
+  sshCommand: string;
+  /** `ssh -p <port> boxd@<host>`, which works with any key linked to the account. */
+  directCommand: string;
+  keyPath: string;
+  keyExists: boolean;
+  configPath: string;
+  backupPath: string;
+  config: "add" | "update" | "current";
+  /** Why the box cannot be opened over SSH now, e.g. no SSH port yet. */
+  blocker: string | null;
+}
+
+export interface EditorOpened {
+  url: string;
+  alias: string;
+  /** What changed on this computer or in the account, in plain words. */
+  changes: string[];
+}
+
 export interface ProviderStatus {
   configured: boolean;
   provider: string;
@@ -379,6 +405,9 @@ export interface Api {
   gitCommit(machineId: string, cwd: string | null, message: string): Promise<string>;
   gitPush(machineId: string, cwd: string | null): Promise<string>;
   gitOpenPr(machineId: string, cwd: string | null): Promise<PrOutcome>;
+  sshPlan(machineId: string): Promise<SshPlan>;
+  /** Sets up SSH for the box (key, link, ~/.ssh/config block), wakes it, and opens `dir` (null = home) in the editor. */
+  openInEditor(machineId: string, editor: Editor, dir: string | null): Promise<EditorOpened>;
   terminalOpen(machine: string, cols: number, rows: number, onEvent: (ev: TermEvent) => void): Promise<string>;
   terminalWrite(id: string, bytes: Uint8Array): Promise<void>;
   terminalResize(id: string, cols: number, rows: number): Promise<void>;

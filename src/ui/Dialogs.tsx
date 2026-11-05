@@ -1,5 +1,6 @@
-import { For, Match, Show, Switch, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import type { Harness, Preset, VariableValues } from "../bridge/types";
+import { For, Match, Show, Switch, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { api } from "../bridge/api";
+import type { Editor, Harness, Preset, VariableValues } from "../bridge/types";
 import { presetVariables } from "../bridge/variables";
 import { actions, machineById, state, type Dialog } from "../state/store";
 import * as I from "../icons";
@@ -559,6 +560,151 @@ const RunSetup = (p: { machineId: string; presetId: string }) => {
   );
 };
 
+const EDITORS: { id: Editor; label: string; scheme: string }[] = [
+  { id: "vscode", label: "VS Code", scheme: "vscode://" },
+  { id: "cursor", label: "Cursor", scheme: "cursor://" },
+];
+
+function savedEditor(): Editor {
+  try {
+    return localStorage.getItem("stowbox.editor") === "cursor" ? "cursor" : "vscode";
+  } catch {
+    return "vscode";
+  }
+}
+
+/** Open a box (or an agent's directory) in VS Code or Cursor over
+ * Remote-SSH. Lists what will change on this computer before anything
+ * does; only the primary button writes. */
+const OpenEditor = (p: { machineId: string; dir: string | null }) => {
+  const m = () => machineById(p.machineId);
+  const [plan] = createResource(() => p.machineId, (id) => api.sshPlan(id));
+  const [editor, setEditor] = createSignal<Editor>(savedEditor());
+  const [dir, setDir] = createSignal(p.dir ?? "");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+  const label = () => EDITORS.find((e) => e.id === editor())!.label;
+  const asleep = () => m()?.status === "suspended" || m()?.status === "hibernated";
+  const run = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      try {
+        localStorage.setItem("stowbox.editor", editor());
+      } catch {
+        /* the choice is a convenience; not remembering it is fine */
+      }
+      await actions.openInEditor(p.machineId, editor(), dir().trim() || null);
+      actions.closeDialog();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={`Open ${m()?.name ?? "the box"} in an editor`} onClose={actions.closeDialog}>
+      <div class="field">
+        <span class="label">Editor</span>
+        <div class="choices" style={{ "grid-template-columns": "1fr 1fr" }}>
+          <For each={EDITORS}>
+            {(e) => (
+              <button class="choice" aria-pressed={editor() === e.id} onClick={() => setEditor(e.id)}>
+                <span>{e.label}</span>
+                <span class="faint mono">{e.scheme} Remote-SSH link</span>
+              </button>
+            )}
+          </For>
+        </div>
+      </div>
+      <div class="field">
+        <label for="oe-dir">Folder in the box</label>
+        <input id="oe-dir" class="input mono" placeholder="empty = /home/boxd" value={dir()} onInput={(e) => setDir(e.currentTarget.value)} />
+      </div>
+      <div class="field">
+        <span class="label">What happens</span>
+        <Switch>
+          <Match when={plan.loading}>
+            <p class="hint">Reading ~/.ssh on this computer…</p>
+          </Match>
+          <Match when={plan.error}>
+            <div class="form-error">Could not read the SSH setup: {errorText(plan.error)}</div>
+          </Match>
+          <Match when={plan()}>
+            {(pl) => (
+              <>
+                <Show when={!pl().blocker}>
+                  <ol class="plan-list">
+                    <li>
+                      <Show
+                        when={pl().keyExists}
+                        fallback={
+                          <>
+                            Create an SSH key for Stowbox at <span class="mono">{pl().keyPath}</span> with ssh-keygen. Your other keys are not read or changed.
+                          </>
+                        }
+                      >
+                        Use Stowbox's key at <span class="mono">{pl().keyPath}</span>.
+                      </Show>
+                    </li>
+                    <li>Link it to your boxd account. boxd keeps one Stowbox key per computer, so linking again replaces it.</li>
+                    <li>
+                      <Switch>
+                        <Match when={pl().config === "add"}>
+                          Add <span class="mono">Host {pl().alias}</span> to <span class="mono">{pl().configPath}</span>, between <span class="mono"># BEGIN stowbox</span> and{" "}
+                          <span class="mono"># END stowbox</span>. Nothing outside those lines changes; the previous file is kept as{" "}
+                          <span class="mono">{pl().backupPath}</span>.
+                        </Match>
+                        <Match when={pl().config === "update"}>
+                          Update <span class="mono">Host {pl().alias}</span> in <span class="mono">{pl().configPath}</span>: the box's address or port changed. The previous
+                          file is kept as <span class="mono">{pl().backupPath}</span>.
+                        </Match>
+                        <Match when={pl().config === "current"}>
+                          <span class="mono">{pl().configPath}</span> already has <span class="mono">Host {pl().alias}</span>; it is left as it is.
+                        </Match>
+                      </Switch>
+                    </li>
+                    <Show when={asleep()}>
+                      <li>Wake {m()!.name}; it is {m()!.status === "suspended" ? "in standby" : "hibernated"}.</li>
+                    </Show>
+                    <li>
+                      Open <span class="mono">{dir().trim() || "/home/boxd"}</span> in {label()}. It needs the Remote - SSH extension.
+                    </li>
+                  </ol>
+                </Show>
+                <Show when={pl().sshCommand}>
+                  <div class="ssh-line">
+                    <span class="mono">{pl().sshCommand}</span>
+                    <button class="btn sm ghost" onClick={() => void actions.copy(pl().sshCommand, "SSH command copied")}>
+                      <I.Copy /> Copy SSH command
+                    </button>
+                  </div>
+                </Show>
+                <Show when={pl().blocker}>
+                  <div class="form-error">{pl().blocker}</div>
+                </Show>
+              </>
+            )}
+          </Match>
+        </Switch>
+      </div>
+      <Show when={error()}>
+        <div class="form-error" style={{ "white-space": "pre-wrap" }}>
+          {error()}
+        </div>
+      </Show>
+      <div class="dialog-actions">
+        <button class="btn" onClick={actions.closeDialog} disabled={busy()}>
+          Cancel
+        </button>
+        <button class="btn primary" onClick={() => void run()} disabled={busy() || !plan() || !!plan()?.blocker}>
+          <I.Code /> {busy() ? "Setting up…" : `Open in ${label()}`}
+        </button>
+      </div>
+    </Modal>
+  );
+};
+
 export default function Dialogs() {
   const d = () => state.ui.dialog;
   return (
@@ -577,6 +723,9 @@ export default function Dialogs() {
       </Match>
       <Match when={d()?.kind === "delete-agent"}>
         <DeleteAgent agentId={(d() as { agentId: string }).agentId} />
+      </Match>
+      <Match when={d()?.kind === "open-editor"}>
+        <OpenEditor machineId={(d() as { machineId: string }).machineId} dir={(d() as { dir: string | null }).dir} />
       </Match>
       <Match when={d()?.kind === "confirm"}>
         <Confirm d={d() as Extract<NonNullable<Dialog>, { kind: "confirm" }>} />

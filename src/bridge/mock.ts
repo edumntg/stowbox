@@ -16,6 +16,7 @@ import type {
   NoticeTarget,
   Preset,
   SetupPush,
+  SshPlan,
   SetupRun,
   TermEvent,
   VariableValues,
@@ -23,6 +24,7 @@ import type {
 import { substitute, variablesIn } from "./variables";
 
 const GIB = 1024 ** 3;
+let nextSshPort = 21843;
 
 function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
   const vcpu = partial.vcpu ?? 2;
@@ -39,7 +41,7 @@ function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "stat
     accessDomain: "boxd.sh",
     url: `https://${partial.name}.boxd.sh`,
     desktopUrl: `https://app.boxd.sh/desktop/${partial.name}`,
-    sshPort: 0,
+    sshPort: partial.sshPort ?? nextSshPort++,
     org: "",
     billingOrg: "",
     source: "standalone",
@@ -608,6 +610,33 @@ function dirtyWorktree(id: string) {
   r.review.diff = [{ path: "src/app.ts", oldPath: null, change: "modified", binary: false, additions: 4, deletions: 1, patch: healthPatch }];
 }
 
+// SSH on "this computer": whether Stowbox's key exists and which Host
+// stanzas (alias -> port) the managed block in ~/.ssh/config holds.
+let mockSshKey = false;
+const mockSshHosts = new Map<string, number>();
+
+function mockSshPlan(m: Machine): SshPlan {
+  const alias = "stowbox-" + m.name.toLowerCase().replace(/[^a-z0-9._-]/g, "-");
+  const host = `${m.name}.${m.accessDomain || "boxd.sh"}`;
+  const directCommand = m.sshPort ? `ssh -p ${m.sshPort} boxd@${host}` : "";
+  const had = mockSshHosts.get(alias);
+  const config = had === undefined ? "add" : had === m.sshPort ? "current" : "update";
+  let blocker: string | null = null;
+  if (!m.sshPort) blocker = `boxd has not given ${m.name} an SSH port yet. Try again once the box is running.`;
+  else if (m.status === "stopped" || m.status === "failed") blocker = `${m.name} is ${m.status}. Start it first.`;
+  return {
+    alias,
+    sshCommand: config === "current" ? `ssh ${alias}` : directCommand,
+    directCommand,
+    keyPath: "~/.ssh/stowbox/id_ed25519",
+    keyExists: mockSshKey,
+    configPath: "~/.ssh/config",
+    backupPath: "~/.ssh/config.stowbox-backup",
+    config,
+    blocker,
+  };
+}
+
 function requireRepo(machineId: string, cwd: string | null): MockRepo {
   const r = mockRepo(machineId, cwd);
   if (typeof r === "string") throw new Error(r === "no-dir" ? "the directory does not exist in the box" : "the directory is not inside a git repository");
@@ -889,6 +918,36 @@ export const mockApi: Api = {
       via: "compare",
       existing: false,
     };
+  },
+  async sshPlan(machineId) {
+    await sleep(120);
+    return mockSshPlan(await mockApi.getMachine(machineId));
+  },
+  async openInEditor(machineId, editor, dir) {
+    const m = await mockApi.getMachine(machineId);
+    const plan = mockSshPlan(m);
+    if (plan.blocker) throw new Error(plan.blocker);
+    await sleep(700);
+    const changes: string[] = [];
+    if (!mockSshKey) {
+      mockSshKey = true;
+      changes.push(`Created an SSH key for Stowbox at ${plan.keyPath} (your other keys are untouched)`, "Linked it to your boxd account");
+    }
+    if (plan.config !== "current") {
+      const hadFile = mockSshHosts.size > 0;
+      mockSshHosts.set(plan.alias, m.sshPort);
+      changes.push(`${plan.config === "add" ? "Added" : "Updated"} Host ${plan.alias} in ${plan.configPath}${hadFile ? `; the previous file is at ${plan.backupPath}` : ""}`);
+    }
+    if (m.status === "suspended" || m.status === "hibernated") {
+      await mockApi.machinePower(machineId, m.status === "suspended" ? "resume" : "wake");
+      changes.push(`Woke ${m.name}`);
+    }
+    const d = (dir ?? "").trim();
+    const path = !d || d === "~" ? "/home/boxd" : d.startsWith("~/") ? "/home/boxd/" + d.slice(2) : d.startsWith("/") ? d : "/home/boxd/" + d;
+    const url = `${editor}://vscode-remote/ssh-remote+${plan.alias}${encodeURI(path.replace(/\/+$/, "") || "/")}?windowId=_blank`;
+    // The browser preview does not hand vscode:// or cursor:// links to the OS.
+    console.info("mock: would open", url);
+    return { url, alias: plan.alias, changes };
   },
   async terminalOpen(_machine, _cols, _rows, onEvent) {
     const enc = new TextEncoder();

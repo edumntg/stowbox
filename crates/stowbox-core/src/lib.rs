@@ -10,6 +10,8 @@
 //! - `metrics`: CPU, memory, disk and uptime sampled inside a running box.
 //! - `notify`: which agent and setup outcomes deserve a desktop notification.
 //! - `provision`: setup presets (commands and secrets) run in a new box.
+//! - `ssh`: the key, `~/.ssh/config` block and editor links that open a box
+//!   in VS Code or Cursor over Remote-SSH.
 //! - `store`: on-disk persistence of agent sessions and transcripts.
 //! - `worktree`: one git worktree and branch per agent, next to the repository.
 
@@ -22,6 +24,7 @@ pub mod metrics;
 pub mod notify;
 pub mod provider;
 pub mod provision;
+pub mod ssh;
 pub mod store;
 #[cfg(test)]
 pub(crate) mod testing;

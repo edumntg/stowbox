@@ -21,6 +21,9 @@ export default function Inspector(p: { agent: AgentMeta }) {
               <button class="icon-btn" title="Open the live desktop" aria-label="Desktop" onClick={() => void actions.open(box().desktopUrl)}>
                 <I.Desktop />
               </button>
+              <button class="icon-btn" title="Open this agent's directory in VS Code or Cursor" aria-label="Open in editor" onClick={() => actions.openDialog({ kind: "open-editor", machineId: box().id, dir: p.agent.cwd ?? null })}>
+                <I.Code />
+              </button>
               <button class="icon-btn" title="Cost and details" aria-label="Details and cost" onClick={() => actions.openBoxTab(box().id, "details")}>
                 <I.Coins />
               </button>

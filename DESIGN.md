@@ -95,8 +95,19 @@ shadows, except the floating shadow under dialogs and toasts.
   runs or once the box is gone. When git refuses, its message shows
   verbatim in the red error style and the actions become "Keep the
   worktree" and "Discard changes and remove".
-- Right panel (280px) when an agent is open: a toolbar of icon buttons, the
-  box card with the hourly estimate and power controls, the session facts.
+- Right panel (280px) when an agent is open: a toolbar of icon buttons
+  (terminal, desktop, open in editor, details), the box card with the
+  hourly estimate and power controls, the session facts.
+- Open in editor (Editor in a box's header, the code icon in the agent's
+  box panel and in the Details tab's SSH row) is a dialog: VS Code or
+  Cursor as two choices (the last one is remembered), the folder in the
+  box as a monospace input, then "What happens" as a numbered bordered
+  list of exactly what will change on this computer and in the account
+  (key, link, the `Host` entry in `~/.ssh/config` and its backup, waking
+  the box), paths in monospace, then the SSH command with a copy button.
+  When the box cannot be opened (stopped, no SSH port yet) the list gives
+  way to the reason in red and Open is disabled. The result is an info
+  toast naming what changed.
 - A 24px status bar: account, balance, how many boxes are running and the
   combined hourly estimate.
 - Settings dialog: a key/value list. Notifications are two checkboxes

@@ -27,6 +27,19 @@ pub trait Provider: Send + Sync {
     /// Live CPU, memory, disk and uptime, read inside the box. `None` when
     /// the box is not running: sampling would wake it. Providers with a
     /// telemetry API can override this instead of paying for an exec.
+    /// Links an OpenSSH public key (`ssh-ed25519 AAAA… comment`) to the
+    /// account so SSH to its boxes accepts it. `device_id` names this
+    /// computer: linking again from it replaces the key linked before.
+    async fn link_ssh_key(&self, _pubkey: &str, _device_id: &str, _label: &str) -> Result<()> {
+        Err(crate::Error::Provider(format!("{} has no SSH access", self.id())))
+    }
+
+    /// The host key boxes present over SSH, as an OpenSSH public-key line,
+    /// when the provider publishes it.
+    async fn ssh_host_key(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     async fn metrics(&self, id: &str) -> Result<Option<crate::metrics::MachineMetrics>> {
         crate::metrics::sample(self, id).await
     }
