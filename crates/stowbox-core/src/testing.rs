@@ -44,8 +44,8 @@ pub fn temp_dir(prefix: &str) -> std::path::PathBuf {
 
 /// Runs exec scripts with local bash in `home`, so code that talks to a box
 /// over exec is tested end to end. stdout and stderr stay separate, like on
-/// the wire. Tokens from the test runner's own environment are removed so a
-/// developer's `GH_TOKEN` cannot change the outcome; `env` adds variables
+/// the wire. Tokens and `GIT_SSH_COMMAND` from the test runner's own
+/// environment are removed so a developer's setup cannot change the outcome; `env` adds variables
 /// (for example a `PATH` with stub binaries in front).
 pub struct LocalBash {
     pub home: std::path::PathBuf,
@@ -100,6 +100,7 @@ impl Provider for LocalBash {
             .env("HOME", &self.home)
             .env_remove("GH_TOKEN")
             .env_remove("GITHUB_TOKEN")
+            .env_remove("GIT_SSH_COMMAND")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .current_dir(&self.home)
             .stdin(std::process::Stdio::piped())

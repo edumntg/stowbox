@@ -50,7 +50,8 @@ few tens of megabytes instead of an Electron process per window.
   preset counts; otherwise the host's compare page opens in the browser
   (GitHub, GitLab, Bitbucket). With a token set, pushes to
   `https://github.com` remotes use it too. Nothing waits for a prompt: git
-  runs with terminal prompts off, ssh in batch mode and no editor, and every
+  runs with terminal prompts off, ssh in batch mode (unless you set
+  `GIT_SSH_COMMAND` or `core.sshCommand`, which are kept) and no editor, and every
   call has a deadline. The diff is cut at 512 KB inside the box and the tab
   says so; refusals such as a rejected push show git's message verbatim. A
   box in standby or hibernated is only read when you ask, since that wakes

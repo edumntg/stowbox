@@ -172,12 +172,17 @@ fn prelude(cwd: Option<&str>, nonce: &str) -> String {
     format!(
         concat!(
             "export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_PAGER=cat PAGER=cat LC_ALL=C GIT_OPTIONAL_LOCKS=0\n",
-            "export GIT_SSH_COMMAND=\"${{GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new}}\"\n",
             "stowbox_mark() {{ printf '\\n{mark} %s\\n' \"$1\"; }}\n",
             "command -v git >/dev/null 2>&1 || {{ stowbox_mark nogit; exit 0; }}\n",
             "cd -- {cwd} 2>/dev/null || {{ stowbox_mark nodir; exit 0; }}\n",
             "stowbox_top=$(git rev-parse --show-toplevel 2>&1) || {{ stowbox_mark norepo; printf '%s' \"$stowbox_top\"; exit 0; }}\n",
             "cd -- \"$stowbox_top\" || exit 1\n",
+            // Batch-mode ssh by default, but never over the person's own
+            // choice: an exported GIT_SSH_COMMAND or the repository's (or
+            // global) core.sshCommand wins. Their ssh still cannot hang on a
+            // question: stdin is closed (or carries only the commit message)
+            // and GIT_TERMINAL_PROMPT=0, and the call has a deadline.
+            "if [ -z \"${{GIT_SSH_COMMAND:-}}\" ] && [ -z \"$(git config --get core.sshCommand)\" ]; then export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new'; fi\n",
             "stowbox_mark top; printf '%s' \"$stowbox_top\"\n",
             // The branch, the remote it tracks (or origin, or the only one)
             // and that remote's default branch.
@@ -961,6 +966,33 @@ index 0000000..5555555
         };
         assert!(fill("github.com").contains("username=x-access-token\npassword=tok-123\n"));
         assert!(!fill("example.com").contains("tok-123"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ssh_default_respects_the_users_choice() {
+        if !has_git() {
+            return;
+        }
+        let (home, work) = fixture();
+        let ssh_of = |env: Vec<(String, String)>| {
+            let p = LocalBash { home: home.clone(), env };
+            async move {
+                let script = prelude(Some("~/work"), "s") + "stowbox_mark ssh; printf '%s' \"${GIT_SSH_COMMAND-unset}\"\n";
+                let c = capture(&p, "vm1", script, None, Duration::from_secs(20), "test").await.unwrap();
+                text(section(&sections(&c.stdout, "s"), "ssh"))
+            }
+        };
+        // Nothing configured: the batch-mode default.
+        assert_eq!(ssh_of(vec![]).await, "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new");
+        // An exported GIT_SSH_COMMAND is kept.
+        assert_eq!(ssh_of(vec![("GIT_SSH_COMMAND".into(), "ssh -i ~/.ssh/deploy".into())]).await, "ssh -i ~/.ssh/deploy");
+        // core.sshCommand in the repository: the variable is left unset so git uses it.
+        sh(&work, &home, "git config core.sshCommand 'ssh -i ~/.ssh/work_key'");
+        assert_eq!(ssh_of(vec![]).await, "unset");
+        // ...and in the global config too.
+        sh(&work, &home, "git config --unset core.sshCommand && git config --global core.sshCommand 'ssh -F ~/.ssh/cfg'");
+        assert_eq!(ssh_of(vec![]).await, "unset");
         let _ = std::fs::remove_dir_all(&home);
     }
 
