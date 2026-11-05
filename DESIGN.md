@@ -19,8 +19,10 @@ Colour means state and only state:
 
 - green: a box running, an agent working, a tool call in progress, a diff
   line added
-- orange: standby, hibernated, pending, and an agent that finished and
-  waits for the person
+- orange: standby, hibernated, pending, an agent that finished and
+  waits for the person, and an agent reconnecting to a turn that keeps
+  running in the box (the transcript says why: the stream dropped, or the
+  box is in standby)
 - red: failed, a destructive button on hover, a diff line removed
 - grey: stopped, idle
 

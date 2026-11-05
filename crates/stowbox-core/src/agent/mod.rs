@@ -2,9 +2,12 @@
 //! provider's exec stream. One process per turn: the prompt goes in on stdin,
 //! the harness streams JSONL back, and the next turn resumes the same session
 //! id. That keeps the transport trivial and works the same for both harnesses.
+//! Each turn runs detached in the box and is followed from files, so it
+//! outlives the exec stream that started it (see `detached`).
 
 pub mod claude;
 pub mod codex;
+pub mod detached;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,6 +72,9 @@ pub enum AgentStatus {
     Starting,
     Thinking,
     Tool { name: String },
+    /// A turn is running in the box but its output stream is not attached:
+    /// it dropped, or Stowbox just started, or the box is not running.
+    Reconnecting { message: String },
     Done,
     Failed { message: String },
     Stopped,
@@ -93,6 +99,9 @@ pub struct AgentMeta {
     pub turns: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// The detached turn being followed, until its exit is applied.
+    #[serde(default)]
+    pub turn: Option<detached::TurnCursor>,
 }
 
 /// One content block of an assistant message, as the UI renders it.

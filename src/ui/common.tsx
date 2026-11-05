@@ -28,6 +28,8 @@ export function agentDotState(s: AgentStatus): string {
     case "thinking":
     case "tool":
       return "busy";
+    case "reconnecting":
+      return "pending";
     case "done":
       return "done";
     case "failed":
