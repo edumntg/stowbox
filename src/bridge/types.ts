@@ -78,6 +78,21 @@ export interface Usage {
   complete: boolean;
 }
 
+/** Mirrors stowbox_core::metrics::MachineMetrics. Sampled inside a running
+ * box; the shell returns null for any other state instead of waking it. */
+export interface MachineMetrics {
+  sampledAtMs: number;
+  cpuPercent: number;
+  vcpu: number;
+  load1: number;
+  memTotalBytes: number;
+  memUsedBytes: number;
+  diskTotalBytes: number;
+  diskUsedBytes: number;
+  diskAvailBytes: number;
+  uptimeSecs: number;
+}
+
 export interface RateCard {
   currency: string;
   rates: Rates;
@@ -104,6 +119,51 @@ export interface CreateSpec {
   isolated: boolean;
   org?: string | null;
   env?: [string, string][];
+}
+
+/** Mirrors stowbox_core::provision::Preset plus which secrets have a value.
+ * Secret values never come back from the shell; they live in the keychain. */
+export interface Preset {
+  id: string;
+  name: string;
+  commands: string[];
+  secretNames: string[];
+  createdAt: number;
+  updatedAt: number;
+  secrets: { name: string; hasValue: boolean }[];
+}
+
+export interface PresetInput {
+  id?: string | null;
+  name: string;
+  commands: string[];
+  /** `value` null or empty keeps the stored value. */
+  secrets: { name: string; value: string | null }[];
+}
+
+export type SetupStatus = "waiting" | "running" | "done" | "failed" | "cancelled";
+export type StepState = "pending" | "running" | "ok" | "failed" | "skipped";
+
+export interface SetupRun {
+  id: string;
+  machineId: string;
+  machineName: string;
+  presetId: string;
+  presetName: string;
+  status: SetupStatus;
+  error: string | null;
+  steps: { command: string; state: StepState; exitCode: number | null }[];
+  secretNames: string[];
+  secretsWritten: boolean;
+  output: string;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+/** `run.output` is empty here; `append` carries the new text. */
+export interface SetupPush {
+  run: SetupRun;
+  append: string;
 }
 
 export type Harness = "claude-code" | "codex";
@@ -194,10 +254,11 @@ export interface Api {
   whoami(): Promise<Account>;
   listMachines(): Promise<Machine[]>;
   getMachine(id: string): Promise<Machine>;
-  createMachine(spec: CreateSpec): Promise<Machine>;
+  createMachine(spec: CreateSpec, presetId?: string | null): Promise<Machine>;
   forkMachine(source: string, name: string | null): Promise<Machine>;
   machinePower(id: string, action: PowerAction): Promise<void>;
   machineUsage(id: string): Promise<Usage>;
+  machineMetrics(id: string): Promise<MachineMetrics | null>;
   orgBilling(org: string): Promise<OrgBilling>;
   rates(): Promise<RateCard>;
   listAgents(): Promise<AgentMeta[]>;
@@ -208,6 +269,13 @@ export interface Api {
   deleteAgent(id: string): Promise<void>;
   renameAgent(id: string, title: string): Promise<AgentMeta>;
   onAgentEvent(cb: (push: AgentPush) => void): Promise<() => void>;
+  listPresets(): Promise<Preset[]>;
+  savePreset(input: PresetInput): Promise<Preset>;
+  deletePreset(id: string): Promise<void>;
+  setupStart(machineId: string, presetId: string): Promise<SetupRun>;
+  setupCancel(machineId: string): Promise<void>;
+  setupRuns(): Promise<SetupRun[]>;
+  onSetupEvent(cb: (push: SetupPush) => void): Promise<() => void>;
   terminalOpen(machine: string, cols: number, rows: number, onEvent: (ev: TermEvent) => void): Promise<string>;
   terminalWrite(id: string, bytes: Uint8Array): Promise<void>;
   terminalResize(id: string, cols: number, rows: number): Promise<void>;

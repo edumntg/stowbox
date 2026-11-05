@@ -1,7 +1,7 @@
-import { For, Match, Show, Switch, createResource, lazy } from "solid-js";
-import type { Machine } from "../bridge/types";
+import { For, Match, Show, Switch, createEffect, createResource, createSignal, lazy, on } from "solid-js";
+import type { Machine, SetupRun, SetupStatus, StepState } from "../bridge/types";
 import { api } from "../bridge/api";
-import { actions, agentsForMachine, state } from "../state/store";
+import { actions, agentsForMachine, setupActive, setupRunFor, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot, PowerActions } from "./common";
 import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, usd } from "./format";
@@ -48,6 +48,130 @@ const AgentsTab = (p: { machine: Machine }) => {
         </For>
       </div>
     </Show>
+  );
+};
+
+const setupStatusLabel: Record<SetupStatus, string> = {
+  waiting: "Waiting for the box to boot",
+  running: "Running",
+  done: "Finished",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+const setupSq: Record<SetupStatus, string> = { waiting: "pending", running: "busy", done: "ok", failed: "failed", cancelled: "idle" };
+const stepSq: Record<StepState, string> = { pending: "idle", running: "busy", ok: "ok", failed: "failed", skipped: "idle" };
+
+function duration(run: SetupRun): string {
+  const ms = (run.finishedAt ?? Date.now()) - run.startedAt;
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+}
+
+const SetupTab = (p: { machine: Machine }) => {
+  const run = () => setupRunFor(p.machine.id);
+  const active = () => setupActive(run());
+  const [presetId, setPresetId] = createSignal(run()?.presetId ?? state.presets[0]?.id ?? "");
+  const chosen = () => (state.presets.some((x) => x.id === presetId()) ? presetId() : (state.presets[0]?.id ?? ""));
+  let log: HTMLPreElement | undefined;
+  // Follow the output while it grows, unless the person scrolled up.
+  createEffect(
+    on(
+      () => run()?.output.length,
+      () => {
+        if (!log) return;
+        const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+        if (nearEnd) queueMicrotask(() => log && (log.scrollTop = log.scrollHeight));
+      },
+    ),
+  );
+
+  return (
+    <div class="setup">
+      <div class="setup-bar">
+        <Show
+          when={state.presets.length > 0}
+          fallback={
+            <span class="muted">
+              No setup presets yet.{" "}
+              <button class="link" onClick={() => actions.select({ kind: "presets" })}>
+                Write one
+              </button>{" "}
+              with the commands and secrets a new box needs.
+            </span>
+          }
+        >
+          <select class="input" aria-label="Setup preset" value={chosen()} onChange={(e) => setPresetId(e.currentTarget.value)} disabled={active()}>
+            <For each={state.presets}>{(x) => <option value={x.id}>{x.name}</option>}</For>
+          </select>
+          <Show
+            when={active()}
+            fallback={
+              <button class="btn" disabled={!chosen() || p.machine.status === "stopped"} title={p.machine.status === "stopped" ? "Start the box first" : "Run this preset in the box now"} onClick={() => void actions.startSetup(p.machine.id, chosen())}>
+                <I.Play /> {run() ? "Run again" : "Run preset"}
+              </button>
+            }
+          >
+            <button class="btn danger" onClick={() => void actions.cancelSetup(p.machine.id)}>
+              <I.StopCircle /> Cancel
+            </button>
+          </Show>
+        </Show>
+      </div>
+
+      <Show
+        when={run()}
+        fallback={
+          <div class="empty-state">
+            <span>
+              <strong>No setup has run in {p.machine.name}.</strong> A setup preset exports its secrets in the box, then runs its commands in order: clone a repo,
+              start containers, run a script. Pick one when creating a box, or run one here.
+            </span>
+          </div>
+        }
+      >
+        {(r) => (
+          <>
+            <div class="setup-head">
+              <span class="sq" data-state={setupSq[r().status]} />
+              <strong>{r().presetName}</strong>
+              <span class="muted">{setupStatusLabel[r().status]}</span>
+              <span class="faint mono">
+                {relTime(r().startedAt)} · {duration(r())}
+              </span>
+            </div>
+            <Show when={r().error}>
+              <div class="form-error">{r().error}</div>
+            </Show>
+            <Show when={r().secretNames.length > 0}>
+              <p class="note">
+                {r().secretsWritten ? "Exported" : "Will export"} <span class="mono">{r().secretNames.join(", ")}</span> from{" "}
+                <span class="mono">~/.config/stowbox/env.sh</span>
+              </p>
+            </Show>
+            <ol class="steps">
+              <For each={r().steps}>
+                {(st, i) => (
+                  <li class="step" data-state={st.state}>
+                    <span class="sq" data-state={stepSq[st.state]} />
+                    <span class="step-n mono">{i() + 1}</span>
+                    <span class="step-cmd mono" title={st.command}>
+                      {st.command.split("\n")[0]}
+                      {st.command.includes("\n") ? " …" : ""}
+                    </span>
+                    <span class="faint mono">
+                      {st.state === "skipped" ? "skipped" : st.exitCode !== null ? `exit ${st.exitCode}` : st.state === "running" ? "running" : ""}
+                    </span>
+                  </li>
+                )}
+              </For>
+            </ol>
+            <pre class="setup-log mono scroll" ref={log} aria-label="Setup output" tabindex="0">
+              {r().output || (active() ? "Waiting for output…" : "No output.")}
+            </pre>
+          </>
+        )}
+      </Show>
+    </div>
   );
 };
 
@@ -198,6 +322,10 @@ export default function BoxView(p: { machine: Machine }) {
         <button class="subtab" role="tab" aria-selected={tab() === "agents"} onClick={() => actions.setBoxTab("agents")}>
           Agents <span class="count">{agentCount()}</span>
         </button>
+        <button class="subtab" role="tab" aria-selected={tab() === "setup"} onClick={() => actions.setBoxTab("setup")}>
+          <Show when={setupRunFor(m().id)}>{(r) => <span class="sq" data-state={setupSq[r().status]} />}</Show>
+          Setup
+        </button>
         <button class="subtab" role="tab" aria-selected={tab() === "terminal"} onClick={() => actions.setBoxTab("terminal")}>
           Terminal
         </button>
@@ -210,6 +338,11 @@ export default function BoxView(p: { machine: Machine }) {
         <Match when={tab() === "agents"}>
           <div class="view-body scroll">
             <AgentsTab machine={m()} />
+          </div>
+        </Match>
+        <Match when={tab() === "setup"}>
+          <div class="view-body scroll">
+            <SetupTab machine={m()} />
           </div>
         </Match>
         <Match when={tab() === "terminal"}>

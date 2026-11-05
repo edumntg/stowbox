@@ -7,14 +7,19 @@ import type {
   AgentPush,
   CreateSpec,
   Machine,
+  MachineMetrics,
   NewAgent,
   PowerAction,
+  Preset,
+  PresetInput,
   ProviderStatus,
   RateCard,
+  SetupPush,
+  SetupRun,
 } from "../bridge/types";
 
-export type Selection = { kind: "none" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
-export type BoxTab = "agents" | "terminal" | "details";
+export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
+export type BoxTab = "agents" | "setup" | "terminal" | "details";
 export type Theme = "dark" | "light";
 export type Dialog =
   | null
@@ -41,6 +46,16 @@ interface AppState {
   transcripts: Record<string, AgentEvent[]>;
   live: Record<string, string>;
   pending: Record<string, boolean>;
+  /** Last sample per box, kept after the box leaves `running` so the fleet
+   * view can say "as of 24 min ago" instead of forgetting. */
+  metrics: Record<string, MachineMetrics>;
+  metricsError: Record<string, string>;
+  metricsAt: number;
+  metricsBusy: boolean;
+  presets: Preset[];
+  presetsLoaded: boolean;
+  /** The latest setup run per box id. */
+  setupRuns: Record<string, SetupRun>;
   ui: {
     theme: Theme;
     selection: Selection;
@@ -77,9 +92,16 @@ export const [state, setState] = createStore<AppState>({
   transcripts: {},
   live: {},
   pending: {},
+  metrics: {},
+  metricsError: {},
+  metricsAt: 0,
+  metricsBusy: false,
+  presets: [],
+  presetsLoaded: false,
+  setupRuns: {},
   ui: {
     theme: initialTheme(),
-    selection: { kind: "none" },
+    selection: { kind: "fleet" },
     tabs: [],
     sidebar: true,
     inspector: true,
@@ -91,7 +113,9 @@ export const [state, setState] = createStore<AppState>({
   },
 });
 
-const sameSel = (a: Selection, b: Selection) => a.kind === b.kind && (a.kind === "none" || (a as { id: string }).id === (b as { id: string }).id);
+const sameSel = (a: Selection, b: Selection) =>
+  a.kind === b.kind && (a.kind === "none" || a.kind === "fleet" || a.kind === "presets" || (a as { id: string }).id === (b as { id: string }).id);
+const FLEET: Selection = { kind: "fleet" };
 
 function loadTabs(): Selection[] {
   try {
@@ -115,6 +139,7 @@ document.documentElement.dataset.theme = state.ui.theme;
 
 let toastSeq = 0;
 let unlisten: (() => void) | null = null;
+let unlistenSetup: (() => void) | null = null;
 let pollTimer: number | undefined;
 
 function message(e: unknown): string {
@@ -150,6 +175,20 @@ function onPush(p: AgentPush) {
   );
 }
 
+/** Output past this is dropped from the front, as the shell does. */
+const SETUP_OUTPUT_CAP = 256 * 1024;
+
+function onSetupPush(p: SetupPush) {
+  if (!p || !p.run) return;
+  const prev = state.setupRuns[p.run.machineId];
+  let output = (prev && prev.id === p.run.id ? prev.output : "") + p.append;
+  if (output.length > SETUP_OUTPUT_CAP) output = output.slice(output.length - SETUP_OUTPUT_CAP);
+  setState("setupRuns", p.run.machineId, { ...p.run, output });
+}
+
+export const setupRunFor = (machineId: string): SetupRun | undefined => state.setupRuns[machineId];
+export const setupActive = (r: SetupRun | undefined) => !!r && (r.status === "waiting" || r.status === "running");
+
 export const actions = {
   toast(text: string, kind: Toast["kind"] = "error") {
     const id = ++toastSeq;
@@ -178,6 +217,12 @@ export const actions = {
 
   async loadAll() {
     if (!unlisten) unlisten = await api.onAgentEvent(onPush);
+    if (!unlistenSetup) unlistenSetup = await api.onSetupEvent(onSetupPush);
+    void actions.loadPresets();
+    api
+      .setupRuns()
+      .then((runs) => setState("setupRuns", Object.fromEntries(runs.map((r) => [r.machineId, r]))))
+      .catch((e) => actions.toast("Could not read setup runs: " + message(e)));
     const [account, agents] = await Promise.all([
       api.whoami().catch((e) => {
         actions.toast("Could not read the account: " + message(e));
@@ -193,10 +238,16 @@ export const actions = {
     await actions.refreshMachines();
     if (state.ui.tabs.length === 0) setState("ui", "tabs", loadTabs());
     actions.pruneTabs();
-    if (state.ui.selection.kind === "none" && state.ui.tabs.length > 0) actions.select(state.ui.tabs[state.ui.tabs.length - 1]);
+    if (state.ui.selection.kind === "none") setState("ui", "selection", FLEET);
+    void actions.refreshMetrics();
     window.clearInterval(pollTimer);
     pollTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible" && state.phase === "ready") void actions.refreshMachines();
+      if (document.visibilityState !== "visible" || state.phase !== "ready") return;
+      void actions.refreshMachines().then(() => {
+        // Samples cost an exec per running box, so only keep them fresh
+        // while someone is looking at the fleet.
+        if (state.ui.selection.kind === "fleet") void actions.refreshMetrics();
+      });
     }, 15_000);
   },
 
@@ -218,9 +269,15 @@ export const actions = {
       agents: [],
       transcripts: {},
       live: {},
+      metrics: {},
+      metricsError: {},
+      metricsAt: 0,
+      presets: [],
+      presetsLoaded: false,
+      setupRuns: {},
       provider: await api.providerStatus(),
     });
-    setState("ui", { selection: { kind: "none" }, dialog: null, tabs: [] });
+    setState("ui", { selection: FLEET, dialog: null, tabs: [] });
     saveTabs([]);
   },
 
@@ -234,6 +291,29 @@ export const actions = {
     }
   },
 
+  /** One exec per running box, in parallel. Boxes in any other state are
+   * skipped on purpose: sampling would wake them. */
+  async refreshMetrics() {
+    if (state.metricsBusy) return;
+    const targets = state.machines.filter((m) => m.status === "running");
+    setState("metricsBusy", true);
+    try {
+      await Promise.all(
+        targets.map(async (m) => {
+          try {
+            const sample = await api.machineMetrics(m.id);
+            if (sample) setState("metrics", m.id, sample);
+            setState("metricsError", m.id, undefined!);
+          } catch (e) {
+            setState("metricsError", m.id, message(e));
+          }
+        }),
+      );
+    } finally {
+      setState({ metricsBusy: false, metricsAt: Date.now() });
+    }
+  },
+
   async refreshAccount() {
     try {
       setState("account", await api.whoami());
@@ -243,11 +323,14 @@ export const actions = {
   },
 
   select(sel: Selection) {
-    if (sel.kind !== "none" && !state.ui.tabs.some((t) => sameSel(t, sel))) {
-      setState("ui", "tabs", (tabs) => [...tabs, sel]);
-      saveTabs(state.ui.tabs);
+    if (sel.kind === "box" || sel.kind === "agent") {
+      if (!state.ui.tabs.some((t) => sameSel(t, sel))) {
+        setState("ui", "tabs", (tabs) => [...tabs, sel]);
+        saveTabs(state.ui.tabs);
+      }
     }
     setState("ui", "selection", sel);
+    if (sel.kind === "fleet" && Date.now() - state.metricsAt > 5_000) void actions.refreshMetrics();
     if (sel.kind === "agent") void actions.loadTranscript(sel.id);
     if (sel.kind === "box" && !(state.ui.selection.kind === "box" && state.ui.selection.id === sel.id)) setState("ui", "boxTab", "agents");
   },
@@ -261,7 +344,7 @@ export const actions = {
     saveTabs(next);
     if (sameSel(state.ui.selection, sel)) {
       const neighbour = next[Math.min(i, next.length - 1)];
-      setState("ui", "selection", neighbour ?? { kind: "none" });
+      setState("ui", "selection", neighbour ?? FLEET);
       if (neighbour?.kind === "agent") void actions.loadTranscript(neighbour.id);
     }
   },
@@ -275,7 +358,8 @@ export const actions = {
       setState("ui", "tabs", next);
       saveTabs(next);
     }
-    if (state.ui.selection.kind !== "none" && !ok(state.ui.selection)) setState("ui", "selection", next[0] ?? { kind: "none" });
+    const sel = state.ui.selection;
+    if ((sel.kind === "box" || sel.kind === "agent") && !ok(sel)) setState("ui", "selection", next[0] ?? FLEET);
   },
 
   openBoxTab(id: string, tab: BoxTab) {
@@ -332,6 +416,7 @@ export const actions = {
       await api.machinePower(id, action);
       if (action === "destroy") {
         setState("machines", (ms) => ms.filter((m) => m.id !== id));
+        setState("setupRuns", id, undefined!);
         actions.closeTab({ kind: "box", id });
         actions.toast("Box deleted.", "info");
       }
@@ -361,12 +446,59 @@ export const actions = {
     });
   },
 
-  async createBox(spec: CreateSpec): Promise<Machine> {
-    const m = await api.createMachine(spec);
+  async createBox(spec: CreateSpec, presetId?: string | null): Promise<Machine> {
+    const m = await api.createMachine(spec, presetId ?? null);
     setState("machines", (ms) => [...ms.filter((x) => x.id !== m.id), m].sort((a, b) => a.name.localeCompare(b.name)));
     actions.select({ kind: "box", id: m.id });
+    if (presetId) setState("ui", "boxTab", "setup");
     window.setTimeout(() => void actions.refreshMachines(), 3000);
     return m;
+  },
+
+  async loadPresets() {
+    try {
+      setState({ presets: await api.listPresets(), presetsLoaded: true });
+    } catch (e) {
+      setState("presetsLoaded", true);
+      actions.toast("Could not read setup presets: " + message(e));
+    }
+  },
+
+  async savePreset(input: PresetInput): Promise<Preset> {
+    const saved = await api.savePreset(input);
+    setState("presets", (ps) => (ps.some((p) => p.id === saved.id) ? ps.map((p) => (p.id === saved.id ? saved : p)) : [...ps, saved]));
+    return saved;
+  },
+
+  confirmDeletePreset(p: Preset) {
+    actions.openDialog({
+      kind: "confirm",
+      title: `Delete "${p.name}"?`,
+      body: `The commands and the ${p.secretNames.length === 1 ? "secret" : `${p.secretNames.length} secrets`} stored with it are removed from this computer. Boxes already set up keep their files and their ~/.config/stowbox/env.sh.`,
+      confirmLabel: "Delete preset",
+      danger: true,
+      run: async () => {
+        await api.deletePreset(p.id);
+        setState("presets", (ps) => ps.filter((x) => x.id !== p.id));
+      },
+    });
+  },
+
+  async startSetup(machineId: string, presetId: string) {
+    try {
+      const run = await api.setupStart(machineId, presetId);
+      setState("setupRuns", machineId, run);
+    } catch (e) {
+      actions.toast("Setup could not start: " + message(e));
+    }
+  },
+
+  async cancelSetup(machineId: string) {
+    try {
+      await api.setupCancel(machineId);
+    } catch (e) {
+      actions.toast("Cancel failed: " + message(e));
+    }
   },
 
   async forkBox(source: Machine) {

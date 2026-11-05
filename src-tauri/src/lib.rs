@@ -12,7 +12,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use stowbox_core::agent::{self, AgentEvent, AgentMeta, AgentStatus, Block, Harness, LineBuffer, TurnSpec};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::cost;
+use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::provider::Provider;
+use stowbox_core::provision::{self, Preset, ProvisionRun, RunEvent};
 use stowbox_core::store::Store;
 use stowbox_core::types::*;
 use tauri::ipc::Channel;
@@ -34,6 +36,12 @@ struct AppState {
     runs: Mutex<HashMap<String, RunHandle>>,
     terminals: Mutex<HashMap<String, RunHandle>>,
     rates: RwLock<Option<(String, Rates)>>,
+    presets: RwLock<Vec<Preset>>,
+    preset_secrets: secrets::PresetSecrets,
+    /// The latest setup run per box, finished or not.
+    setup_runs: RwLock<Vec<ProvisionRun>>,
+    /// Live setup runs by machine id.
+    setups: Mutex<HashMap<String, AbortHandle>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -69,6 +77,11 @@ impl AppState {
     async fn persist_agents(&self) -> CmdResult<()> {
         let agents = self.agents.read().await.clone();
         self.store.save_agents(&agents).await.map_err(err)
+    }
+
+    async fn persist_setup_runs(&self) -> CmdResult<()> {
+        let runs = self.setup_runs.read().await.clone();
+        self.store.save_runs(&runs).await.map_err(err)
     }
 }
 
@@ -185,10 +198,25 @@ async fn get_machine(state: State<'_, AppState>, id: String) -> CmdResult<Machin
     Ok(state.view(&p, m).await)
 }
 
+/// Creates the box, then, when a setup preset is picked, starts running it
+/// in the background. A setup that cannot start (a missing secret value)
+/// fails before the box is created, so nothing is billed for nothing.
 #[tauri::command]
-async fn create_machine(state: State<'_, AppState>, spec: CreateSpec) -> CmdResult<MachineView> {
+async fn create_machine(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    spec: CreateSpec,
+    preset_id: Option<String>,
+) -> CmdResult<MachineView> {
     let p = state.provider().await?;
+    let setup = match preset_id.filter(|id| !id.is_empty()) {
+        Some(id) => Some(preset_with_secrets(&state, &id).await?),
+        None => None,
+    };
     let m = p.create_machine(spec).await.map_err(err)?;
+    if let Some((preset, secrets)) = setup {
+        start_setup(&app, &state, p.clone(), &m, preset, secrets).await?;
+    }
     Ok(state.view(&p, m).await)
 }
 
@@ -204,6 +232,11 @@ async fn machine_power(state: State<'_, AppState>, id: String, action: PowerActi
     let p = state.provider().await?;
     p.power(&id, action).await.map_err(err)?;
     if action == PowerAction::Destroy {
+        if let Some(h) = state.setups.lock().await.remove(&id) {
+            h.abort();
+        }
+        state.setup_runs.write().await.retain(|r| r.machine_id != id);
+        state.persist_setup_runs().await?;
         // Agents that lived there are kept as history, but marked stopped.
         let mut agents = state.agents.write().await;
         for a in agents.iter_mut().filter(|a| a.machine_id == id) {
@@ -220,6 +253,13 @@ async fn machine_power(state: State<'_, AppState>, id: String, action: PowerActi
 #[tauri::command]
 async fn machine_usage(state: State<'_, AppState>, id: String) -> CmdResult<Usage> {
     state.provider().await?.machine_usage(&id).await.map_err(err)
+}
+
+/// One live sample from inside the box, or `None` when the box is not
+/// running and was left alone. Called per box by the fleet view.
+#[tauri::command]
+async fn machine_metrics(state: State<'_, AppState>, id: String) -> CmdResult<Option<MachineMetrics>> {
+    state.provider().await?.metrics(&id).await.map_err(err)
 }
 
 #[derive(Serialize)]
@@ -538,6 +578,238 @@ async fn apply_event(app: &AppHandle, state: &AppState, id: &str, ev: AgentEvent
     push(app, state, id, Some(ev), meta).await;
 }
 
+// ---------------------------------------------------------------- setup presets
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretView {
+    name: String,
+    has_value: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PresetView {
+    #[serde(flatten)]
+    preset: Preset,
+    secrets: Vec<SecretView>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretInput {
+    name: String,
+    /// `None` or empty keeps the stored value.
+    value: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PresetInput {
+    id: Option<String>,
+    name: String,
+    commands: Vec<String>,
+    secrets: Vec<SecretInput>,
+}
+
+/// A run as the UI sees it: the record without its output, plus the text
+/// that arrived with this change. The full output comes from `setup_runs`.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SetupPush {
+    run: ProvisionRun,
+    append: String,
+}
+
+fn preset_view(state: &AppState, p: &Preset) -> PresetView {
+    let values = state.preset_secrets.load(&p.id);
+    PresetView {
+        secrets: p
+            .secret_names
+            .iter()
+            .map(|n| SecretView { name: n.clone(), has_value: values.get(n).is_some_and(|v| !v.is_empty()) })
+            .collect(),
+        preset: p.clone(),
+    }
+}
+
+#[tauri::command]
+async fn list_presets(state: State<'_, AppState>) -> CmdResult<Vec<PresetView>> {
+    let presets = state.presets.read().await.clone();
+    Ok(presets.iter().map(|p| preset_view(&state, p)).collect())
+}
+
+#[tauri::command]
+async fn save_preset(state: State<'_, AppState>, input: PresetInput) -> CmdResult<PresetView> {
+    let name = input.name.trim().to_string();
+    let commands: Vec<String> =
+        input.commands.iter().map(|c| c.trim_end().to_string()).filter(|c| !c.trim().is_empty()).collect();
+    let secret_names: Vec<String> = input.secrets.iter().map(|s| s.name.trim().to_string()).collect();
+    provision::validate(&name, &commands, &secret_names).map_err(err)?;
+
+    let now = now_ms();
+    let existing = match &input.id {
+        Some(id) => Some(state.presets.read().await.iter().find(|p| &p.id == id).cloned().ok_or("preset not found")?),
+        None => None,
+    };
+    let id = existing.as_ref().map(|p| p.id.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    let old = state.preset_secrets.load(&id);
+    let mut values = HashMap::new();
+    for (s, name) in input.secrets.iter().zip(&secret_names) {
+        match s.value.as_ref().filter(|v| !v.is_empty()) {
+            Some(v) => {
+                values.insert(name.clone(), v.clone());
+            }
+            None => match old.get(name) {
+                Some(v) => {
+                    values.insert(name.clone(), v.clone());
+                }
+                None => return Err(format!("give {name} a value")),
+            },
+        }
+    }
+    state.preset_secrets.save(&id, &values).map_err(|e| format!("could not store the secrets: {e}"))?;
+
+    let preset = Preset {
+        id: id.clone(),
+        name,
+        commands,
+        secret_names,
+        created_at: existing.as_ref().map(|p| p.created_at).unwrap_or(now),
+        updated_at: now,
+    };
+    let all = {
+        let mut presets = state.presets.write().await;
+        match presets.iter_mut().find(|p| p.id == id) {
+            Some(p) => *p = preset.clone(),
+            None => presets.push(preset.clone()),
+        }
+        presets.clone()
+    };
+    state.store.save_presets(&all).await.map_err(err)?;
+    Ok(preset_view(&state, &preset))
+}
+
+#[tauri::command]
+async fn delete_preset(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    let all = {
+        let mut presets = state.presets.write().await;
+        presets.retain(|p| p.id != id);
+        presets.clone()
+    };
+    state.store.save_presets(&all).await.map_err(err)?;
+    state.preset_secrets.delete(&id);
+    Ok(())
+}
+
+/// The preset and its secret values in the preset's order, or an error
+/// naming the first secret that has no value.
+async fn preset_with_secrets(state: &AppState, id: &str) -> CmdResult<(Preset, Vec<(String, String)>)> {
+    let preset = state.presets.read().await.iter().find(|p| p.id == id).cloned().ok_or("setup preset not found")?;
+    let values = state.preset_secrets.load(id);
+    let mut secrets = Vec::with_capacity(preset.secret_names.len());
+    for n in &preset.secret_names {
+        match values.get(n).filter(|v| !v.is_empty()) {
+            Some(v) => secrets.push((n.clone(), v.clone())),
+            None => return Err(format!("the secret {n} in \"{}\" has no value; edit the preset first", preset.name)),
+        }
+    }
+    Ok((preset, secrets))
+}
+
+/// Folds one event into the box's run, tells the UI, and persists the run
+/// once it is over. Events for a run that already ended are dropped.
+async fn apply_setup_event(app: &AppHandle, state: &AppState, run_id: &str, ev: RunEvent) {
+    let (run, done) = {
+        let mut runs = state.setup_runs.write().await;
+        let Some(r) = runs.iter_mut().find(|r| r.id == run_id) else { return };
+        if !r.is_active() {
+            return;
+        }
+        r.apply(&ev, now_ms());
+        (r.clone(), !r.is_active())
+    };
+    let append = if let RunEvent::Output(t) = &ev { t.clone() } else { String::new() };
+    let _ = app.emit("setup-event", SetupPush { run: ProvisionRun { output: String::new(), ..run.clone() }, append });
+    if done {
+        state.setups.lock().await.remove(&run.machine_id);
+        let _ = state.persist_setup_runs().await;
+    }
+}
+
+async fn start_setup(
+    app: &AppHandle,
+    state: &AppState,
+    p: Arc<dyn Provider>,
+    machine: &Machine,
+    preset: Preset,
+    secrets: Vec<(String, String)>,
+) -> CmdResult<ProvisionRun> {
+    let mut setups = state.setups.lock().await;
+    if setups.contains_key(&machine.id) {
+        return Err(format!("a setup is already running in {}", machine.name));
+    }
+    let run = ProvisionRun::new(uuid::Uuid::new_v4().to_string(), machine, &preset, now_ms());
+    {
+        let mut runs = state.setup_runs.write().await;
+        runs.retain(|r| r.machine_id != machine.id);
+        runs.push(run.clone());
+    }
+    let _ = app.emit("setup-event", SetupPush { run: run.clone(), append: String::new() });
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<RunEvent>();
+    let machine_id = machine.id.clone();
+    let commands = preset.commands.clone();
+    let runner = tokio::spawn(async move {
+        provision::run(&*p, &machine_id, &commands, &secrets, |ev| {
+            let _ = tx.send(ev);
+        })
+        .await;
+    });
+    setups.insert(machine.id.clone(), runner.abort_handle());
+    drop(setups);
+
+    let app2 = app.clone();
+    let run_id = run.id.clone();
+    tokio::spawn(async move {
+        let st = app2.state::<AppState>();
+        while let Some(ev) = rx.recv().await {
+            apply_setup_event(&app2, &st, &run_id, ev).await;
+        }
+        // The runner is gone. If nothing ended the run, it was interrupted.
+        apply_setup_event(&app2, &st, &run_id, RunEvent::Failed("the setup stopped without reporting an exit".into())).await;
+    });
+    Ok(run)
+}
+
+#[tauri::command]
+async fn setup_start(app: AppHandle, state: State<'_, AppState>, machine_id: String, preset_id: String) -> CmdResult<ProvisionRun> {
+    let p = state.provider().await?;
+    let (preset, secrets) = preset_with_secrets(&state, &preset_id).await?;
+    let m = p.get_machine(&machine_id).await.map_err(err)?;
+    start_setup(&app, &state, p, &m, preset, secrets).await
+}
+
+#[tauri::command]
+async fn setup_cancel(app: AppHandle, state: State<'_, AppState>, machine_id: String) -> CmdResult<()> {
+    let Some(h) = state.setups.lock().await.remove(&machine_id) else { return Ok(()) };
+    // Mark it first, so the runner's own "stopped" report after the abort
+    // finds the run already over and is dropped.
+    let run_id = state.setup_runs.read().await.iter().find(|r| r.machine_id == machine_id).map(|r| r.id.clone());
+    if let Some(id) = run_id {
+        apply_setup_event(&app, &state, &id, RunEvent::Cancelled).await;
+    }
+    // Aborting drops the exec stream, which kills the remote process group.
+    h.abort();
+    Ok(())
+}
+
+#[tauri::command]
+async fn setup_runs(state: State<'_, AppState>) -> CmdResult<Vec<ProvisionRun>> {
+    Ok(state.setup_runs.read().await.clone())
+}
+
 // ---------------------------------------------------------------- terminals
 
 #[tauri::command]
@@ -621,6 +893,7 @@ pub fn run() {
             let data = app.path().app_data_dir()?;
             let secrets = secrets::Secrets::new(data.join("secrets"));
             let store = Store::new(data.join("state"));
+            let preset_secrets = secrets::PresetSecrets::new(data.join("secrets"));
 
             let (provider, backend) = match secrets.load() {
                 Some((key, backend)) => match Boxd::new(key, BoxdConfig::default()) {
@@ -647,6 +920,22 @@ pub fn run() {
                 })
                 .collect();
 
+            let presets = tauri::async_runtime::block_on(store.load_presets()).unwrap_or_else(|e| {
+                eprintln!("stowbox: could not read presets.json: {e}");
+                Vec::new()
+            });
+            // Setup runs do not survive a restart either; say so on the record.
+            let setup_runs = tauri::async_runtime::block_on(store.load_runs())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|mut r| {
+                    if r.is_active() {
+                        r.apply(&RunEvent::Failed("Stowbox was closed while the setup was running".into()), now_ms());
+                    }
+                    r
+                })
+                .collect();
+
             app.manage(AppState {
                 provider: RwLock::new(provider),
                 secrets,
@@ -656,6 +945,10 @@ pub fn run() {
                 runs: Mutex::new(HashMap::new()),
                 terminals: Mutex::new(HashMap::new()),
                 rates: RwLock::new(None),
+                presets: RwLock::new(presets),
+                preset_secrets,
+                setup_runs: RwLock::new(setup_runs),
+                setups: Mutex::new(HashMap::new()),
             });
             Ok(())
         })
@@ -670,6 +963,7 @@ pub fn run() {
             fork_machine,
             machine_power,
             machine_usage,
+            machine_metrics,
             org_billing,
             rates,
             list_agents,
@@ -679,6 +973,12 @@ pub fn run() {
             delete_agent,
             agent_stop,
             agent_send,
+            list_presets,
+            save_preset,
+            delete_preset,
+            setup_start,
+            setup_cancel,
+            setup_runs,
             terminal_open,
             terminal_write,
             terminal_resize,

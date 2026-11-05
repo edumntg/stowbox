@@ -1,8 +1,10 @@
-//! On-disk state: agent sessions (`agents.json`) and one JSONL transcript per
-//! agent (`transcripts/<id>.jsonl`). Writes are whole-file and small; the
-//! transcript appends are what grows.
+//! On-disk state: agent sessions (`agents.json`), one JSONL transcript per
+//! agent (`transcripts/<id>.jsonl`), setup presets (`presets.json`, names
+//! of secrets only) and the last setup run per box (`setup-runs.json`).
+//! Writes are whole-file and small; the transcript appends are what grows.
 
 use crate::agent::{AgentEvent, AgentMeta};
+use crate::provision::{Preset, ProvisionRun};
 use crate::Result;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
@@ -44,6 +46,38 @@ impl Store {
         Ok(())
     }
 
+    async fn load_json<T: serde::de::DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
+        match tokio::fs::read(self.dir.join(name)).await {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn save_json<T: serde::Serialize + ?Sized>(&self, name: &str, value: &T) -> Result<()> {
+        tokio::fs::create_dir_all(&self.dir).await?;
+        let tmp = self.dir.join(format!("{name}.tmp"));
+        tokio::fs::write(&tmp, serde_json::to_vec_pretty(value)?).await?;
+        tokio::fs::rename(&tmp, self.dir.join(name)).await?;
+        Ok(())
+    }
+
+    pub async fn load_presets(&self) -> Result<Vec<Preset>> {
+        self.load_json("presets.json").await
+    }
+
+    pub async fn save_presets(&self, presets: &[Preset]) -> Result<()> {
+        self.save_json("presets.json", presets).await
+    }
+
+    pub async fn load_runs(&self) -> Result<Vec<ProvisionRun>> {
+        self.load_json("setup-runs.json").await
+    }
+
+    pub async fn save_runs(&self, runs: &[ProvisionRun]) -> Result<()> {
+        self.save_json("setup-runs.json", runs).await
+    }
+
     pub async fn append_event(&self, id: &str, ev: &AgentEvent) -> Result<()> {
         let path = self.transcript_file(id);
         if let Some(parent) = path.parent() {
@@ -76,5 +110,28 @@ impl Store {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn presets_round_trip_and_default_to_empty() {
+        let dir = std::env::temp_dir().join(format!("stowbox-store-{}", uuid::Uuid::new_v4().simple()));
+        let store = Store::new(&dir);
+        assert!(store.load_presets().await.unwrap().is_empty());
+        let p = Preset {
+            id: "p1".into(),
+            name: "main commands".into(),
+            commands: vec!["git clone https://example.com/r.git".into()],
+            secret_names: vec!["GITHUB_TOKEN".into()],
+            created_at: 1,
+            updated_at: 2,
+        };
+        store.save_presets(std::slice::from_ref(&p)).await.unwrap();
+        assert_eq!(store.load_presets().await.unwrap(), vec![p]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

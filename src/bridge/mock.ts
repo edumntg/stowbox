@@ -1,7 +1,7 @@
 // Browser-only stand-in for the desktop shell. Used to develop and screenshot
 // the UI with `pnpm dev` outside Tauri. Every value here is a placeholder.
 
-import type { Account, AgentEvent, AgentMeta, AgentPush, Api, Machine, TermEvent } from "./types";
+import type { Account, AgentEvent, AgentMeta, AgentPush, Api, Machine, MachineMetrics, Preset, SetupPush, SetupRun, TermEvent } from "./types";
 
 const GIB = 1024 ** 3;
 
@@ -43,7 +43,16 @@ let machines: Machine[] = [
   machine({ id: "vm_mock_2", name: "mock-web", status: "suspended", vcpu: 4, memoryBytes: 16 * GIB }),
   machine({ id: "vm_mock_3", name: "mock-scratch", status: "hibernated", vcpu: 1, memoryBytes: 4 * GIB }),
   machine({ id: "vm_mock_4", name: "mock-old", status: "stopped" }),
+  machine({ id: "vm_mock_5", name: "mock-worker", status: "running", vcpu: 4, memoryBytes: 16 * GIB, lastConnectedMs: Date.now() - 3 * 3_600_000 }),
 ];
+
+// Metrics drift a little per sample so the fleet view shows movement, and
+// the worker box sits near its memory ceiling so the pressure colours show.
+const metricBase: Record<string, { cpu: number; mem: number; diskUsed: number; up: number }> = {
+  vm_mock_1: { cpu: 7, mem: 0.41, diskUsed: 0.22, up: 11 * 86_400 + 4 * 3600 },
+  vm_mock_5: { cpu: 61, mem: 0.93, diskUsed: 0.88, up: 14 * 3600 + 54 * 60 },
+};
+const jitter = (n: number) => n + (Math.random() - 0.5) * n * 0.15;
 
 const account: Account = {
   userId: "user_mock",
@@ -188,6 +197,104 @@ async function simulateTurn(id: string, text: string) {
   record(id, { type: "result", ok: true, subtype: "success", message: null, cost_usd: 0.0031, duration_ms: 3200, turns: 2, session_id: "mock-session", input_tokens: 1200, output_tokens: 80 });
 }
 
+// Setup presets. Secret values are kept here only to mimic the keychain;
+// the UI never receives them.
+let presets: Preset[] = [
+  {
+    id: "preset_mock_1",
+    name: "main commands",
+    commands: [
+      "git clone https://$GITHUB_TOKEN@github.com/example/api.git ~/api",
+      "cd ~/api && docker compose up -d",
+      "bash ~/api/scripts/bootstrap.sh",
+    ],
+    secretNames: ["GITHUB_TOKEN", "DATABASE_URL"],
+    createdAt: Date.now() - 86_400_000,
+    updatedAt: Date.now() - 3_600_000,
+    secrets: [
+      { name: "GITHUB_TOKEN", hasValue: true },
+      { name: "DATABASE_URL", hasValue: true },
+    ],
+  },
+];
+const presetValues: Record<string, Record<string, string>> = { preset_mock_1: { GITHUB_TOKEN: "placeholder", DATABASE_URL: "placeholder" } };
+
+let setupRuns: SetupRun[] = [
+  {
+    id: "run_mock_1",
+    machineId: "vm_mock_1",
+    machineName: "mock-api",
+    presetId: "preset_mock_1",
+    presetName: "main commands",
+    status: "done",
+    error: null,
+    steps: presets[0].commands.map((command) => ({ command, state: "ok" as const, exitCode: 0 })),
+    secretNames: ["GITHUB_TOKEN", "DATABASE_URL"],
+    secretsWritten: true,
+    output: "Cloning into '/home/user/api'...\n[+] Running 2/2\n ✔ Container api-db-1   Started\n ✔ Container api-app-1  Started\nbootstrap: done\n",
+    startedAt: Date.now() - 2 * 86_400_000,
+    finishedAt: Date.now() - 2 * 86_400_000 + 74_000,
+  },
+];
+const setupListeners = new Set<(p: SetupPush) => void>();
+const cancelled = new Set<string>();
+
+function setupEmit(run: SetupRun, append = "") {
+  if (append) run.output += append;
+  for (const l of setupListeners) l({ run: { ...run, output: "", steps: run.steps.map((s) => ({ ...s })) }, append });
+}
+
+async function simulateSetup(run: SetupRun) {
+  await sleep(900);
+  if (cancelled.has(run.id)) return;
+  run.status = "running";
+  run.secretsWritten = true;
+  setupEmit(run);
+  for (let i = 0; i < run.steps.length; i++) {
+    if (cancelled.has(run.id)) return;
+    run.steps[i].state = "running";
+    setupEmit(run, `$ ${run.steps[i].command.split("\n")[0]}\n`);
+    for (let k = 0; k < 3; k++) {
+      await sleep(500);
+      if (cancelled.has(run.id)) return;
+      setupEmit(run, `mock output ${k + 1}/3 from step ${i + 1}\n`);
+    }
+    run.steps[i].state = "ok";
+    run.steps[i].exitCode = 0;
+    setupEmit(run);
+  }
+  run.status = "done";
+  run.finishedAt = Date.now();
+  setupEmit(run);
+}
+
+function startMockSetup(m: Machine, presetId: string): SetupRun {
+  const p = presets.find((x) => x.id === presetId);
+  if (!p) throw new Error("setup preset not found");
+  const missing = p.secretNames.find((n) => !presetValues[p.id]?.[n]);
+  if (missing) throw new Error(`the secret ${missing} in "${p.name}" has no value; edit the preset first`);
+  if (setupRuns.some((r) => r.machineId === m.id && (r.status === "waiting" || r.status === "running"))) throw new Error(`a setup is already running in ${m.name}`);
+  const run: SetupRun = {
+    id: "run_mock_" + Date.now(),
+    machineId: m.id,
+    machineName: m.name,
+    presetId: p.id,
+    presetName: p.name,
+    status: "waiting",
+    error: null,
+    steps: p.commands.map((command) => ({ command, state: "pending", exitCode: null })),
+    secretNames: [...p.secretNames],
+    secretsWritten: false,
+    output: "",
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  setupRuns = [...setupRuns.filter((r) => r.machineId !== m.id), run];
+  setupEmit(run);
+  void simulateSetup(run);
+  return run;
+}
+
 export const mockApi: Api = {
   async providerStatus() {
     // `?onboarding` previews the first-run screen.
@@ -211,10 +318,11 @@ export const mockApi: Api = {
     if (!m) throw new Error("not found: " + id);
     return m;
   },
-  async createMachine(spec) {
+  async createMachine(spec, presetId) {
     await sleep(800);
     const m = machine({ id: "vm_mock_" + Date.now(), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
     machines = [...machines, m];
+    if (presetId) startMockSetup(m, presetId);
     return m;
   },
   async forkMachine(source, name) {
@@ -246,6 +354,26 @@ export const mockApi: Api = {
       costMicro: 1_750_000,
       seconds: { running: 20_160, standby: 36_000, hibernated: 200_000, stopped: 0 },
       complete: false,
+    };
+  },
+  async machineMetrics(id): Promise<MachineMetrics | null> {
+    const m = await mockApi.getMachine(id);
+    if (m.status !== "running") return null;
+    await sleep(500 + Math.random() * 400);
+    const b = metricBase[m.id] ?? { cpu: 3, mem: 0.2, diskUsed: 0.1, up: 1800 };
+    const diskTotal = 100 * GIB;
+    const used = Math.round(b.diskUsed * diskTotal);
+    return {
+      sampledAtMs: Date.now(),
+      cpuPercent: Math.min(100, Math.max(0, Math.round(jitter(b.cpu) * 10) / 10)),
+      vcpu: m.vcpu,
+      load1: Math.round(jitter(b.cpu / 100 * m.vcpu) * 100) / 100,
+      memTotalBytes: m.memoryBytes,
+      memUsedBytes: Math.round(Math.min(0.99, jitter(b.mem)) * m.memoryBytes),
+      diskTotalBytes: diskTotal,
+      diskUsedBytes: used,
+      diskAvailBytes: diskTotal - used - 5 * GIB,
+      uptimeSecs: b.up + Math.round((Date.now() - 1_700_000_000_000) / 1000) % 60,
     };
   },
   async rates() {
@@ -303,6 +431,66 @@ export const mockApi: Api = {
   async onAgentEvent(cb) {
     listeners.add(cb);
     return () => listeners.delete(cb);
+  },
+  async listPresets() {
+    return presets.map((p) => ({ ...p, secrets: p.secretNames.map((name) => ({ name, hasValue: !!presetValues[p.id]?.[name] })) }));
+  },
+  async savePreset(input) {
+    await sleep(200);
+    const name = input.name.trim();
+    const commands = input.commands.map((c) => c.trimEnd()).filter((c) => c.trim());
+    const names = input.secrets.map((x) => x.name.trim());
+    if (!name) throw new Error("give the preset a name");
+    if (commands.length === 0 && names.length === 0) throw new Error("add at least one command or one secret");
+    const bad = names.find((n) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(n));
+    if (bad !== undefined) throw new Error(`"${bad}" is not a valid variable name: use letters, digits and _, not starting with a digit`);
+    const dup = names.find((n, i) => names.indexOf(n) !== i);
+    if (dup) throw new Error(`the secret ${dup} is listed twice`);
+    const id = input.id ?? "preset_mock_" + Date.now();
+    const old = presetValues[id] ?? {};
+    const values: Record<string, string> = {};
+    for (const [i, x] of input.secrets.entries()) {
+      const v = x.value || old[names[i]];
+      if (!v) throw new Error(`give ${names[i]} a value`);
+      values[names[i]] = v;
+    }
+    presetValues[id] = values;
+    const prev = presets.find((p) => p.id === id);
+    const next: Preset = {
+      id,
+      name,
+      commands,
+      secretNames: names,
+      createdAt: prev?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+      secrets: names.map((n) => ({ name: n, hasValue: true })),
+    };
+    presets = prev ? presets.map((p) => (p.id === id ? next : p)) : [...presets, next];
+    return next;
+  },
+  async deletePreset(id) {
+    presets = presets.filter((p) => p.id !== id);
+    delete presetValues[id];
+  },
+  async setupStart(machineId, presetId) {
+    const m = await mockApi.getMachine(machineId);
+    return startMockSetup(m, presetId);
+  },
+  async setupCancel(machineId) {
+    const run = setupRuns.find((r) => r.machineId === machineId && (r.status === "waiting" || r.status === "running"));
+    if (!run) return;
+    cancelled.add(run.id);
+    run.status = "cancelled";
+    run.finishedAt = Date.now();
+    for (const st of run.steps) if (st.state === "pending" || st.state === "running") st.state = "skipped";
+    setupEmit(run);
+  },
+  async setupRuns() {
+    return setupRuns.map((r) => ({ ...r, steps: r.steps.map((s) => ({ ...s })) }));
+  },
+  async onSetupEvent(cb) {
+    setupListeners.add(cb);
+    return () => setupListeners.delete(cb);
   },
   async terminalOpen(_machine, _cols, _rows, onEvent) {
     const enc = new TextEncoder();
