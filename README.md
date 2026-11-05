@@ -53,6 +53,16 @@ few tens of megabytes instead of an Electron process per window.
   masked in the setup log. Commands run in order in one shell (`cd` and
   `export` carry over); the first non-zero exit stops the run.
 - **Desktop**: one click opens boxd's live desktop view in the browser.
+- **Notifications**: when an agent's turn finishes or fails, or a setup run
+  ends, the OS shows a notification, by default only while Stowbox is not
+  the window in front (Settings has both switches). One turn notifies once;
+  reconnecting and a pressed Stop do not notify, and nothing is announced
+  for the first 10 s after launch, when reattached turns that ended while
+  Stowbox was closed replay their last lines. Clicking a notification
+  brings the window back and opens the agent or the box's Setup tab, where
+  the notification server reports clicks. The dock or taskbar badge counts
+  notifications shown since the window was last in front (macOS and Linux
+  desktops that support badges).
 - Light and dark themes, keyboard reachable, honest empty, loading and error
   states everywhere.
 

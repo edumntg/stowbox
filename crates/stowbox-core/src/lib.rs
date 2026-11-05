@@ -6,6 +6,7 @@
 //!   JSONL output becomes chat events.
 //! - `cost`: live €/h estimates from the provider's rate card.
 //! - `metrics`: CPU, memory, disk and uptime sampled inside a running box.
+//! - `notify`: which agent and setup outcomes deserve a desktop notification.
 //! - `provision`: setup presets (commands and secrets) run in a new box.
 //! - `store`: on-disk persistence of agent sessions and transcripts.
 
@@ -14,6 +15,7 @@ pub mod boxd;
 pub mod cost;
 pub mod error;
 pub mod metrics;
+pub mod notify;
 pub mod provider;
 pub mod provision;
 pub mod store;

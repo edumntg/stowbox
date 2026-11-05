@@ -925,6 +925,12 @@ ul {
   color: var(--muted-foreground);
 }
 
+.kv dd.stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
 .kv dd {
   margin: 0;
   min-width: 0;
@@ -1457,6 +1463,10 @@ select.input {
 .check input {
   margin-top: 3px;
   accent-color: var(--foreground);
+}
+
+.check:has(input:disabled) {
+  opacity: 0.5;
 }
 
 .check strong {

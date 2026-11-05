@@ -9,6 +9,9 @@ import type {
   Machine,
   MachineMetrics,
   NewAgent,
+  Notice,
+  NoticeTarget,
+  NotifyPermission,
   PowerAction,
   Preset,
   PresetInput,
@@ -28,6 +31,12 @@ export type Dialog =
   | { kind: "new-agent"; machineId?: string }
   | { kind: "settings" }
   | { kind: "confirm"; title: string; body: string; confirmLabel: string; danger: boolean; run: () => Promise<void> };
+export interface NotifyPrefs {
+  /** Notify when an agent finishes or fails, or a setup run ends. */
+  enabled: boolean;
+  /** Also while the Stowbox window is in front. */
+  whenFocused: boolean;
+}
 export interface Toast {
   id: number;
   kind: "error" | "info";
@@ -57,6 +66,7 @@ interface AppState {
   presetsLoaded: boolean;
   /** The latest setup run per box id. */
   setupRuns: Record<string, SetupRun>;
+  notify: NotifyPrefs & { permission: NotifyPermission | null };
   ui: {
     theme: Theme;
     selection: Selection;
@@ -69,6 +79,15 @@ interface AppState {
     collapsed: Record<string, boolean>;
     filter: string;
   };
+}
+
+function loadNotifyPrefs(): NotifyPrefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem("stowbox.notify") ?? "{}") as Partial<NotifyPrefs>;
+    return { enabled: raw.enabled !== false, whenFocused: raw.whenFocused === true };
+  } catch {
+    return { enabled: true, whenFocused: false };
+  }
 }
 
 function initialTheme(): Theme {
@@ -100,6 +119,7 @@ export const [state, setState] = createStore<AppState>({
   presets: [],
   presetsLoaded: false,
   setupRuns: {},
+  notify: { ...loadNotifyPrefs(), permission: null },
   ui: {
     theme: initialTheme(),
     selection: { kind: "fleet" },
@@ -141,6 +161,9 @@ document.documentElement.dataset.theme = state.ui.theme;
 let toastSeq = 0;
 let unlisten: (() => void) | null = null;
 let unlistenSetup: (() => void) | null = null;
+let unlistenNotify: (() => void) | null = null;
+/** Notifications shown since the window was last in front; the badge count. */
+let unseen = 0;
 let pollTimer: number | undefined;
 
 function message(e: unknown): string {
@@ -174,6 +197,50 @@ function onPush(p: AgentPush) {
       if (s.transcripts[p.agentId]) s.transcripts[p.agentId].push(ev);
     }),
   );
+  if (p.notice) void deliver(p.notice);
+}
+
+/** Shows a notice the shell flagged as an outcome, if the settings and the
+ * OS allow it. */
+async function deliver(n: Notice) {
+  const prefs = state.notify;
+  if (!prefs.enabled || prefs.permission !== "granted") return;
+  try {
+    const focused = await api.windowFocused();
+    if (focused && !prefs.whenFocused) return;
+    await api.showNotification(n);
+    if (!focused) await api.setBadgeCount(++unseen);
+  } catch (e) {
+    console.warn("notification failed", e);
+  }
+}
+
+function openTarget(t: NoticeTarget) {
+  void api.focusWindow().catch(() => undefined);
+  if (t.agentId && agentById(t.agentId)) actions.select({ kind: "agent", id: t.agentId });
+  else if (t.machineId && machineById(t.machineId)) actions.openBoxTab(t.machineId, "setup");
+}
+
+async function listenNotify() {
+  const offClick = await api.onNotificationClick(openTarget);
+  const offFocus = await api.onWindowFocus((focused) => {
+    if (focused && unseen > 0) {
+      unseen = 0;
+      void api.setBadgeCount(0).catch(() => undefined);
+    }
+  });
+  unlistenNotify = () => {
+    offClick();
+    offFocus();
+  };
+}
+
+function saveNotifyPrefs() {
+  try {
+    localStorage.setItem("stowbox.notify", JSON.stringify({ enabled: state.notify.enabled, whenFocused: state.notify.whenFocused }));
+  } catch {
+    /* private mode: the choice just does not persist */
+  }
 }
 
 /** Output past this is dropped from the front, as the shell does. */
@@ -185,6 +252,7 @@ function onSetupPush(p: SetupPush) {
   let output = (prev && prev.id === p.run.id ? prev.output : "") + p.append;
   if (output.length > SETUP_OUTPUT_CAP) output = output.slice(output.length - SETUP_OUTPUT_CAP);
   setState("setupRuns", p.run.machineId, { ...p.run, output });
+  if (p.notice) void deliver(p.notice);
 }
 
 export const setupRunFor = (machineId: string): SetupRun | undefined => state.setupRuns[machineId];
@@ -219,6 +287,11 @@ export const actions = {
   async loadAll() {
     if (!unlisten) unlisten = await api.onAgentEvent(onPush);
     if (!unlistenSetup) unlistenSetup = await api.onSetupEvent(onSetupPush);
+    if (!unlistenNotify) await listenNotify().catch((e) => console.warn("notification listeners failed", e));
+    api
+      .notifyPermission()
+      .then((permission) => setState("notify", "permission", permission))
+      .catch(() => setState("notify", "permission", "unsupported"));
     void actions.loadPresets();
     api
       .setupRuns()
@@ -383,6 +456,21 @@ export const actions = {
       setState("transcripts", id, events);
     } catch (e) {
       actions.toast("Could not load the transcript: " + message(e));
+    }
+  },
+
+  /** Turning notifications on asks the OS once, if it has not been asked. */
+  async setNotify(patch: Partial<NotifyPrefs>) {
+    setState("notify", patch);
+    saveNotifyPrefs();
+    if (patch.enabled && state.notify.permission === "default") await actions.allowNotifications();
+  },
+
+  async allowNotifications() {
+    try {
+      setState("notify", "permission", await api.requestNotifyPermission());
+    } catch (e) {
+      actions.toast("Could not ask for notification permission: " + message(e));
     }
   },
 

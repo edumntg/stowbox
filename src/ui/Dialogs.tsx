@@ -279,6 +279,42 @@ const Settings = () => {
             <I.Sun /> Light
           </button>
         </dd>
+        <dt>Notifications</dt>
+        <dd class="stack">
+          <label class="check">
+            <input type="checkbox" checked={state.notify.enabled} onChange={(e) => void actions.setNotify({ enabled: e.currentTarget.checked })} />
+            <span>
+              <strong>Notify when an agent finishes or fails.</strong> Setup runs too. Only while Stowbox is not the window in front.
+            </span>
+          </label>
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={state.notify.whenFocused}
+              disabled={!state.notify.enabled}
+              onChange={(e) => void actions.setNotify({ whenFocused: e.currentTarget.checked })}
+            />
+            <span>Also when Stowbox is in front</span>
+          </label>
+          <Show when={state.notify.enabled}>
+            <Switch>
+              <Match when={state.notify.permission === "denied"}>
+                <p class="hint">The system blocks notifications from Stowbox. Allow them in the OS notification settings; until then nothing is shown.</p>
+              </Match>
+              <Match when={state.notify.permission === "default"}>
+                <p class="hint">
+                  Stowbox has not been allowed to notify yet.{" "}
+                  <button class="link" onClick={() => void actions.allowNotifications()}>
+                    Allow notifications
+                  </button>
+                </p>
+              </Match>
+              <Match when={state.notify.permission === "unsupported"}>
+                <p class="hint">Notifications are not available here.</p>
+              </Match>
+            </Switch>
+          </Show>
+        </dd>
         <dt>Version</dt>
         <dd class="mono">0.1.0</dd>
       </dl>
