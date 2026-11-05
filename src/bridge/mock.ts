@@ -1316,6 +1316,9 @@ export const mockApi: Api = {
       /* not an installed app: browsers refuse badges, which is fine here */
     }
   },
+  async setWindowTheme() {
+    /* a browser tab has no window frame of its own */
+  },
   async openUrl(url) {
     window.open(url, "_blank", "noopener");
   },

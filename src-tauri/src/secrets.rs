@@ -1,6 +1,13 @@
 //! Where the provider API key lives. OS keychain first; a 0600 file in the
 //! app data dir when no keychain is reachable (headless Linux, some CI), and
 //! the UI says which one is in use.
+//!
+//! On Windows the keychain is the Credential Manager, which holds at most
+//! 2560 bytes per entry (1280 characters, stored as UTF-16): enough for the
+//! API key, not always for a preset's secrets (a private key as a value), so
+//! those can land in the file. Windows has no mode bits; the file is in the
+//! per-user app data folder (`%APPDATA%\sh.stowbox.desktop`), whose
+//! inherited ACL gives access to the user, SYSTEM and administrators only.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -45,6 +52,7 @@ impl Secrets {
                 let _ = std::fs::remove_file(&self.file);
                 return Ok(Backend::Keyring);
             }
+            let _ = entry.delete_credential();
         }
         if let Some(parent) = self.file.parent() {
             std::fs::create_dir_all(parent)?;
@@ -106,6 +114,9 @@ impl PresetSecrets {
                 let _ = std::fs::remove_file(self.file(id));
                 return Ok(Backend::Keyring);
             }
+            // Refused (too long for Windows' Credential Manager, for one):
+            // drop the older entry, or `load` would keep returning it.
+            let _ = entry.delete_credential();
         }
         std::fs::create_dir_all(&self.dir)?;
         let mut opts = std::fs::OpenOptions::new();

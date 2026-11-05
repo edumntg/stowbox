@@ -568,8 +568,10 @@ export interface Api {
   windowFocused(): Promise<boolean>;
   onWindowFocus(cb: (focused: boolean) => void): Promise<() => void>;
   focusWindow(): Promise<void>;
-  /** 0 clears the dock or taskbar badge. */
+  /** 0 clears the dock or taskbar badge (an overlay icon on Windows). */
   setBadgeCount(n: number): Promise<void>;
+  /** The theme of the window's native frame, where the OS draws one. */
+  setWindowTheme(theme: "light" | "dark"): Promise<void>;
   openUrl(url: string): Promise<void>;
   copyText(text: string): Promise<void>;
 }
