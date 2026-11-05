@@ -1,4 +1,4 @@
-import { For, Index, Show, createMemo, createSignal, untrack } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createSignal, on, untrack } from "solid-js";
 import type { Preset } from "../bridge/types";
 import { presetVariables, variablesIn } from "../bridge/variables";
 import { actions, state } from "../state/store";
@@ -221,7 +221,9 @@ const Editor = (p: { preset: Preset | null; onSaved: (id: string) => void }) => 
 
 export default function PresetsView() {
   // "new" while a fresh preset is being written; otherwise a preset id.
-  const [selected, setSelected] = createSignal<string | null>(state.presets[0]?.id ?? null);
+  const [selected, setSelected] = createSignal<string | null>(state.ui.presetFocus ?? state.presets[0]?.id ?? null);
+  // A preset picked in the command palette.
+  createEffect(on(() => state.ui.presetFocus, (id) => id && setSelected(id), { defer: true }));
   const key = createMemo(() => {
     const id = selected() ?? state.presets[0]?.id ?? "new";
     return state.presets.some((x) => x.id === id) ? id : "new";

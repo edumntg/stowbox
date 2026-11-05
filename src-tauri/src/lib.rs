@@ -19,6 +19,7 @@ use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::provider::Provider;
 use stowbox_core::provision::{self, Preset, Prepared, ProvisionRun, RunEvent, Variable};
+use stowbox_core::search::{SearchLimits, SearchResults};
 use stowbox_core::ssh;
 use stowbox_core::store::Store;
 use stowbox_core::types::*;
@@ -601,6 +602,18 @@ async fn create_agent(state: State<'_, AppState>, spec: NewAgent) -> CmdResult<A
 #[tauri::command]
 async fn agent_events(state: State<'_, AppState>, id: String) -> CmdResult<Vec<AgentEvent>> {
     state.store.read_events(&id).await.map_err(err)
+}
+
+/// Full-text search over every agent's transcript, newest agent first.
+#[tauri::command]
+async fn search_transcripts(state: State<'_, AppState>, query: String, limit: Option<usize>) -> CmdResult<SearchResults> {
+    let ids: Vec<String> = {
+        let mut agents = state.agents.read().await.clone();
+        agents.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        agents.into_iter().map(|a| a.id).collect()
+    };
+    let limits = SearchLimits { max_hits: limit.unwrap_or(50).clamp(1, 200), ..SearchLimits::default() };
+    state.store.search_transcripts(ids, query, limits).await.map_err(err)
 }
 
 #[tauri::command]
@@ -1555,6 +1568,7 @@ pub fn run() {
             list_agents,
             create_agent,
             agent_events,
+            search_transcripts,
             rename_agent,
             delete_agent,
             agent_stop,

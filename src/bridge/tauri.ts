@@ -35,6 +35,7 @@ export const tauriApi: Api = {
   listAgents: () => invoke("list_agents"),
   createAgent: (spec) => invoke("create_agent", { spec }),
   agentEvents: (id) => invoke("agent_events", { id }),
+  searchTranscripts: (query, limit) => invoke("search_transcripts", { query, limit: limit ?? null }),
   agentSend: (id, text, attachments) => invoke("agent_send", { id, text, attachments: attachments ?? null }),
   agentQueueAdd: (id, text, attachments) => invoke("agent_queue_add", { id, text, attachments: attachments ?? null }),
   agentQueueEdit: (id, messageId, text) => invoke("agent_queue_edit", { id, messageId, text }),

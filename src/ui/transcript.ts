@@ -59,6 +59,26 @@ export function toItems(events: AgentEvent[]): Item[] {
   return items;
 }
 
+/** The item that shows event `ev` of `events` (as `toItems` folds them), or
+ * -1 when the event shows nothing. A tool result is its tool call's card; a
+ * stderr line folded into the note before it is that note. */
+export function itemIndexForEvent(events: AgentEvent[], ev: number): number {
+  const e = events[ev];
+  if (!e) return -1;
+  const before = toItems(events.slice(0, ev));
+  const after = toItems(events.slice(0, ev + 1));
+  if (e.type === "tool_result") {
+    for (let i = after.length - 1; i >= 0; i--) {
+      const it = after[i];
+      if (it.kind === "tool" && it.id === e.tool_use_id) return i;
+    }
+    return -1;
+  }
+  if (after.length > before.length) return before.length;
+  // Folded into the last item (a stderr line joining a note).
+  return after.length && e.type === "stderr" ? after.length - 1 : -1;
+}
+
 /** One line that says what a tool call is doing, for the collapsed card. */
 export function toolSummary(name: string, input: unknown): string {
   if (!input || typeof input !== "object") return "";

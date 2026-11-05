@@ -5,6 +5,7 @@
 
 use crate::agent::{AgentEvent, AgentMeta};
 use crate::provision::{Preset, ProvisionRun};
+use crate::search::{SearchLimits, SearchResults};
 use crate::Result;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
@@ -104,6 +105,15 @@ impl Store {
             .collect())
     }
 
+    /// Full-text search over the transcripts of `agent_ids`, in that order.
+    /// Runs on a blocking thread: it reads files line by line.
+    pub async fn search_transcripts(&self, agent_ids: Vec<String>, query: String, limits: SearchLimits) -> Result<SearchResults> {
+        let dir = self.dir.join("transcripts");
+        tokio::task::spawn_blocking(move || crate::search::search_dir(&dir, &agent_ids, &query, limits))
+            .await
+            .map_err(|e| crate::Error::Provider(format!("search stopped: {e}")))?
+    }
+
     pub async fn delete_transcript(&self, id: &str) -> Result<()> {
         match tokio::fs::remove_file(self.transcript_file(id)).await {
             Ok(()) => Ok(()),
@@ -133,6 +143,19 @@ mod tests {
         };
         store.save_presets(std::slice::from_ref(&p)).await.unwrap();
         assert_eq!(store.load_presets().await.unwrap(), vec![p]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn search_reads_appended_transcripts() {
+        let dir = std::env::temp_dir().join(format!("stowbox-store-search-{}", uuid::Uuid::new_v4().simple()));
+        let store = Store::new(&dir);
+        store.append_event("a1", &AgentEvent::UserMessage { text: "Rotate the API keys".into(), attachments: vec![] }).await.unwrap();
+        store.append_event("a1", &AgentEvent::Stderr { text: "warning: key expired".into() }).await.unwrap();
+        let r = store.search_transcripts(vec!["a1".into(), "a2".into()], "KEY".into(), SearchLimits::default()).await.unwrap();
+        assert_eq!(r.scanned, 1);
+        assert_eq!(r.hits.iter().map(|h| h.event).collect::<Vec<_>>(), vec![1, 0]);
+        assert_eq!(store.read_events("a1").await.unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
