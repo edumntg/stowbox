@@ -1,0 +1,77 @@
+# Builds the real app on Windows, starts it and drives its UI over WebDriver
+# (tauri-driver + msedgedriver against WebView2): with no API key the
+# onboarding renders, a malformed key gets the app's validation message, an
+# invalid one boxd's refusal. Screenshots of the webview and of the whole
+# screen are attached to the run. Windows minutes bill 2x on a private repo,
+# so it runs by hand and on pull requests that change the app itself, never
+# on pushes; see README.md, "Windows".
+name: Windows smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "src/**"
+      - "package.json"
+      - ".github/workflows/windows-smoke.yml"
+      - ".github/scripts/windows-smoke.mjs"
+      - ".github/scripts/screen.ps1"
+
+concurrency:
+  group: windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke
+
+      # A release build without installers: the same exe the installers
+      # carry (no console window, no devtools), minus the bundling time.
+      - name: Build the app
+        run: pnpm tauri build --no-bundle
+
+      - name: tauri-driver
+        run: cargo install tauri-driver --locked
+
+      # msedgedriver has to match the WebView2 runtime's version, which the
+      # runner image updates on its own schedule.
+      - name: msedgedriver for this WebView2
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $key).pv
+          Write-Host "WebView2 runtime $version"
+          $dir = Join-Path $env:RUNNER_TEMP 'msedgedriver'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile "$dir\driver.zip"
+          Expand-Archive "$dir\driver.zip" -DestinationPath $dir -Force
+          & "$dir\msedgedriver.exe" --version
+          "MSEDGEDRIVER=$dir\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Drive the app
+        run: node .github/scripts/windows-smoke.mjs target/release/stowbox.exe "$env:MSEDGEDRIVER" smoke
+
+      - name: Attach screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke
+          path: smoke/
+          if-no-files-found: warn
+          retention-days: 7
