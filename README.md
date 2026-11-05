@@ -17,7 +17,8 @@ few tens of megabytes instead of an Electron process per window.
 - **Fleet**: the landing view. Four tiles (running boxes, working agents,
   finished turns waiting for you, estimated cost per hour), alerts derived
   from the same data (a failed agent, a box billing with nothing to do, a
-  box near its memory or disk limit), and one row per box with its agents
+  box near its memory or disk limit, the daily spend warning, a box the
+  idle guard put in standby), and one row per box with its agents
   as state squares, CPU, memory, disk free and uptime. The numbers are read
   inside each running box over the exec stream, since boxd has no
   telemetry API; boxes in standby or hibernation are not touched, because
@@ -75,6 +76,24 @@ few tens of megabytes instead of an Electron process per window.
   stream (xterm.js on this side). Standby and hibernated boxes wake on open.
 - **Cost**: account balance and not-yet-charged usage in the sidebar, metered
   usage per box with hours in each power state in the Details tab.
+- **Cost guards** (Settings, both off by default): *Idle standby* puts a
+  running box in standby after N minutes (30 by default) in which nothing
+  happened in it: no agent starting, working or reconnecting (a detached
+  turn counts until its exit is read, with or without a client attached),
+  no setup run, no terminal open, and no agent update, setup run, terminal
+  keystroke or Changes action in the window. The idle clock never starts
+  before Stowbox first saw the box running, and restarts when a box wakes.
+  A 30 s countdown with Undo comes first, and the box is checked again at
+  the end of it; Undo restarts the clock. A box can opt out in its Details
+  tab. Stowbox only sees its own agents and terminals: an editor or `ssh`
+  session opened elsewhere is invisible to it, so opt such a box out. The
+  guard runs while Stowbox is open. *Spend warning* compares today's
+  spend with a limit: boxd's metered usage of the org since local
+  midnight when the key can read it (org owners and admins; it lags up to
+  25 minutes), otherwise the current hourly estimate projected over a full
+  day, and the warning says which. It shows in the Fleet alerts and once a
+  day as a notification. The boxes the guard put in standby are listed in
+  the alerts until they wake.
 - **Setup presets**: a named list of commands plus secrets (for example
   "main commands": export `GITHUB_TOKEN`, `git clone`, `docker compose up -d`,
   run a script). Pick one in *New box* and it runs in the box as soon as it

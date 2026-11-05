@@ -114,6 +114,22 @@ shadows, except the floating shadow under dialogs and toasts.
   (notify on outcomes; also while in front, disabled when the first is off)
   and, when the OS has not allowed or blocks notifications, one hint line
   saying so.
+  Idle standby and Spend warning are a checkbox each with one number
+  under it (minutes; a limit in the rate card's currency), indented to the
+  checkbox text and faded while off, then a hint line on what the guard
+  can and cannot see. The spend warning shows the current figure and where
+  it came from (metered, or the hourly estimate over a day) in a hint line.
+- Idle standby countdown: an info toast that stays ("mock-api goes to
+  standby in 24 s", the count in monospace), a muted second line with the
+  reason, and an Undo button in place of the dismiss control. A box kept
+  running at the end of it gets a short info toast with the reason. The
+  box's Details tab has an "Idle standby" row with the per-box checkbox,
+  or "off" and a link to Settings.
+- Fleet alerts have a third, neutral level for what Stowbox did on its
+  own: a box the idle guard put in standby, with a moon icon in the muted
+  colour, the estimate before and in standby, and "Idle standby 4 min
+  ago". It stays while the box sleeps. The spend warning is an orange
+  alert that opens Settings.
 - OS notifications: the title names the agent and the outcome
   ("Fix the login bug finished", "Setup failed in api-dev"); the body is
   the box, or the provider's error verbatim, cut at 180 characters.

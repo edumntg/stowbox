@@ -128,6 +128,18 @@ pub struct Usage {
     pub complete: bool,
 }
 
+/// What an org's machines cost over a window, from boxd's meter.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgUsage {
+    pub period_start: i64,
+    pub period_end: i64,
+    pub currency: String,
+    pub total_cost_micro: i64,
+    /// Metering lags by up to ~25 minutes; false means the total can grow.
+    pub complete: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrgBilling {

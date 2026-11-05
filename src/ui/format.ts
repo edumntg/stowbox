@@ -1,4 +1,4 @@
-import type { AgentStatus, Machine, MachineStatus } from "../bridge/types";
+import type { AgentStatus, Machine, MachineStatus, SpendCheck } from "../bridge/types";
 
 const GIB = 1024 ** 3;
 
@@ -13,6 +13,16 @@ export function money(micro: number, currency: string): string {
   else if (abs === 0) body = "0";
   else body = abs.toFixed(4);
   return (units < 0 ? "-" : "") + symbol + body;
+}
+
+export const currencySymbol = (currency: string) => (currency === "eur" ? "€" : currency === "usd" ? "$" : currency.toUpperCase());
+
+/** Where the day's spend figure comes from, in one sentence. */
+export function spendLine(c: SpendCheck): string {
+  if (c.basis === "metered") {
+    return `boxd has metered ${money(c.totalMicro, c.currency)} since midnight` + (c.complete ? "." : "; metering lags up to 25 minutes, so it can still grow.");
+  }
+  return `Estimate: at the current ${money(c.hourlyMicro, c.currency)}/h, a full day costs ${money(c.amountMicro, c.currency)}. boxd's metered usage is not readable with this key (${c.why}).`;
 }
 
 export function usd(amount: number): string {

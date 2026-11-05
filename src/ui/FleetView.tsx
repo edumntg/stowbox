@@ -1,19 +1,22 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { AgentMeta, Machine, MachineMetrics } from "../bridge/types";
-import { actions, agentsForMachine, state, type Selection } from "../state/store";
+import { actions, agentsForMachine, machineById, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import { Dot, agentDotState } from "./common";
-import { agentStatusLabel, gib, isBusy, money, pct, relTime, sizeLabel, statusLabel, uptime } from "./format";
+import { agentStatusLabel, gib, isBusy, money, pct, relTime, sizeLabel, spendLine, statusLabel, uptime } from "./format";
 
 /** Something a person should look at. Derived from state on every render;
  * nothing is stored, so an alert disappears the moment its cause does. */
 interface Alert {
   key: string;
-  level: "warn" | "danger";
+  /** "info" is something Stowbox did on its own, not a problem. */
+  level: "warn" | "danger" | "info";
   title: string;
   body: string;
   sinceMs: number;
-  go: Selection;
+  /** What the time line says before the age; "First seen" by default. */
+  sinceLabel?: string;
+  go: Selection | "settings";
 }
 
 const IDLE_AFTER_MS = 30 * 60_000;
@@ -80,7 +83,32 @@ function deriveAlerts(now: number): Alert[] {
       }
     }
   }
-  const rank = { danger: 0, warn: 1 };
+  const spend = state.guard.spendOn ? state.guard.spend : null;
+  if (spend?.over) {
+    out.push({
+      key: "spend",
+      level: "warn",
+      title: spend.basis === "metered" ? `Today's spend passed ${money(spend.limitMicro, spend.currency)}` : `A day at the current rate passes ${money(spend.limitMicro, spend.currency)}`,
+      body: spendLine(spend),
+      sinceMs: 0,
+      go: "settings",
+    });
+  }
+  // The guard's own actions, while the box it put to sleep still sleeps.
+  for (const g of state.guard.log) {
+    const m = machineById(g.machineId);
+    if (!m || m.status !== "suspended" || now - g.atMs > 24 * 3_600_000) continue;
+    out.push({
+      key: `guard-${g.machineId}`,
+      level: "info",
+      title: `${g.machineName} was put in standby`,
+      body: `Nothing happened in it for ${Math.round((g.atMs - g.idleSinceMs) / 60_000)} min. Estimate ${money(g.hourlyBeforeMicro, g.currency)}/h before, ${money(g.hourlyAfterMicro, g.currency)}/h in standby.`,
+      sinceMs: g.atMs,
+      sinceLabel: "Idle standby",
+      go: { kind: "box", id: g.machineId },
+    });
+  }
+  const rank = { danger: 0, warn: 1, info: 2 };
   return out.sort((a, b) => rank[a.level] - rank[b.level] || a.title.localeCompare(b.title));
 }
 
@@ -294,17 +322,21 @@ export default function FleetView() {
           <h3 class="fleet-h">
             Alerts <span class="count">{alerts().length}</span>
           </h3>
-          <Show when={alerts().length > 0} fallback={<div class="fleet-empty">Nothing needs you. Failed agents, boxes billing with nothing to do, and boxes near their memory or disk limit show up here.</div>}>
+          <Show when={alerts().length > 0} fallback={<div class="fleet-empty">Nothing needs you. Failed agents, boxes billing with nothing to do, boxes near their memory or disk limit, your daily spend warning and boxes put in standby while idle show up here.</div>}>
             <div class="alerts">
               <For each={alerts()}>
                 {(a) => (
-                  <button class="alert" data-level={a.level} onClick={() => actions.select(a.go)}>
-                    <I.Warning />
+                  <button class="alert" data-level={a.level} onClick={() => (a.go === "settings" ? actions.openDialog({ kind: "settings" }) : actions.select(a.go))}>
+                    <Show when={a.level === "info"} fallback={<I.Warning />}>
+                      <I.Moon />
+                    </Show>
                     <span class="alert-body">
                       <span class="alert-title">{a.title}</span>
                       <span>{a.body}</span>
                       <Show when={a.sinceMs > 0}>
-                        <span class="faint">First seen {relTime(a.sinceMs, now())}</span>
+                        <span class="faint">
+                          {a.sinceLabel ?? "First seen"} {relTime(a.sinceMs, now())}
+                        </span>
                       </Show>
                     </span>
                   </button>

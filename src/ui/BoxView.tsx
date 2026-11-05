@@ -245,6 +245,25 @@ const DetailsTab = (p: { machine: Machine }) => {
           </dd>
           <dt>Auto standby</dt>
           <dd>{timeout(m().autoSuspendSecs)}</dd>
+          <dt>Idle standby</dt>
+          <dd>
+            <Show
+              when={state.guard.idleOn}
+              fallback={
+                <span>
+                  off ·{" "}
+                  <button class="link" onClick={() => actions.openDialog({ kind: "settings" })}>
+                    Settings
+                  </button>
+                </span>
+              }
+            >
+              <label class="check">
+                <input type="checkbox" checked={!state.guard.optedOut.includes(m().id)} onChange={(e) => actions.setOptOut(m().id, !e.currentTarget.checked)} />
+                <span>Stowbox puts it in standby after {state.guard.idleMinutes} min with nothing happening</span>
+              </label>
+            </Show>
+          </dd>
           <dt>Auto hibernate</dt>
           <dd>{timeout(m().autoHibernateSecs)}</dd>
           <dt>Source</dt>
