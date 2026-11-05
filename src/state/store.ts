@@ -126,6 +126,13 @@ interface AppState {
     toasts: Toast[];
     collapsed: Record<string, boolean>;
     filter: string;
+    /** The command palette (⌘K / Ctrl+K) is open. */
+    palette: boolean;
+    /** An event to bring into view once the agent's transcript shows; `seq`
+     * tells two requests for the same event apart. */
+    focusEvent: { agentId: string; event: number; seq: number } | null;
+    /** The preset the presets view should show. */
+    presetFocus: string | null;
   };
 }
 
@@ -209,6 +216,9 @@ export const [state, setState] = createStore<AppState>({
     toasts: [],
     collapsed: {},
     filter: "",
+    palette: false,
+    focusEvent: null,
+    presetFocus: null,
   },
 });
 
@@ -756,7 +766,30 @@ export const actions = {
     setState("ui", "collapsed", id, (v) => !v);
   },
   openDialog(d: Dialog) {
+    setState("ui", "palette", false);
     setState("ui", "dialog", d);
+  },
+  /** The palette does not open over a dialog. */
+  openPalette() {
+    if (state.phase === "ready" && !state.ui.dialog) setState("ui", "palette", true);
+  },
+  closePalette() {
+    setState("ui", "palette", false);
+  },
+  /** Opens the agent's chat with one event of its transcript in view. */
+  openAgentAt(agentId: string, event: number) {
+    actions.select({ kind: "agent", id: agentId });
+    setState("ui", "agentTab", "chat");
+    setState("ui", "focusEvent", { agentId, event, seq: (state.ui.focusEvent?.seq ?? 0) + 1 });
+  },
+  clearFocusEvent() {
+    setState("ui", "focusEvent", null);
+  },
+  openPreset(id: string) {
+    actions.select({ kind: "presets" });
+    // Through null, so picking the same preset again still reaches the view.
+    setState("ui", "presetFocus", null);
+    setState("ui", "presetFocus", id);
   },
   closeDialog() {
     setState("ui", "dialog", null);

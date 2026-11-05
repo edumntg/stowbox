@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch } from "solid-js";
+import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
 import { actions, agentById, machineById, selectedAgent, selectedMachine, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import AgentView from "./AgentView";
@@ -8,6 +8,7 @@ import PresetsView from "./PresetsView";
 import Dialogs from "./Dialogs";
 import Inspector from "./Inspector";
 import Onboarding from "./Onboarding";
+import Palette, { paletteShortcut } from "./Palette";
 import Sidebar from "./Sidebar";
 import Toasts from "./Toasts";
 import { AgentDot, BrandMark, Dot, isMac } from "./common";
@@ -62,6 +63,9 @@ const Topbar = () => (
       Stowbox
     </span>
     <div class="topbar-right">
+      <button class="icon-btn" title={`Search and commands (${paletteShortcut})`} aria-label="Search and commands" aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"} onClick={() => actions.openPalette()}>
+        <I.Search />
+      </button>
       <button class="icon-btn" title={state.ui.theme === "dark" ? "Light theme" : "Dark theme"} aria-label="Toggle theme" onClick={() => actions.setTheme(state.ui.theme === "dark" ? "light" : "dark")}>
         <Show when={state.ui.theme === "dark"} fallback={<I.Moon />}>
           <I.Sun />
@@ -145,7 +149,23 @@ const Shell = () => {
   );
 };
 
+/** ⌘K on macOS, Ctrl+K elsewhere, toggles the palette. Inside the terminal
+ * Ctrl+K belongs to the shell (kill to the end of the line), so it is left
+ * alone there; ⌘K types nothing in a terminal and works everywhere. */
+function onShortcut(e: KeyboardEvent) {
+  if (e.altKey || e.shiftKey || e.key.toLowerCase() !== "k") return;
+  if (!(isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
+  if (!isMac && e.target instanceof Element && e.target.closest(".xterm")) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (state.ui.palette) actions.closePalette();
+  else actions.openPalette();
+}
+
 export default function App() {
+  // Capture phase: the terminal stops the keys it handles from bubbling.
+  onMount(() => document.addEventListener("keydown", onShortcut, true));
+  onCleanup(() => document.removeEventListener("keydown", onShortcut, true));
   return (
     <>
       <Switch>
@@ -168,6 +188,9 @@ export default function App() {
         </Match>
       </Switch>
       <Dialogs />
+      <Show when={state.ui.palette}>
+        <Palette />
+      </Show>
       <Toasts />
     </>
   );

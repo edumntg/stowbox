@@ -162,6 +162,22 @@ few tens of megabytes instead of an Electron process per window.
   the notification server reports clicks. The dock or taskbar badge counts
   notifications shown since the window was last in front (macOS and Linux
   desktops that support badges).
+- **Command palette and transcript search**: ⌘K on macOS, Ctrl+K
+  elsewhere (or the search button in the top bar) opens one list to jump to
+  Fleet, a box, an agent, a setup preset or Settings, and to run the common
+  actions: new box, new agent, open a box's terminal, Changes, Setup or
+  Details, standby, resume and the other power actions, open in VS Code or
+  Cursor, theme and panels. Matching is fuzzy (words in any order, letters in
+  order). From two characters on it also searches every agent's transcript
+  on this computer, case-insensitively: messages, replies, reasoning, tool
+  calls and their output, errors. Each match shows the agent, its box, the
+  turn and a snippet with the match marked; Enter opens the agent's chat
+  scrolled to that message, with a folded tool card opened. Transcripts are
+  read line by line and files without the text are skipped without parsing;
+  results stop at 5 per agent (its latest) and 50 in all. Transcript lines
+  carry no time of their own, so the time shown is when the agent last did
+  something. Inside the terminal Ctrl+K stays the shell's (kill to the end
+  of the line); ⌘K types nothing there and works everywhere.
 - Light and dark themes, keyboard reachable, honest empty, loading and error
   states everywhere.
 

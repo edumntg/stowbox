@@ -6,7 +6,7 @@ import { AgentDot, Dot } from "./common";
 import { diffFor } from "./diff";
 import { agentStatusLabel, duration, fileSize, isBusy, statusLabel, tokens, usd } from "./format";
 import { renderMarkdown } from "./markdown";
-import { toItems, toolSummary, type Item } from "./transcript";
+import { itemIndexForEvent, toItems, toolSummary, type Item } from "./transcript";
 
 const Changes = lazy(() => import("./Changes"));
 
@@ -59,6 +59,30 @@ const Transcript = (p: { agent: AgentMeta }) => {
     ),
   );
 
+  // An event picked in the palette's transcript search: bring its item into
+  // view once it is rendered, mark it for a moment, open a folded tool card.
+  createEffect(
+    on(
+      () => [state.ui.focusEvent, events()] as const,
+      ([f, evs]) => {
+        if (!f || f.agentId !== p.agent.id || !evs) return;
+        const k = itemIndexForEvent(evs, f.event);
+        actions.clearFocusEvent();
+        if (k < 0) return;
+        requestAnimationFrame(() => {
+          const el = scroller.querySelector(`.chat-item[data-item="${k}"]`)?.firstElementChild as HTMLElement | null | undefined;
+          if (!el) return;
+          if (el instanceof HTMLDetailsElement) el.open = true;
+          el.scrollIntoView({ block: "center" });
+          el.classList.remove("found");
+          void el.offsetWidth;
+          el.classList.add("found");
+          window.setTimeout(() => el.classList.remove("found"), 1600);
+        });
+      },
+    ),
+  );
+
   return (
     <div class="transcript scroll" ref={scroller}>
       <Show when={events()} fallback={<div class="chat-empty">Loading the transcript…</div>}>
@@ -77,56 +101,60 @@ const Transcript = (p: { agent: AgentMeta }) => {
         >
           <div class="chat">
             <For each={items()}>
-              {(it) => {
-                switch (it.kind) {
-                  case "user":
-                    return (
-                      <div class="msg-user">
-                        <Show when={it.text}>{it.text}</Show>
-                        <Show when={it.attachments.length}>
-                          <FileList files={it.attachments} />
-                        </Show>
-                      </div>
-                    );
-                  case "text":
-                    return <div class="msg-text" innerHTML={renderMarkdown(it.text)} />;
-                  case "thinking":
-                    return (
-                      <details class="msg-thinking">
-                        <summary>Reasoning</summary>
-                        {it.text}
-                      </details>
-                    );
-                  case "tool":
-                    return <ToolCard item={it} />;
-                  case "result":
-                    return (
-                      <div class="turn-result" classList={{ failed: !it.ok }}>
-                        <Show when={it.ok} fallback={<I.Warning />}>
-                          <I.Check />
-                        </Show>
-                        <span>{it.ok ? "Turn finished" : `Turn failed: ${it.message || it.subtype.replace(/_/g, " ")}`}</span>
-                        <Show when={it.durationMs}>
-                          <span>{duration(it.durationMs!)}</span>
-                        </Show>
-                        <Show when={it.costUsd != null}>
-                          <span class="mono">{usd(it.costUsd!)}</span>
-                        </Show>
-                        <Show when={it.turns}>
-                          <span>{it.turns} model turns</span>
-                        </Show>
-                      </div>
-                    );
-                  case "note":
-                    return <div class="msg-note">{it.text}</div>;
-                  case "exit":
-                    return (
-                      <Show when={it.code !== 0}>
-                        <div class="msg-note">{it.code === -1 ? "Stopped." : `Process exited with code ${it.code}.`}</div>
-                      </Show>
-                    );
-                }
-              }}
+              {(it, i) => (
+                <div class="chat-item" data-item={i()}>
+                  {(() => {
+                    switch (it.kind) {
+                      case "user":
+                        return (
+                          <div class="msg-user">
+                            <Show when={it.text}>{it.text}</Show>
+                            <Show when={it.attachments.length}>
+                              <FileList files={it.attachments} />
+                            </Show>
+                          </div>
+                        );
+                      case "text":
+                        return <div class="msg-text" innerHTML={renderMarkdown(it.text)} />;
+                      case "thinking":
+                        return (
+                          <details class="msg-thinking">
+                            <summary>Reasoning</summary>
+                            {it.text}
+                          </details>
+                        );
+                      case "tool":
+                        return <ToolCard item={it} />;
+                      case "result":
+                        return (
+                          <div class="turn-result" classList={{ failed: !it.ok }}>
+                            <Show when={it.ok} fallback={<I.Warning />}>
+                              <I.Check />
+                            </Show>
+                            <span>{it.ok ? "Turn finished" : `Turn failed: ${it.message || it.subtype.replace(/_/g, " ")}`}</span>
+                            <Show when={it.durationMs}>
+                              <span>{duration(it.durationMs!)}</span>
+                            </Show>
+                            <Show when={it.costUsd != null}>
+                              <span class="mono">{usd(it.costUsd!)}</span>
+                            </Show>
+                            <Show when={it.turns}>
+                              <span>{it.turns} model turns</span>
+                            </Show>
+                          </div>
+                        );
+                      case "note":
+                        return <div class="msg-note">{it.text}</div>;
+                      case "exit":
+                        return (
+                          <Show when={it.code !== 0}>
+                            <div class="msg-note">{it.code === -1 ? "Stopped." : `Process exited with code ${it.code}.`}</div>
+                          </Show>
+                        );
+                    }
+                  })()}
+                </div>
+              )}
             </For>
             <Show when={live()}>
               <div class="msg-text msg-live" innerHTML={renderMarkdown(live())} />

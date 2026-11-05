@@ -119,6 +119,20 @@ shadows, except the floating shadow under dialogs and toasts.
   When the box cannot be opened (stopped, no SSH port yet) the list gives
   way to the reason in red and Open is disabled. The result is an info
   toast naming what changed.
+- Command palette (⌘K / Ctrl+K, and a search icon in the top bar): a
+  620px panel near the top of the window over the dimmed app, one input
+  with no ring of its own, then rows of 12px text: an icon or the state
+  square, the label with the matched letters in semibold, a muted detail,
+  and the kind (Action, View, Box, Agent, Preset) right-aligned. The
+  active row has the hover background; the mouse and the arrow keys move
+  the same highlight. With no query it lists what fits the open box or
+  agent first, then views, boxes and recent agents; with one, "Best
+  matches" then "In transcripts": the agent's square and title, "box ·
+  turn n · kind" muted, the agent's last activity right, and a two-line
+  snippet with the match in semibold and underlined in the ring grey, no
+  colour. Empty, searching and failed states are one muted line in the
+  list. A footer names the keys. Opening a match outlines the message in
+  the ring grey for a moment, which fades.
 - A 24px status bar: account, balance, how many boxes are running and the
   combined hourly estimate.
 - Settings dialog: a key/value list. Notifications are two checkboxes

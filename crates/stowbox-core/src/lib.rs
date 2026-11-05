@@ -11,6 +11,7 @@
 //! - `metrics`: CPU, memory, disk and uptime sampled inside a running box.
 //! - `notify`: which agent and setup outcomes deserve a desktop notification.
 //! - `provision`: setup presets (commands and secrets) run in a new box.
+//! - `search`: full-text search across the persisted transcripts.
 //! - `ssh`: the key, `~/.ssh/config` block and editor links that open a box
 //!   in VS Code or Cursor over Remote-SSH.
 //! - `store`: on-disk persistence of agent sessions and transcripts.
@@ -27,6 +28,7 @@ pub mod metrics;
 pub mod notify;
 pub mod provider;
 pub mod provision;
+pub mod search;
 pub mod ssh;
 pub mod store;
 #[cfg(test)]

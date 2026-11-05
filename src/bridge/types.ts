@@ -425,6 +425,31 @@ export type SpendCheck = (
   | { basis: "projected"; hourlyMicro: number; why: string }
 ) & { amountMicro: number; limitMicro: number; currency: string; over: boolean };
 
+/** Mirrors stowbox_core::search::HitKind: where in the event the match is. */
+export type HitKind = "user" | "assistant" | "thinking" | "tool-call" | "tool-output" | "error" | "note";
+
+/** Mirrors stowbox_core::search::SearchHit. `event` indexes the agent's
+ * events as `agentEvents` returns them; `turn` counts user messages up to
+ * it. `before` starts and `after` ends with "…" when the text was cut. */
+export interface SearchHit {
+  agentId: string;
+  event: number;
+  turn: number;
+  kind: HitKind;
+  before: string;
+  matched: string;
+  after: string;
+}
+
+export interface SearchResults {
+  /** Newest agent first; within an agent, its latest matches first. */
+  hits: SearchHit[];
+  /** More matches exist than were returned. */
+  truncated: boolean;
+  /** Transcripts read. */
+  scanned: number;
+}
+
 export interface Api {
   providerStatus(): Promise<ProviderStatus>;
   setApiKey(key: string): Promise<Account>;
@@ -450,6 +475,8 @@ export interface Api {
   listAgents(): Promise<AgentMeta[]>;
   createAgent(spec: NewAgent): Promise<AgentMeta>;
   agentEvents(id: string): Promise<AgentEvent[]>;
+  /** Case-insensitive full-text search over every agent's transcript. */
+  searchTranscripts(query: string, limit?: number): Promise<SearchResults>;
   agentSend(id: string, text: string, attachments?: Attachment[]): Promise<void>;
   /** Queues a message for when the running turn ends; sent now if no turn runs and the queue is not paused. */
   agentQueueAdd(id: string, text: string, attachments?: Attachment[]): Promise<AgentMeta>;

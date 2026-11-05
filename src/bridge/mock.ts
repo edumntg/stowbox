@@ -18,6 +18,8 @@ import type {
   Notice,
   NoticeTarget,
   Preset,
+  SearchHit,
+  SearchResults,
   SetupPush,
   SshPlan,
   SetupRun,
@@ -210,6 +212,70 @@ const transcripts: Record<string, AgentEvent[]> = {
     { type: "exit", code: 1 },
   ],
 };
+
+/** The same rules as stowbox_core::search, over the mock transcripts. */
+function eventTexts(ev: AgentEvent): [SearchHit["kind"], string][] {
+  const strings = (v: unknown): string[] =>
+    typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === "object" ? Object.values(v).flatMap(strings) : [];
+  switch (ev.type) {
+    case "user_message":
+      return [["user", ev.text]];
+    case "assistant":
+      return ev.blocks.map((b): [SearchHit["kind"], string] =>
+        b.type === "text" ? ["assistant", b.text] : b.type === "thinking" ? ["thinking", b.text] : ["tool-call", [b.name, ...strings(b.input)].join(" ")],
+      );
+    case "tool_result":
+      return [["tool-output", ev.content]];
+    case "result":
+      return !ev.ok && ev.message ? [["error", ev.message]] : [];
+    case "stderr":
+      return [["note", ev.text]];
+    default:
+      return [];
+  }
+}
+
+function mockSnippet(text: string, start: number, end: number): Pick<SearchHit, "before" | "matched" | "after"> {
+  const collapse = (s: string) => s.split(/\s+/).filter(Boolean).join(" ");
+  const head = text.slice(0, start);
+  let before = head.length > 60 ? "…" + collapse(head.slice(-60)) : collapse(head);
+  if (/\s$/.test(head) && before) before += " ";
+  const matched = collapse(text.slice(start, end));
+  const tail = text.slice(end);
+  const room = Math.max(0, 180 - before.length - matched.length);
+  const rest = tail.trimStart();
+  const after = (/^\s/.test(tail) && rest ? " " : "") + (rest.length > room ? collapse(rest.slice(0, room)) + "…" : collapse(rest));
+  return { before, matched, after };
+}
+
+function searchMock(query: string, limit: number): SearchResults {
+  const q = query.trim().slice(0, 200).toLowerCase();
+  const out: SearchResults = { hits: [], truncated: false, scanned: 0 };
+  if (!q) return out;
+  for (const a of [...agents].sort((x, y) => y.updatedAt - x.updatedAt)) {
+    const events = transcripts[a.id];
+    if (!events) continue;
+    out.scanned++;
+    let turn = 0;
+    const found: SearchHit[] = [];
+    events.forEach((ev, i) => {
+      if (ev.type === "user_message") turn++;
+      for (const [kind, text] of eventTexts(ev)) {
+        const at = text.toLowerCase().indexOf(q);
+        if (at < 0) continue;
+        found.push({ agentId: a.id, event: i, turn, kind, ...mockSnippet(text, at, at + q.length) });
+        break;
+      }
+    });
+    if (found.length > 5) out.truncated = true;
+    const latest = found.reverse().slice(0, 5);
+    const room = limit - out.hits.length;
+    if (latest.length > room) out.truncated = true;
+    out.hits.push(...latest.slice(0, room));
+    if (out.hits.length >= limit) break;
+  }
+  return out;
+}
 
 const listeners = new Set<(p: AgentPush) => void>();
 // The same rule as stowbox_core::notify: an outcome notifies when the status
@@ -866,6 +932,10 @@ export const mockApi: Api = {
     // A copy: the store keeps what it gets and pushes live events onto it,
     // so handing out this array made every event show up twice.
     return [...(transcripts[id] ?? [])];
+  },
+  async searchTranscripts(query, limit) {
+    await sleep(120);
+    return searchMock(query, Math.min(Math.max(limit ?? 50, 1), 200));
   },
   async agentSend(id, text, attachments) {
     const a = agents.find((a) => a.id === id);
