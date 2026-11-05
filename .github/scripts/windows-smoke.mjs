@@ -1,12 +1,11 @@
-// Drives the real Stowbox build on Windows over WebDriver (msedgedriver,
-// which starts the exe and attaches to its WebView2), with no API
+// Drives the real Stowbox build on Windows over WebDriver (msedgedriver
+// attached to the exe's WebView2), with no API
 // key configured: the onboarding must render, a malformed key must get the
 // app's own validation message, and a well-formed but invalid key must come
 // back with boxd's refusal while the app stays on onboarding. Screenshots of
 // the webview and of the whole screen (to see the native window frame) go to
 // the output directory with msedgedriver's verbose log. No dependencies:
-// WebDriver is plain HTTP. tauri-driver is not needed on Windows: all it
-// does there is turn `tauri:options` into the `ms:edgeOptions` sent below.
+// WebDriver is plain HTTP, and tauri-driver is not used (see below).
 //
 //   node windows-smoke.mjs <path to stowbox.exe> <path to msedgedriver.exe> <output dir>
 
@@ -80,13 +79,25 @@ function windowInfo() {
   return Array.isArray(v) ? v : [v];
 }
 
+// The app is started here with WebView2's DevTools port open, and
+// msedgedriver attaches to it. Letting msedgedriver start the exe (what
+// tauri-driver asks for) failed on the runner: its log shows the exe
+// launched, then 60 s waiting for a DevToolsActivePort file that never
+// appeared, while the same exe opened its window when started directly.
+const DEVTOOLS = 9222;
+const appProc = spawn(resolve(app), [], {
+  stdio: "inherit",
+  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${DEVTOOLS}` },
+});
 const driver = spawn(nativeDriver, ["--port=4444", "--verbose", `--log-path=${join(out, "msedgedriver.log")}`], { stdio: "inherit" });
 let failed = false;
 try {
   await until("msedgedriver", async () => (await fetch(base + "/status")).ok, 30000);
+  const version = await until("WebView2's DevTools port", async () => (await fetch(`http://127.0.0.1:${DEVTOOLS}/json/version`)).json(), 60000);
+  console.log(`attached to ${version.Browser}`);
   session = (
     await wd("POST", "/session", {
-      capabilities: { alwaysMatch: { browserName: "webview2", "ms:edgeChromium": true, "ms:edgeOptions": { binary: resolve(app), args: [] } } },
+      capabilities: { alwaysMatch: { browserName: "webview2", "ms:edgeChromium": true, "ms:edgeOptions": { debuggerAddress: `127.0.0.1:${DEVTOOLS}` } } },
     })
   ).sessionId;
   console.log(`session ${session}`);
@@ -140,6 +151,7 @@ try {
 } finally {
   if (session) await wd("DELETE", `/session/${session}`).catch(() => undefined);
   driver.kill();
+  appProc.kill();
 }
 
 writeFileSync(join(out, "results.json"), JSON.stringify(results, null, 2));

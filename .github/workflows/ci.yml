@@ -48,8 +48,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # --show-output: a test that skips for a missing tool says so in the log.
       - name: cargo test -p stowbox-core
-        run: cargo test -p stowbox-core
+        run: cargo test -p stowbox-core -- --show-output
       # The shell embeds ../dist at compile time; an empty page is enough to
       # type-check it without building the frontend here.
       - name: Placeholder frontend

@@ -75,7 +75,10 @@ jobs:
           & .github\scripts\screen.ps1 (Join-Path (Resolve-Path smoke) '0-launched-screen.png')
           if (-not $info -or $info.MainWindowTitle -ne 'Stowbox') { Write-Error 'stowbox.exe is not running with a window titled Stowbox' }
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
+          # WebView2's own processes outlive the exe for a moment; a new
+          # start would join them and ignore the DevTools port it asks for.
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
 
       - name: Drive the app
         run: node .github/scripts/windows-smoke.mjs target/release/stowbox.exe "$env:MSEDGEDRIVER" smoke
