@@ -257,6 +257,7 @@ mod tests {
                 StepRun { command: "make".into(), state: StepState::Ok, exit_code: Some(0) },
             ],
             secret_names: vec![],
+            variables: vec![],
             secrets_written: false,
             output: String::new(),
             started_at: 0,

@@ -13,6 +13,16 @@
 //! steps run in one shell, one after another, with the secrets exported;
 //! `cd` and `export` carry over from one step to the next, and the first
 //! step that exits non-zero stops the run.
+//!
+//! A command may hold `{{name}}` placeholders (`git clone {{repo}}`). The
+//! value for each one is asked for when the preset runs, falling back to the
+//! preset's default, and is inserted as one single-quoted shell word: write
+//! the placeholder outside quotes (`cd ~/{{dir}}`, not `cd "~/{{dir}}"`).
+//! Only `{{` + a valid variable name + `}}` is a placeholder (spaces inside
+//! the braces are allowed); anything else between braces, such as a Go
+//! template `{{.State}}` in a `docker inspect -f` command, is left as is.
+//! Variable values are not secrets: they are kept in the run record and
+//! show up in the log.
 
 use crate::agent::LineBuffer;
 use crate::provider::Provider;
@@ -35,8 +45,29 @@ pub struct Preset {
     pub commands: Vec<String>,
     /// Names only. Values live in the OS keychain on the desktop side.
     pub secret_names: Vec<String>,
+    /// The `{{name}}` placeholders found in `commands`, in order of first
+    /// use, with their defaults. Older presets have none stored.
+    #[serde(default)]
+    pub variables: Vec<Variable>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Variable {
+    pub name: String,
+    /// Empty when there is none, which makes a value required at run time.
+    #[serde(default)]
+    pub default: String,
+}
+
+/// A value a run used for one variable. Kept in the run record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariableValue {
+    pub name: String,
+    pub value: String,
 }
 
 /// Environment variable names a POSIX shell accepts in `export`.
@@ -73,6 +104,99 @@ pub fn validate(name: &str, commands: &[String], secret_names: &[String]) -> Res
 
 fn single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Byte ranges and names of the `{{name}}` placeholders in one command.
+fn placeholders(cmd: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(off) = cmd[i..].find("{{") {
+        let start = i + off;
+        let Some(len) = cmd[start + 2..].find("}}") else { break };
+        let name = cmd[start + 2..start + 2 + len].trim_matches(' ');
+        if valid_secret_name(name) {
+            let end = start + 2 + len + 2;
+            out.push((start..end, name));
+            i = end;
+        } else {
+            // `{` is one byte, so this stays on a char boundary.
+            i = start + 1;
+        }
+    }
+    out
+}
+
+/// The variable names used in `commands`, once each, in order of first use.
+pub fn variables_in(commands: &[String]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for c in commands {
+        for (_, n) in placeholders(c) {
+            if !names.iter().any(|x| x == n) {
+                names.push(n.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// The variables a preset with these commands has, keeping the default
+/// given for each name. Defaults for names no command uses are dropped.
+pub fn preset_variables(commands: &[String], defaults: &[Variable]) -> Vec<Variable> {
+    variables_in(commands)
+        .into_iter()
+        .map(|name| {
+            let default = defaults.iter().find(|d| d.name == name).map(|d| d.default.clone()).unwrap_or_default();
+            Variable { name, default }
+        })
+        .collect()
+}
+
+/// Replaces every placeholder with its value as one single-quoted shell
+/// word. A placeholder without a value is an error.
+pub fn substitute(cmd: &str, values: &[VariableValue]) -> Result<String> {
+    let mut out = String::with_capacity(cmd.len());
+    let mut last = 0;
+    for (range, name) in placeholders(cmd) {
+        let Some(v) = values.iter().find(|v| v.name == name) else {
+            return Err(Error::Provider(format!("{{{{{name}}}}} has no value")));
+        };
+        out.push_str(&cmd[last..range.start]);
+        out.push_str(&single_quote(&v.value));
+        last = range.end;
+    }
+    out.push_str(&cmd[last..]);
+    Ok(out)
+}
+
+/// The commands of one run with the values filled in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Prepared {
+    pub commands: Vec<String>,
+    pub variables: Vec<VariableValue>,
+}
+
+/// Picks a value for every variable the preset's commands use: the one
+/// given, else the preset's default. An empty value counts as not given.
+/// A value for a name no command uses is an error, so is a variable left
+/// without a value.
+pub fn prepare(preset: &Preset, given: &std::collections::HashMap<String, String>) -> Result<Prepared> {
+    let names = variables_in(&preset.commands);
+    let mut unknown: Vec<&String> = given.keys().filter(|k| !names.contains(k)).collect();
+    unknown.sort();
+    if let Some(k) = unknown.first() {
+        return Err(Error::Provider(format!("\"{}\" has no variable {k}", preset.name)));
+    }
+    let mut variables = Vec::with_capacity(names.len());
+    for name in names {
+        let default = preset.variables.iter().find(|v| v.name == name).map(|v| v.default.as_str()).unwrap_or("");
+        let value = given.get(&name).map(String::as_str).filter(|v| !v.is_empty()).unwrap_or(default);
+        if value.is_empty() {
+            return Err(Error::Provider(format!("give {name} a value")));
+        }
+        variables.push(VariableValue { name, value: value.to_string() });
+    }
+    let commands = preset.commands.iter().map(|c| substitute(c, &variables)).collect::<Result<Vec<_>>>()?;
+    Ok(Prepared { commands, variables })
 }
 
 /// The script fed to `bash -s` inside the box. `nonce` makes the progress
@@ -218,6 +342,9 @@ pub struct ProvisionRun {
     pub steps: Vec<StepRun>,
     /// Names of the secrets written into the box; never the values.
     pub secret_names: Vec<String>,
+    /// The values the `{{name}}` placeholders got in this run.
+    #[serde(default)]
+    pub variables: Vec<VariableValue>,
     pub secrets_written: bool,
     pub output: String,
     pub started_at: i64,
@@ -239,7 +366,9 @@ pub enum RunEvent {
 }
 
 impl ProvisionRun {
-    pub fn new(id: String, machine: &Machine, preset: &Preset, now_ms: i64) -> Self {
+    /// `prepared` holds the commands with their values filled in, as they
+    /// will run; the steps show those.
+    pub fn new(id: String, machine: &Machine, preset: &Preset, prepared: &Prepared, now_ms: i64) -> Self {
         Self {
             id,
             machine_id: machine.id.clone(),
@@ -248,7 +377,7 @@ impl ProvisionRun {
             preset_name: preset.name.clone(),
             status: RunStatus::Waiting,
             error: None,
-            steps: preset
+            steps: prepared
                 .commands
                 .iter()
                 .map(|c| StepRun {
@@ -258,6 +387,7 @@ impl ProvisionRun {
                 })
                 .collect(),
             secret_names: preset.secret_names.clone(),
+            variables: prepared.variables.clone(),
             secrets_written: false,
             output: String::new(),
             started_at: now_ms,
@@ -585,6 +715,105 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    fn preset_with(commands: &[&str], variables: &[(&str, &str)]) -> Preset {
+        Preset {
+            id: "p1".into(),
+            name: "main".into(),
+            commands: commands.iter().map(|c| c.to_string()).collect(),
+            secret_names: vec![],
+            variables: variables.iter().map(|(n, d)| Variable { name: n.to_string(), default: d.to_string() }).collect(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn given(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn finds_placeholders_in_order_once() {
+        let cmds = vec![
+            "git clone {{repo}} ~/app && cd ~/app".to_string(),
+            "git checkout {{ branch }} && echo {{repo}}".to_string(),
+            "docker inspect -f '{{.State.Running}}' db {{json .}} {{1x}} {{a-b}} {{}}".to_string(),
+            "echo {{{inner}}} {{unclosed".to_string(),
+        ];
+        assert_eq!(variables_in(&cmds), vec!["repo", "branch", "inner"]);
+        assert!(variables_in(&["echo ${HOME} {x}".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn preset_variables_keep_defaults_by_name() {
+        let cmds = vec!["git checkout {{branch}} {{repo}}".to_string()];
+        let defaults = vec![
+            Variable { name: "repo".into(), default: "r".into() },
+            Variable { name: "gone".into(), default: "x".into() },
+        ];
+        assert_eq!(
+            preset_variables(&cmds, &defaults),
+            vec![Variable { name: "branch".into(), default: String::new() }, Variable { name: "repo".into(), default: "r".into() }]
+        );
+    }
+
+    #[test]
+    fn substitute_single_quotes_values() {
+        let v = vec![VariableValue { name: "b".into(), value: "it's $(rm -rf ~); `x`".into() }];
+        assert_eq!(substitute("git checkout {{b}} && echo {{ b }}!", &v).unwrap(), r"git checkout 'it'\''s $(rm -rf ~); `x`' && echo 'it'\''s $(rm -rf ~); `x`'!");
+        assert_eq!(substitute("echo '{{.Name}}' {{}}", &[]).unwrap(), "echo '{{.Name}}' {{}}");
+        let e = substitute("echo {{missing}}", &v).unwrap_err().to_string();
+        assert!(e.contains("{{missing}} has no value"), "{e}");
+    }
+
+    #[test]
+    fn prepare_uses_given_then_default_and_rejects_the_rest() {
+        let p = preset_with(&["git clone {{repo}}", "git checkout {{branch}}"], &[("branch", "main"), ("repo", "")]);
+        let r = prepare(&p, &given(&[("repo", "https://x/y.git")])).unwrap();
+        assert_eq!(r.commands, vec!["git clone 'https://x/y.git'", "git checkout 'main'"]);
+        assert_eq!(
+            r.variables,
+            vec![VariableValue { name: "repo".into(), value: "https://x/y.git".into() }, VariableValue { name: "branch".into(), value: "main".into() }]
+        );
+        // A value given beats the default; an empty one falls back to it.
+        let r = prepare(&p, &given(&[("repo", "a"), ("branch", "dev")])).unwrap();
+        assert_eq!(r.commands[1], "git checkout 'dev'");
+        let r = prepare(&p, &given(&[("repo", "a"), ("branch", "")])).unwrap();
+        assert_eq!(r.commands[1], "git checkout 'main'");
+        // No value and no default.
+        assert_eq!(prepare(&p, &given(&[])).unwrap_err().to_string(), Error::Provider("give repo a value".into()).to_string());
+        assert!(prepare(&p, &given(&[("repo", "")])).is_err());
+        // A name no command uses.
+        let e = prepare(&p, &given(&[("repo", "a"), ("nope", "1")])).unwrap_err().to_string();
+        assert!(e.contains("has no variable nope"), "{e}");
+        // A placeholder the stored list misses (an older preset) is still asked for.
+        let old = preset_with(&["echo {{x}}"], &[]);
+        assert!(prepare(&old, &given(&[])).is_err());
+        assert_eq!(prepare(&old, &given(&[("x", "1")])).unwrap().commands, vec!["echo '1'"]);
+    }
+
+    #[test]
+    fn older_records_still_load() {
+        let p: Preset = serde_json::from_str(r#"{"id":"p","name":"n","commands":["ls"],"secretNames":[],"createdAt":1,"updatedAt":2}"#).unwrap();
+        assert!(p.variables.is_empty());
+        let r: ProvisionRun = serde_json::from_str(
+            r#"{"id":"r","machineId":"m","machineName":"b","presetId":"p","presetName":"n","status":"done","error":null,"steps":[],"secretNames":[],"secretsWritten":true,"output":"","startedAt":1,"finishedAt":2}"#,
+        )
+        .unwrap();
+        assert!(r.variables.is_empty());
+    }
+
+    #[test]
+    fn substituted_values_reach_bash_verbatim() {
+        if std::process::Command::new("bash").arg("-c").arg("true").status().is_err() {
+            return;
+        }
+        let nasty = "a'b \"c\" $HOME `id` $(echo no); *\nline2 \\";
+        let p = preset_with(&["printf '[%s]\\n' {{v}} x{{v}}y"], &[]);
+        let r = prepare(&p, &given(&[("v", nasty)])).unwrap();
+        let out = std::process::Command::new("bash").arg("-c").arg(&r.commands[0]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("[{nasty}]\n[x{nasty}y]\n"));
+    }
+
     #[test]
     fn markers_need_the_nonce() {
         assert_eq!(
@@ -647,10 +876,12 @@ mod tests {
             name: "main".into(),
             commands: vec!["a".into(), "b".into(), "c".into()],
             secret_names: vec!["TOKEN".into()],
+            variables: vec![],
             created_at: 0,
             updated_at: 0,
         };
-        ProvisionRun::new("r1".into(), &m, &p, 10)
+        let prepared = prepare(&p, &Default::default()).unwrap();
+        ProvisionRun::new("r1".into(), &m, &p, &prepared, 10)
     }
 
     #[test]

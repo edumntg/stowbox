@@ -2534,3 +2534,25 @@ select.input {
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
 }
+
+/* values for a preset's {{name}} variables, in New box and Run preset */
+
+.var-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.var-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 6px;
+  align-items: center;
+}
+
+.var-row label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  color: var(--foreground);
+}

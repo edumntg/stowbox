@@ -1,5 +1,6 @@
 import { For, Index, Show, createMemo, createSignal, untrack } from "solid-js";
 import type { Preset } from "../bridge/types";
+import { presetVariables, variablesIn } from "../bridge/variables";
 import { actions, state } from "../state/store";
 import * as I from "../icons";
 import { relTime } from "./format";
@@ -24,6 +25,10 @@ const Editor = (p: { preset: Preset | null; onSaved: (id: string) => void }) => 
   const [secrets, setSecrets] = createSignal<SecretRow[]>(
     (p.preset?.secrets ?? []).map((s) => ({ name: s.name, value: "", stored: s.hasValue, reveal: false })),
   );
+  // Defaults by name. Names come from the commands as they are typed, so a
+  // default survives a rename that is undone and is dropped on save if unused.
+  const [defaults, setDefaults] = createSignal<Record<string, string>>(Object.fromEntries((p.preset ? presetVariables(p.preset) : []).map((v) => [v.name, v.default])));
+  const variables = createMemo(() => variablesIn(commands()));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
 
@@ -48,6 +53,7 @@ const Editor = (p: { preset: Preset | null; onSaved: (id: string) => void }) => 
         name: name(),
         commands: commands(),
         secrets: secrets().map((s) => ({ name: s.name.trim(), value: s.value || null })),
+        variables: variables().map((n) => ({ name: n, default: defaults()[n] ?? "" })),
       });
       setSecrets(saved.secrets.map((s) => ({ name: s.name, value: "", stored: s.hasValue, reveal: false })));
       p.onSaved(saved.id);
@@ -159,6 +165,40 @@ const Editor = (p: { preset: Preset | null; onSaved: (id: string) => void }) => 
         </div>
       </section>
 
+      <section class="field">
+        <span class="label">Variables</span>
+        <p class="hint">
+          Write <span class="mono">{"{{name}}"}</span> in a command to ask for a value each time the preset runs. The value goes in as one single-quoted word, so
+          keep the placeholder outside quotes: <span class="mono">{"git checkout {{branch}}"}</span>. Leave the default empty to make a value required. Values are
+          not secret: they show in the setup log.
+        </p>
+        <Show when={variables().length > 0}>
+          <div class="var-rows">
+            <For each={variables()}>
+              {(n) => (
+                <div class="var-row">
+                  <label class="mono" for={`pe-var-${n}`}>
+                    {n}
+                  </label>
+                  <input
+                    id={`pe-var-${n}`}
+                    class="input mono"
+                    spellcheck={false}
+                    autocomplete="off"
+                    placeholder="no default: asked every run"
+                    value={defaults()[n] ?? ""}
+                    onInput={(e) => {
+                      const v = e.currentTarget.value;
+                      setDefaults((d) => ({ ...d, [n]: v }));
+                    }}
+                  />
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </section>
+
       <Show when={error()}>
         <div class="form-error">{error()}</div>
       </Show>
@@ -220,6 +260,7 @@ export default function PresetsView() {
                         <span class="row-sub">
                           {p.commands.length} {p.commands.length === 1 ? "command" : "commands"} · {p.secretNames.length}{" "}
                           {p.secretNames.length === 1 ? "secret" : "secrets"}
+                          {presetVariables(p).length > 0 ? ` · ${presetVariables(p).length} ${presetVariables(p).length === 1 ? "variable" : "variables"}` : ""}
                         </span>
                       </button>
                     </li>

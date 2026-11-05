@@ -127,6 +127,7 @@ mod tests {
             name: "main commands".into(),
             commands: vec!["git clone https://example.com/r.git".into()],
             secret_names: vec!["GITHUB_TOKEN".into()],
+            variables: vec![crate::provision::Variable { name: "branch".into(), default: "main".into() }],
             created_at: 1,
             updated_at: 2,
         };

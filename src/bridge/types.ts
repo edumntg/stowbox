@@ -128,10 +128,21 @@ export interface Preset {
   name: string;
   commands: string[];
   secretNames: string[];
+  /** `{{name}}` placeholders in the commands; an empty default means a
+   * value is required when the preset runs. */
+  variables: PresetVariable[];
   createdAt: number;
   updatedAt: number;
   secrets: { name: string; hasValue: boolean }[];
 }
+
+export interface PresetVariable {
+  name: string;
+  default: string;
+}
+
+/** Values for a preset's variables by name; empty means "use the default". */
+export type VariableValues = Record<string, string>;
 
 export interface PresetInput {
   id?: string | null;
@@ -139,6 +150,8 @@ export interface PresetInput {
   commands: string[];
   /** `value` null or empty keeps the stored value. */
   secrets: { name: string; value: string | null }[];
+  /** Defaults by name. The names themselves come from the commands. */
+  variables: PresetVariable[];
 }
 
 export type SetupStatus = "waiting" | "running" | "done" | "failed" | "cancelled";
@@ -154,6 +167,8 @@ export interface SetupRun {
   error: string | null;
   steps: { command: string; state: StepState; exitCode: number | null }[];
   secretNames: string[];
+  /** The values the variables got in this run. Missing on older runs. */
+  variables?: { name: string; value: string }[];
   secretsWritten: boolean;
   output: string;
   startedAt: number;
@@ -336,7 +351,7 @@ export interface Api {
   whoami(): Promise<Account>;
   listMachines(): Promise<Machine[]>;
   getMachine(id: string): Promise<Machine>;
-  createMachine(spec: CreateSpec, presetId?: string | null): Promise<Machine>;
+  createMachine(spec: CreateSpec, presetId?: string | null, variables?: VariableValues | null): Promise<Machine>;
   forkMachine(source: string, name: string | null): Promise<Machine>;
   machinePower(id: string, action: PowerAction): Promise<void>;
   machineUsage(id: string): Promise<Usage>;
@@ -355,7 +370,7 @@ export interface Api {
   listPresets(): Promise<Preset[]>;
   savePreset(input: PresetInput): Promise<Preset>;
   deletePreset(id: string): Promise<void>;
-  setupStart(machineId: string, presetId: string): Promise<SetupRun>;
+  setupStart(machineId: string, presetId: string, variables?: VariableValues | null): Promise<SetupRun>;
   setupCancel(machineId: string): Promise<void>;
   setupRuns(): Promise<SetupRun[]>;
   onSetupEvent(cb: (push: SetupPush) => void): Promise<() => void>;
