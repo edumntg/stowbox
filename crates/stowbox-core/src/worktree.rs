@@ -219,6 +219,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn add_review_and_remove_end_to_end() {
         if !has_git() {
             return;
@@ -276,6 +277,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn add_refuses_honestly() {
         if !has_git() {
             return;

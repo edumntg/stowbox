@@ -391,6 +391,7 @@ pub fn backoff_secs(attempt: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::time::Duration;
 
     fn out(b: &str) -> ExecOutput {
@@ -463,17 +464,23 @@ mod tests {
     }
 
     // ------------------------------------------------ end to end with local bash
+    // Unix only: the fake box needs process groups and `kill`, and the
+    // scripts are the box side, which always runs in a Linux box (see
+    // testing.rs). They are compiled out on Windows.
 
     /// Runs exec scripts with local bash. Like boxd, dropping the session
     /// kills its whole process group, so a detached turn must escape it.
+    #[cfg(unix)]
     struct LocalBox {
         home: std::path::PathBuf,
     }
 
+    #[cfg(unix)]
     fn kill_group(pgid: u32) {
         let _ = std::process::Command::new("kill").args(["-KILL", "--", &format!("-{pgid}")]).stderr(std::process::Stdio::null()).status();
     }
 
+    #[cfg(unix)]
     #[async_trait::async_trait]
     impl Provider for LocalBox {
         fn id(&self) -> &'static str {
@@ -570,10 +577,12 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn have_tools() -> bool {
         std::process::Command::new("bash").arg("-c").arg("command -v setsid && tail --version").output().map(|o| o.status.success()).unwrap_or(false)
     }
 
+    #[cfg(unix)]
     fn local_box() -> LocalBox {
         let home = std::env::temp_dir().join(format!("stowbox-turn-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&home).unwrap();
@@ -594,11 +603,13 @@ mod tests {
         LocalBox { home }
     }
 
+    #[cfg(unix)]
     fn pid_alive(home: &std::path::Path, agent: &str, turn: &str) -> bool {
         let pid = std::fs::read_to_string(home.join(TURNS_DIR).join(agent).join(turn).join("pid")).unwrap();
         std::process::Command::new("kill").args(["-0", pid.trim()]).stderr(std::process::Stdio::null()).status().unwrap().success()
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_turn_survives_a_dropped_follow_and_every_line_arrives_once() {
         if !have_tools() {
@@ -661,6 +672,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&b.home);
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
     async fn stop_kills_the_turn_and_a_killed_turn_reads_as_lost() {
         if !have_tools() {
@@ -689,6 +701,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&b.home);
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
     async fn launch_keeps_only_the_newest_turn_dirs() {
         if !have_tools() {
