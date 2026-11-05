@@ -464,7 +464,9 @@ export const mockApi: Api = {
     return meta;
   },
   async agentEvents(id) {
-    return transcripts[id] ?? [];
+    // A copy: the store keeps what it gets and pushes live events onto it,
+    // so handing out this array made every event show up twice.
+    return [...(transcripts[id] ?? [])];
   },
   async agentSend(id, text) {
     const a = agents.find((a) => a.id === id);
