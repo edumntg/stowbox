@@ -45,8 +45,23 @@ shadows, except the floating shadow under dialogs and toasts.
   box rows with a 7px state dot, name, and a second line with status and
   size, cost per hour on the right. Agents nest under an AGENTS header with
   their status and relative time.
-- Main column: a tab strip of open boxes and agents, each with its state
-  dot, icon and close control, then the view.
+- Main column: a tab strip with a pinned Fleet tab first, then open boxes
+  and agents, each with its state dot, icon and close control, then the
+  view.
+- Fleet view (the landing page, after Aaron Francis's runner dashboard):
+  four stat tiles in one bordered strip, an alerts list, "Working now" and
+  "Waiting for you" side by side, then a bordered table with one row per
+  box. Agents appear as 6x10 squares in the row, one per agent, coloured
+  by state. CPU, memory and disk are a number over a 3px bar; the bar is
+  neutral until 70% and turns orange, then red at 90%. Rows for boxes that
+  are not running are muted and carry an "as of" age in orange.
+- Setup presets view, reached from the sidebar under Fleet overview: a
+  240px list of presets on the left, the editor on the right (name,
+  secrets as name and masked value rows, commands as numbered monospace
+  rows with move and remove controls). A box's Setup tab shows the last
+  run: one row per command with a 6x10 square (green while it runs, a
+  neutral foreground square once it exits 0, red on failure, faded grey
+  when pending or skipped) and the output below in a monospace well.
 - Right panel (280px) when an agent is open: a toolbar of icon buttons, the
   box card with the hourly estimate and power controls, the session facts.
 - A 24px status bar: account, balance, how many boxes are running and the

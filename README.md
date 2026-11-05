@@ -14,6 +14,14 @@ few tens of megabytes instead of an Electron process per window.
 
 ## What it does today
 
+- **Fleet**: the landing view. Four tiles (running boxes, working agents,
+  finished turns waiting for you, estimated cost per hour), alerts derived
+  from the same data (a failed agent, a box billing with nothing to do, a
+  box near its memory or disk limit), and one row per box with its agents
+  as state squares, CPU, memory, disk free and uptime. The numbers are read
+  inside each running box over the exec stream, since boxd has no
+  telemetry API; boxes in standby or hibernation are not touched, because
+  sampling would wake them, and keep their last reading with its age.
 - **Boxes**: list, create (1, 2 or 4 vCPU), fork, standby, resume, hibernate,
   wake, stop, start, reboot, delete. Each row shows size and an estimated cost
   per hour for the box's *current* state, computed from boxd's live rate card.
@@ -26,6 +34,16 @@ few tens of megabytes instead of an Electron process per window.
   stream (xterm.js on this side). Standby and hibernated boxes wake on open.
 - **Cost**: account balance and not-yet-charged usage in the sidebar, metered
   usage per box with hours in each power state in the Details tab.
+- **Setup presets**: a named list of commands plus secrets (for example
+  "main commands": export `GITHUB_TOKEN`, `git clone`, `docker compose up -d`,
+  run a script). Pick one in *New box* and it runs in the box as soon as it
+  boots, or run it later from the box's Setup tab. Secret values stay in the
+  OS keychain on this computer; in the box they are written to
+  `~/.config/stowbox/env.sh` (mode 0600), which `~/.profile` and `~/.bashrc`
+  load, so terminals and agents see them too. The script travels over boxd's
+  exec stream on stdin, never on a command line, and secret values are
+  masked in the setup log. Commands run in order in one shell (`cd` and
+  `export` carry over); the first non-zero exit stops the run.
 - **Desktop**: one click opens boxd's live desktop view in the browser.
 - Light and dark themes, keyboard reachable, honest empty, loading and error
   states everywhere.

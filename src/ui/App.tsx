@@ -3,6 +3,8 @@ import { actions, agentById, machineById, selectedAgent, selectedMachine, state,
 import * as I from "../icons";
 import AgentView from "./AgentView";
 import BoxView from "./BoxView";
+import FleetView from "./FleetView";
+import PresetsView from "./PresetsView";
 import Dialogs from "./Dialogs";
 import Inspector from "./Inspector";
 import Onboarding from "./Onboarding";
@@ -32,6 +34,19 @@ const Tab = (p: { sel: Selection }) => {
       </button>
       <button class="tab-close" aria-label={`Close ${label()}`} onClick={() => actions.closeTab(p.sel)}>
         <I.Close />
+      </button>
+    </div>
+  );
+};
+
+/** Always first and never closed: the fleet is where the app lands. */
+const FleetTab = () => {
+  const active = () => state.ui.selection.kind === "fleet";
+  return (
+    <div class="tab pinned" classList={{ active: active() }} role="tab" aria-selected={active()}>
+      <button class="tab-label" style={{ display: "flex", "align-items": "center", gap: "7px", "min-width": 0 }} onClick={() => actions.select({ kind: "fleet" })} title="Fleet">
+        <I.Layers />
+        <span class="tab-label">Fleet</span>
       </button>
     </div>
   );
@@ -92,21 +107,6 @@ const Statusbar = () => {
   );
 };
 
-const EmptyMain = () => (
-  <div class="empty">
-    <h2>Nothing open</h2>
-    <span>Pick a box or an agent on the left. Boxes are persistent VMs; agents are Claude Code or Codex sessions inside them.</span>
-    <div class="actions">
-      <button class="btn" onClick={() => actions.openDialog({ kind: "new-box" })}>
-        <I.Plus /> New box
-      </button>
-      <button class="btn primary" disabled={state.machines.length === 0} onClick={() => actions.openDialog({ kind: "new-agent" })}>
-        <I.Chat /> New agent
-      </button>
-    </div>
-  </div>
-);
-
 const Shell = () => {
   const agent = selectedAgent;
   const machine = selectedMachine;
@@ -120,15 +120,19 @@ const Shell = () => {
         </Show>
         <main class="main">
           <div class="tabstrip" role="tablist" aria-label="Open items">
+            <FleetTab />
             <For each={state.ui.tabs}>{(t) => <Tab sel={t} />}</For>
             <button class="tab-add" title="New agent" aria-label="New agent" onClick={() => actions.openDialog({ kind: "new-agent" })} disabled={state.machines.length === 0}>
               <I.Plus />
             </button>
           </div>
           <div class="content">
-            <Switch fallback={<EmptyMain />}>
+            <Switch fallback={<FleetView />}>
               <Match when={agent()}>{(a) => <AgentView agent={a()} />}</Match>
               <Match when={machine()}>{(m) => <BoxView machine={m()} />}</Match>
+              <Match when={state.ui.selection.kind === "presets"}>
+                <PresetsView />
+              </Match>
             </Switch>
           </div>
         </main>

@@ -23,4 +23,11 @@ pub trait Provider: Send + Sync {
     async fn org_billing(&self, org: &str) -> Result<OrgBilling>;
     /// The live rate card, used for the €/h estimate in the sidebar.
     async fn rates(&self) -> Result<(String, Rates)>;
+
+    /// Live CPU, memory, disk and uptime, read inside the box. `None` when
+    /// the box is not running: sampling would wake it. Providers with a
+    /// telemetry API can override this instead of paying for an exec.
+    async fn metrics(&self, id: &str) -> Result<Option<crate::metrics::MachineMetrics>> {
+        crate::metrics::sample(self, id).await
+    }
 }

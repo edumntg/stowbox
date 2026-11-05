@@ -258,6 +258,25 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
         Err(e) => r.fail("exec_exit0_ends", e.to_string(), t.elapsed()),
     }
 
+    // The fleet view's sample: /proc and df read over exec, parsed in core.
+    let t = Instant::now();
+    match p.metrics(id).await {
+        Ok(Some(m)) => {
+            let d = format!(
+                "cpu {:.1}% of {} · mem {}/{} MiB · disk {} GiB free · up {} s",
+                m.cpu_percent,
+                m.vcpu,
+                m.mem_used_bytes >> 20,
+                m.mem_total_bytes >> 20,
+                m.disk_avail_bytes >> 30,
+                m.uptime_secs
+            );
+            if m.mem_total_bytes > 0 && m.disk_total_bytes > 0 { r.pass("metrics_sample", d, t.elapsed()) } else { r.fail("metrics_sample", d, t.elapsed()) }
+        }
+        Ok(None) => r.fail("metrics_sample", "box reported as not running", t.elapsed()),
+        Err(e) => r.fail("metrics_sample", e.to_string(), t.elapsed()),
+    }
+
     // Env vars passed through the wrapper, plus quoting with spaces and quotes.
     let t = Instant::now();
     let mut h = p

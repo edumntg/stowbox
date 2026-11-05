@@ -71,3 +71,6 @@ export const FileDiff = icon("<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.
 export const Wrench = icon("<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />");
 export const StopCircle = icon("<circle cx=\"12\" cy=\"12\" r=\"10\" /><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\" rx=\"1\" />");
 export const Bell = icon("<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /><path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" />");
+export const ArrowUp = icon("<path d=\"m5 12 7-7 7 7\" /><path d=\"M12 19V5\" />");
+export const ArrowDown = icon("<path d=\"M12 5v14\" /><path d=\"m19 12-7 7-7-7\" />");
+export const ListChecks = icon("<path d=\"m3 17 2 2 4-4\" /><path d=\"m3 7 2 2 4-4\" /><path d=\"M13 6h8\" /><path d=\"M13 12h8\" /><path d=\"M13 18h8\" />");

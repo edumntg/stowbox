@@ -42,6 +42,8 @@ const NewBox = () => {
   const [name, setName] = createSignal("");
   const [vcpu, setVcpu] = createSignal(billing()?.defaultVcpu || 2);
   const [isolated, setIsolated] = createSignal(false);
+  const [presetId, setPresetId] = createSignal("");
+  const preset = () => state.presets.find((x) => x.id === presetId());
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
 
@@ -57,12 +59,15 @@ const NewBox = () => {
     setError("");
     try {
       const size = sizes().find((s) => s.vcpu === vcpu());
-      await actions.createBox({
-        name: name().trim() || null,
-        vcpu: size?.vcpu ?? null,
-        memoryBytes: size ? size.mem * GIB : null,
-        isolated: isolated(),
-      });
+      await actions.createBox(
+        {
+          name: name().trim() || null,
+          vcpu: size?.vcpu ?? null,
+          memoryBytes: size ? size.mem * GIB : null,
+          isolated: isolated(),
+        },
+        presetId() || null,
+      );
       actions.closeDialog();
     } catch (e) {
       setError(errorText(e));
@@ -92,6 +97,46 @@ const NewBox = () => {
             )}
           </For>
         </div>
+      </div>
+      <div class="field">
+        <label for="nb-setup">Setup</label>
+        <select id="nb-setup" class="input" value={presetId()} onChange={(e) => setPresetId(e.currentTarget.value)}>
+          <option value="">None: an empty box</option>
+          <For each={state.presets}>{(x) => <option value={x.id}>{x.name}</option>}</For>
+        </select>
+        <Show
+          when={preset()}
+          fallback={
+            <p class="hint">
+              <Show when={state.presets.length === 0} fallback="Pick a preset to export its secrets and run its commands in the box once it boots.">
+                A setup preset runs commands and exports secrets in the box once it boots.{" "}
+                <button
+                  class="link"
+                  onClick={() => {
+                    actions.closeDialog();
+                    actions.select({ kind: "presets" });
+                  }}
+                >
+                  Write the first one
+                </button>
+                .
+              </Show>
+            </p>
+          }
+        >
+          {(pr) => (
+            <p class="hint">
+              Runs {pr().commands.length} {pr().commands.length === 1 ? "command" : "commands"}
+              {pr().secretNames.length > 0 ? (
+                <>
+                  {" "}
+                  after exporting <span class="mono">{pr().secretNames.join(", ")}</span>
+                </>
+              ) : null}
+              . Progress shows in the box's Setup tab.
+            </p>
+          )}
+        </Show>
       </div>
       <label class="check">
         <input type="checkbox" checked={isolated()} onChange={(e) => setIsolated(e.currentTarget.checked)} />

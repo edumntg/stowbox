@@ -87,6 +87,22 @@ export default function Sidebar() {
           <I.Plus />
         </button>
       </div>
+      <nav class="side-nav" aria-label="Views">
+        <button class="row nav" classList={{ selected: state.ui.selection.kind === "fleet" }} onClick={() => actions.select({ kind: "fleet" })}>
+          <I.Layers />
+          <span class="row-name">Fleet overview</span>
+          <span class="row-right mono" style={{ "font-size": "var(--text-2xs)" }}>
+            {state.machines.filter((m) => m.status === "running").length} running
+          </span>
+        </button>
+        <button class="row nav" classList={{ selected: state.ui.selection.kind === "presets" }} onClick={() => actions.select({ kind: "presets" })}>
+          <I.ListChecks />
+          <span class="row-name">Setup presets</span>
+          <span class="row-right mono" style={{ "font-size": "var(--text-2xs)" }}>
+            {state.presets.length}
+          </span>
+        </button>
+      </nav>
       <div class="side-search">
         <I.Search />
         <input type="search" placeholder="Search boxes and agents" value={state.ui.filter} onInput={(e) => actions.setFilter(e.currentTarget.value)} aria-label="Search boxes and agents" />

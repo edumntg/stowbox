@@ -105,3 +105,18 @@ export function tokens(n: number): string {
   if (n < 1_000_000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
   return (n / 1_000_000).toFixed(2) + "M";
 }
+
+export function pct(n: number): string {
+  return `${Math.round(n)}%`;
+}
+
+/** Uptime the way `uptime` prints it, trimmed to two units. */
+export function uptime(secs: number): string {
+  if (secs < 60) return "<1m";
+  const d = Math.floor(secs / 86_400);
+  const h = Math.floor((secs % 86_400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
