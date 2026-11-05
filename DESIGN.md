@@ -42,7 +42,12 @@ shadows, except the floating shadow under dialogs and toasts.
 ## Layout
 
 - A 38px top bar with the mark, the app name and the panel toggles. On
-  macOS it is the title bar: traffic lights sit in it.
+  macOS it is the title bar: traffic lights sit in it. On Windows the
+  native title bar stays (snap layouts, the system menu and Windows' own
+  window buttons keep working) and follows the app's theme; the top bar
+  under it drops the mark and the name, which the title bar already shows.
+  The taskbar button gets an overlay instead of a badge count: the count on
+  an orange square.
 - Left sidebar (260px): BOXES header with count and actions, a search field,
   box rows with a 7px state dot, name, and a second line with status and
   size, cost per hour on the right. Agents nest under an AGENTS header with
