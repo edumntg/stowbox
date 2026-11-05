@@ -14,6 +14,7 @@ use stowbox_core::agent::{self, AgentEvent, AgentMeta, AgentStatus, Block, Harne
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::cost;
 use stowbox_core::metrics::MachineMetrics;
+use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::provider::Provider;
 use stowbox_core::provision::{self, Preset, ProvisionRun, RunEvent};
 use stowbox_core::store::Store;
@@ -44,6 +45,8 @@ struct AppState {
     setup_runs: RwLock<Vec<ProvisionRun>>,
     /// Live setup runs by machine id.
     setups: Mutex<HashMap<String, AbortHandle>>,
+    /// Decides which pushes carry a desktop notification.
+    notifier: std::sync::Mutex<Notifier>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -111,6 +114,8 @@ struct AgentPush {
     agent_id: String,
     event: Option<AgentEvent>,
     meta: AgentMeta,
+    /// Set when this change is an outcome worth a desktop notification.
+    notice: Option<Notice>,
 }
 
 #[derive(Serialize, Clone)]
@@ -358,6 +363,7 @@ async fn delete_agent(state: State<'_, AppState>, id: String) -> CmdResult<()> {
         }
     }
     state.agents.write().await.retain(|a| a.id != id);
+    state.notifier.lock().unwrap_or_else(|e| e.into_inner()).forget_agent(&id);
     state.persist_agents().await?;
     state.store.delete_transcript(&id).await.map_err(err)
 }
@@ -414,7 +420,8 @@ async fn push(app: &AppHandle, state: &AppState, id: &str, event: Option<AgentEv
             let _ = state.store.append_event(id, ev).await;
         }
     }
-    let _ = app.emit("agent-event", AgentPush { agent_id: id.to_string(), event, meta });
+    let notice = state.notifier.lock().unwrap_or_else(|e| e.into_inner()).agent(&meta, now_ms());
+    let _ = app.emit("agent-event", AgentPush { agent_id: id.to_string(), event, meta, notice });
 }
 
 #[tauri::command]
@@ -711,6 +718,7 @@ struct PresetInput {
 struct SetupPush {
     run: ProvisionRun,
     append: String,
+    notice: Option<Notice>,
 }
 
 fn preset_view(state: &AppState, p: &Preset) -> PresetView {
@@ -823,7 +831,8 @@ async fn apply_setup_event(app: &AppHandle, state: &AppState, run_id: &str, ev: 
         (r.clone(), !r.is_active())
     };
     let append = if let RunEvent::Output(t) = &ev { t.clone() } else { String::new() };
-    let _ = app.emit("setup-event", SetupPush { run: ProvisionRun { output: String::new(), ..run.clone() }, append });
+    let notice = if done { state.notifier.lock().unwrap_or_else(|e| e.into_inner()).setup(&run) } else { None };
+    let _ = app.emit("setup-event", SetupPush { run: ProvisionRun { output: String::new(), ..run.clone() }, append, notice });
     if done {
         state.setups.lock().await.remove(&run.machine_id);
         let _ = state.persist_setup_runs().await;
@@ -848,7 +857,7 @@ async fn start_setup(
         runs.retain(|r| r.machine_id != machine.id);
         runs.push(run.clone());
     }
-    let _ = app.emit("setup-event", SetupPush { run: run.clone(), append: String::new() });
+    let _ = app.emit("setup-event", SetupPush { run: run.clone(), append: String::new(), notice: None });
 
     let (tx, mut rx) = mpsc::unbounded_channel::<RunEvent>();
     let machine_id = machine.id.clone();
@@ -981,6 +990,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             let secrets = secrets::Secrets::new(data.join("secrets"));
@@ -1013,6 +1023,7 @@ pub fn run() {
                     a
                 })
                 .collect();
+            let notifier = Notifier::new(&agents, now_ms());
             let reattach: Vec<String> = agents.iter().filter(|a| a.turn.is_some()).map(|a| a.id.clone()).collect();
 
             let presets = tauri::async_runtime::block_on(store.load_presets()).unwrap_or_else(|e| {
@@ -1044,6 +1055,7 @@ pub fn run() {
                 preset_secrets,
                 setup_runs: RwLock::new(setup_runs),
                 setups: Mutex::new(HashMap::new()),
+                notifier: std::sync::Mutex::new(notifier),
             });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

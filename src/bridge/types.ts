@@ -160,10 +160,27 @@ export interface SetupRun {
   finishedAt: number | null;
 }
 
+/** Mirrors stowbox_core::notify::Notice: set on a push that is a real
+ * outcome (a turn finished or failed, a setup run ended), once per outcome. */
+export interface Notice {
+  kind: "agent-done" | "agent-failed" | "setup-done" | "setup-failed";
+  title: string;
+  body: string;
+  agentId: string | null;
+  machineId: string;
+}
+
+/** What a click on a notification should open. */
+export type NoticeTarget = Pick<Notice, "agentId" | "machineId">;
+
+/** "unsupported": this runtime cannot show notifications at all. */
+export type NotifyPermission = "granted" | "denied" | "default" | "unsupported";
+
 /** `run.output` is empty here; `append` carries the new text. */
 export interface SetupPush {
   run: SetupRun;
   append: string;
+  notice?: Notice | null;
 }
 
 export type Harness = "claude-code" | "codex";
@@ -238,6 +255,7 @@ export interface AgentPush {
   agentId: string;
   event: AgentEvent | null;
   meta: AgentMeta;
+  notice?: Notice | null;
 }
 
 export type TermEvent = { type: "data"; b64: string } | { type: "exit"; code: number } | { type: "error"; message: string };
@@ -282,6 +300,16 @@ export interface Api {
   terminalWrite(id: string, bytes: Uint8Array): Promise<void>;
   terminalResize(id: string, cols: number, rows: number): Promise<void>;
   terminalClose(id: string): Promise<void>;
+  notifyPermission(): Promise<NotifyPermission>;
+  requestNotifyPermission(): Promise<NotifyPermission>;
+  showNotification(n: Notice): Promise<void>;
+  /** Clicks on notifications, where the platform reports them. */
+  onNotificationClick(cb: (target: NoticeTarget) => void): Promise<() => void>;
+  windowFocused(): Promise<boolean>;
+  onWindowFocus(cb: (focused: boolean) => void): Promise<() => void>;
+  focusWindow(): Promise<void>;
+  /** 0 clears the dock or taskbar badge. */
+  setBadgeCount(n: number): Promise<void>;
   openUrl(url: string): Promise<void>;
   copyText(text: string): Promise<void>;
 }

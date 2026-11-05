@@ -68,6 +68,13 @@ shadows, except the floating shadow under dialogs and toasts.
   box card with the hourly estimate and power controls, the session facts.
 - A 24px status bar: account, balance, how many boxes are running and the
   combined hourly estimate.
+- Settings dialog: a key/value list. Notifications are two checkboxes
+  (notify on outcomes; also while in front, disabled when the first is off)
+  and, when the OS has not allowed or blocks notifications, one hint line
+  saying so.
+- OS notifications: the title names the agent and the outcome
+  ("Fix the login bug finished", "Setup failed in api-dev"); the body is
+  the box, or the provider's error verbatim, cut at 180 characters.
 
 ## Icons
 

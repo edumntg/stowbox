@@ -1,8 +1,10 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isPermissionGranted, onAction, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { Api, AgentPush, SetupPush, TermEvent } from "./types";
+import type { Api, AgentPush, NotifyPermission, SetupPush, TermEvent } from "./types";
 
 function b64(bytes: Uint8Array): string {
   let s = "";
@@ -49,6 +51,27 @@ export const tauriApi: Api = {
   terminalWrite: (id, bytes) => invoke("terminal_write", { id, data: b64(bytes) }),
   terminalResize: (id, cols, rows) => invoke("terminal_resize", { id, cols, rows }),
   terminalClose: (id) => invoke("terminal_close", { id }),
+  notifyPermission: async (): Promise<NotifyPermission> => ((await isPermissionGranted()) ? "granted" : "default"),
+  requestNotifyPermission: () => requestPermission(),
+  showNotification: async (n) => sendNotification({ title: n.title, body: n.body, extra: { agentId: n.agentId, machineId: n.machineId } }),
+  onNotificationClick: async (cb) => {
+    // Desktop reports a click on the notification itself as "tap", with the
+    // payload it was sent with, where the notification server reports clicks.
+    const l = await onAction((ev) => {
+      const extra = ev.notification?.extra ?? {};
+      cb({ agentId: typeof extra.agentId === "string" ? extra.agentId : null, machineId: typeof extra.machineId === "string" ? extra.machineId : "" });
+    });
+    return () => void l.unregister();
+  },
+  windowFocused: () => getCurrentWindow().isFocused(),
+  onWindowFocus: (cb) => getCurrentWindow().onFocusChanged((e) => cb(e.payload)),
+  focusWindow: async () => {
+    const w = getCurrentWindow();
+    await w.unminimize();
+    await w.show();
+    await w.setFocus();
+  },
+  setBadgeCount: (n) => getCurrentWindow().setBadgeCount(n > 0 ? n : undefined),
   openUrl: (url) => openUrl(url),
   copyText: (text) => writeText(text),
 };

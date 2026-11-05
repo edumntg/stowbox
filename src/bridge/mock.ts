@@ -1,7 +1,7 @@
 // Browser-only stand-in for the desktop shell. Used to develop and screenshot
 // the UI with `pnpm dev` outside Tauri. Every value here is a placeholder.
 
-import type { Account, AgentEvent, AgentMeta, AgentPush, Api, Machine, MachineMetrics, Preset, SetupPush, SetupRun, TermEvent } from "./types";
+import type { Account, AgentEvent, AgentMeta, AgentPush, Api, Machine, MachineMetrics, Notice, NoticeTarget, Preset, SetupPush, SetupRun, TermEvent } from "./types";
 
 const GIB = 1024 ** 3;
 
@@ -179,10 +179,25 @@ const transcripts: Record<string, AgentEvent[]> = {
 };
 
 const listeners = new Set<(p: AgentPush) => void>();
+// The same rule as stowbox_core::notify: an outcome notifies when the status
+// seen just before it was busy, so one turn notifies once.
+const lastStatus = new Map(agents.map((a) => [a.id, a.status.kind]));
+const busyKinds = new Set(["starting", "thinking", "tool", "reconnecting"]);
+function agentNotice(meta: AgentMeta): Notice | null {
+  const prev = lastStatus.get(meta.id);
+  lastStatus.set(meta.id, meta.status.kind);
+  if (!prev || !busyKinds.has(prev)) return null;
+  const name = meta.title.trim() || (meta.harness === "codex" ? "Codex agent" : "Claude Code agent");
+  const base = { agentId: meta.id, machineId: meta.machineId };
+  if (meta.status.kind === "done") return { ...base, kind: "agent-done", title: `${name} finished`, body: `Waiting for you in ${meta.machineName}` };
+  if (meta.status.kind === "failed") return { ...base, kind: "agent-failed", title: `${name} failed`, body: `${meta.machineName}: ${meta.status.message}` };
+  return null;
+}
 function emit(agentId: string, event: AgentEvent | null) {
   const meta = agents.find((a) => a.id === agentId);
   if (!meta) return; // the agent was removed while a simulated turn was running
-  for (const l of listeners) l({ agentId, event, meta });
+  const notice = agentNotice(meta);
+  for (const l of listeners) l({ agentId, event, meta, notice });
 }
 function setStatus(id: string, status: AgentMeta["status"]) {
   agents = agents.map((a) => (a.id === id ? { ...a, status, updatedAt: Date.now() } : a));
@@ -294,9 +309,20 @@ let setupRuns: SetupRun[] = [
 const setupListeners = new Set<(p: SetupPush) => void>();
 const cancelled = new Set<string>();
 
+const setupNotified = new Set<string>();
+function setupNotice(run: SetupRun): Notice | null {
+  if ((run.status !== "done" && run.status !== "failed") || setupNotified.has(run.id)) return null;
+  setupNotified.add(run.id);
+  const base = { agentId: null, machineId: run.machineId };
+  const n = run.steps.length;
+  if (run.status === "done") return { ...base, kind: "setup-done", title: `Setup finished in ${run.machineName}`, body: `${run.presetName}: ${n} command${n === 1 ? "" : "s"} ran` };
+  return { ...base, kind: "setup-failed", title: `Setup failed in ${run.machineName}`, body: `${run.presetName}: ${run.error ?? "it did not finish"}` };
+}
+
 function setupEmit(run: SetupRun, append = "") {
   if (append) run.output += append;
-  for (const l of setupListeners) l({ run: { ...run, output: "", steps: run.steps.map((s) => ({ ...s })) }, append });
+  const notice = setupNotice(run);
+  for (const l of setupListeners) l({ run: { ...run, output: "", steps: run.steps.map((s) => ({ ...s })) }, append, notice });
 }
 
 async function simulateSetup(run: SetupRun) {
@@ -349,6 +375,8 @@ function startMockSetup(m: Machine, presetId: string): SetupRun {
   void simulateSetup(run);
   return run;
 }
+
+const clickListeners = new Set<(t: NoticeTarget) => void>();
 
 export const mockApi: Api = {
   async providerStatus() {
@@ -557,6 +585,49 @@ export const mockApi: Api = {
   async terminalWrite() {},
   async terminalResize() {},
   async terminalClose() {},
+  // The browser's own Notification API stands in for the OS notifications.
+  async notifyPermission() {
+    return "Notification" in window ? Notification.permission : "unsupported";
+  },
+  async requestNotifyPermission() {
+    return "Notification" in window ? Notification.requestPermission() : "unsupported";
+  },
+  async showNotification(n) {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const shown = new Notification(n.title, { body: n.body, tag: `${n.kind}:${n.agentId ?? n.machineId}` });
+    shown.onclick = () => {
+      for (const cb of clickListeners) cb({ agentId: n.agentId, machineId: n.machineId });
+    };
+  },
+  async onNotificationClick(cb) {
+    clickListeners.add(cb);
+    return () => clickListeners.delete(cb);
+  },
+  async windowFocused() {
+    return document.hasFocus();
+  },
+  async onWindowFocus(cb) {
+    const on = () => cb(true);
+    const off = () => cb(false);
+    window.addEventListener("focus", on);
+    window.addEventListener("blur", off);
+    return () => {
+      window.removeEventListener("focus", on);
+      window.removeEventListener("blur", off);
+    };
+  },
+  async focusWindow() {
+    window.focus();
+  },
+  async setBadgeCount(n) {
+    const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    try {
+      if (n > 0) await nav.setAppBadge?.(n);
+      else await nav.clearAppBadge?.();
+    } catch {
+      /* not an installed app: browsers refuse badges, which is fine here */
+    }
+  },
   async openUrl(url) {
     window.open(url, "_blank", "noopener");
   },
