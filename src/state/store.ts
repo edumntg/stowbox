@@ -362,11 +362,15 @@ export const selectedMachine = () => (state.ui.selection.kind === "box" ? machin
 export const selectedAgent = () => (state.ui.selection.kind === "agent" ? agentById(state.ui.selection.id) : undefined);
 
 /** The harness is running in the box and Claude Code's hooks say it is on a turn. */
-export const phaseOf = (a: AgentMeta) => agentPhase(state.live[a.id]);
+/** The agent's box as the app knows it: an agent whose box is gone, from
+ * the app or elsewhere, runs nowhere, whatever its box showed last. */
+const boxKnown = (a: AgentMeta) => !!machineById(a.machineId);
+
+export const phaseOf = (a: AgentMeta) => (state.machinesLoaded && !boxKnown(a) ? "stopped" : agentPhase(state.live[a.id]));
 
 export const agentWorking = (a: AgentMeta) => {
   const l = state.live[a.id];
-  return !!l && l.running && l.state === "working";
+  return boxKnown(a) && !!l && l.running && l.state === "working";
 };
 
 /** A box's watch reported: its agents' states replace what was known. */
@@ -813,6 +817,12 @@ export const actions = {
         actions.closeTab({ kind: "box", id });
         actions.toast("Box deleted.", "info");
         // Its agents stay as history, stopped; their tabs say the box is gone.
+        setState(
+          produce((s) => {
+            for (const a of s.agents) if (a.machineId === id) delete s.live[a.id];
+            delete s.tmux[id];
+          }),
+        );
         void api.listAgents().then((agents) => setState({ agents })).catch(() => undefined);
       }
       // The provider answers once the transition is underway; read back now
