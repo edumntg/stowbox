@@ -90,14 +90,16 @@ export const tauriApi: Api = {
   listeningPorts: (machineId, wake) => invoke("listening_ports", { machineId, wake: wake ?? false }),
   sshPlan: (machineId) => invoke("ssh_plan", { machineId }),
   openInEditor: (machineId, editor, dir) => invoke("open_in_editor", { machineId, editor, dir }),
-  terminalOpen: (machine, cols, rows, onEvent) => {
+  terminalOpen: (machine, cols, rows, target, onEvent) => {
     const onData = new Channel<TermEvent>();
     onData.onmessage = onEvent;
-    return invoke<string>("terminal_open", { machine, cols, rows, onData });
+    return invoke<string>("terminal_open", { machine, cols, rows, target, onData });
   },
   terminalWrite: (id, bytes) => invoke("terminal_write", { id, data: b64(bytes) }),
   terminalResize: (id, cols, rows) => invoke("terminal_resize", { id, cols, rows }),
   terminalClose: (id) => invoke("terminal_close", { id }),
+  claudeAccount: (machine) => invoke("claude_account", { machine }),
+  setClaudeAccount: (machine, own) => invoke("set_claude_account", { machine, own }),
   notifyPermission: async (): Promise<NotifyPermission> => ((await isPermissionGranted()) ? "granted" : "default"),
   requestNotifyPermission: () => requestPermission(),
   showNotification: async (n) => sendNotification({ title: n.title, body: n.body, extra: { agentId: n.agentId, machineId: n.machineId } }),

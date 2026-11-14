@@ -3,7 +3,7 @@ import type { AgentMeta, Machine, MachineMetrics } from "../bridge/types";
 import { actions, agentsForMachine, machineById, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import { Dot, agentDotState } from "./common";
-import { agentStatusLabel, gib, isBusy, money, pct, relTime, sizeLabel, spendLine, statusLabel, uptime } from "./format";
+import { agentStatusLabel, gib, isBusy, money, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
 
 /** Something a person should look at. Derived from state on every render;
  * nothing is stored, so an alert disappears the moment its cause does. */
@@ -218,8 +218,8 @@ const Row = (p: { machine: Machine; now: number }) => {
           </>
         )}
       </Show>
-      <span class="fcell mono" classList={{ faint: stale() }}>
-        {stale() ? statusLabel[m().status] : sample() ? uptime(sample()!.uptimeSecs) : "—"}
+      <span class="fcell mono" classList={{ faint: stale() }} title={m().createdAt ? `Created ${new Date(m().createdAt * 1000).toLocaleString()}` : "boxd did not say when"}>
+        {m().createdAt ? span(Math.max(0, p.now / 1000 - m().createdAt)) : "—"}
       </span>
       <span class="fcell mono">{money(m().estHourlyMicro, m().currency)}/h</span>
       <span class="fcell chev">
@@ -394,7 +394,7 @@ export default function FleetView() {
               <span>CPU</span>
               <span>Memory</span>
               <span>Disk free</span>
-              <span>Uptime</span>
+              <span title="Time since the box was created">Age</span>
               <span>Est.</span>
               <span />
             </div>

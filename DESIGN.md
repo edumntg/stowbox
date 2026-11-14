@@ -85,7 +85,21 @@ shadows, except the floating shadow under dialogs and toasts.
   the text cut at three lines, its files below, and edit and remove on
   hover. A paused queue says why and offers Send next. Sent files show
   under the message in the transcript, the path in the box on hover.
-- An agent has two sub-tabs, Chat and Changes; a box has a Changes tab
+- An agent has three sub-tabs, Chat, Terminal and Changes. Terminal is
+  the harness's own interface on the session, under a one-line bar (what
+  runs, the session id in monospace, Open again once it exits, Back to
+  chat); a green square on the sub-tab while it is open. The composer's
+  terminal button sits next to the paperclip, and a slash command that
+  needs the terminal turns Send into "Run in terminal" with the reason in
+  the foot. An agent whose box was deleted shows a grey dot, "Box
+  deleted" in the stats, a muted bordered line with a grey square, the
+  sentence and Remove, the transcript, and no composer; Terminal and
+  Changes are disabled. A box's Agents tab ends with CLAUDE CODE LOGIN: one
+  bordered row with a square (neutral foreground when a login was found,
+  orange when none), which login and the account in monospace, then Sign
+  in, the switch, and refresh; a note under it says where the login
+  lives. The fleet table's last figure column is Age, since creation.
+- A box has a Changes tab
   next to Setup, with a path field for the repository. Changes reads top
   down: the branch in monospace with "ahead, behind upstream" and the
   repository root, then one row of actions (commit message input, Commit

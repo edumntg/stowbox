@@ -1,13 +1,34 @@
-import { createSignal, onCleanup, onMount } from "solid-js";
+import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { api } from "../bridge/api";
+import type { TermTarget } from "../bridge/types";
 import { isWindows } from "./common";
 
-/** One interactive shell inside a box, streamed over the provider's exec
- * channel. Nothing has to be installed locally: no ssh, no CLI. */
-export default function Terminal(p: { machine: string; key?: string }) {
+/** Writes into an open terminal as if typed. */
+export type TermInput = (text: string) => void;
+
+const opening: Record<TermTarget["kind"], string> = {
+  shell: "Opening a login shell in the box…",
+  agent: "Opening the agent's session in the box…",
+  "claude-login": "Starting Claude Code's sign-in in the box…",
+};
+
+/** One interactive session inside a box, streamed over the provider's exec
+ * channel: a login shell by default, or what `target` names. Nothing has to
+ * be installed locally: no ssh, no CLI. */
+export default function Terminal(p: {
+  machine: string;
+  key?: string;
+  target?: TermTarget;
+  /** The bar's text while connected. */
+  hint?: JSX.Element;
+  onInput?: (write: TermInput | null) => void;
+  onEnd?: () => void;
+}) {
+  const target = p.target ?? { kind: "shell" };
   let host!: HTMLDivElement;
   const [status, setStatus] = createSignal<"connecting" | "open" | "ended" | "error">("connecting");
   const [detail, setDetail] = createSignal("");
+  const [bad, setBad] = createSignal(false);
   let cleanup: (() => void) | null = null;
   let disposed = false;
   onCleanup(() => {
@@ -72,6 +93,7 @@ export default function Terminal(p: { machine: string; key?: string }) {
     ro.observe(host);
 
     cleanup = () => {
+      p.onInput?.(null);
       onData.dispose();
       ro.disconnect();
       if (id) void api.terminalClose(id).catch(() => undefined);
@@ -79,14 +101,20 @@ export default function Terminal(p: { machine: string; key?: string }) {
     };
 
     try {
-      id = await api.terminalOpen(p.machine, term.cols, term.rows, (ev) => {
+      id = await api.terminalOpen(p.machine, term.cols, term.rows, target, (ev) => {
         if (ev.type === "data") term.write(dec(ev.b64));
         else if (ev.type === "exit") {
           setStatus("ended");
-          setDetail(`The shell exited with code ${ev.code}.`);
+          setBad(ev.code !== 0);
+          setDetail(target.kind === "shell" ? `The shell exited with code ${ev.code}.` : ev.code === 0 ? "Exited." : `Exited with code ${ev.code}.`);
+          p.onInput?.(null);
+          p.onEnd?.();
         } else {
           setStatus("error");
+          setBad(true);
           setDetail(ev.message);
+          p.onInput?.(null);
+          p.onEnd?.();
         }
       });
       if (disposed) {
@@ -94,9 +122,12 @@ export default function Terminal(p: { machine: string; key?: string }) {
         return;
       }
       setStatus("open");
+      const open = id;
+      p.onInput?.((text) => void api.terminalWrite(open, enc.encode(text)).catch(() => undefined));
       term.focus();
     } catch (e) {
       setStatus("error");
+      setBad(true);
       setDetail(String(e));
     }
   });
@@ -104,9 +135,9 @@ export default function Terminal(p: { machine: string; key?: string }) {
   return (
     <div class="term-wrap">
       <div class="term-host" ref={host} />
-      <div class="term-bar" classList={{ ended: status() === "ended" || status() === "error" }}>
-        {status() === "connecting" && <span>Opening a login shell in the box…</span>}
-        {status() === "open" && <span>Connected. Close the tab to end the session.</span>}
+      <div class="term-bar" classList={{ ended: bad() }}>
+        {status() === "connecting" && <span>{opening[target.kind]}</span>}
+        {status() === "open" && <span>{p.hint ?? "Connected. Close the tab to end the session."}</span>}
         {(status() === "ended" || status() === "error") && <span>{detail() || "The session ended."}</span>}
       </div>
     </div>

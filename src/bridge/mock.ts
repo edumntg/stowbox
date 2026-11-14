@@ -7,6 +7,7 @@ import type {
   AgentMeta,
   Attachment,
   AgentPush,
+  ClaudeAccount,
   Api,
   GitDiffFile,
   GitFileChange,
@@ -550,6 +551,13 @@ const runningSince: Record<string, number> = { vm_mock_5: Date.now() - 3 * 3_600
 const touchedAt: Record<string, number> = {};
 const openTerminals = new Map<string, string>();
 let terminalSeq = 0;
+const terminalEvents = new Map<string, (s: string) => void>();
+/** Agent terminals echo what is typed, like a prompt would. */
+const echoing = new Set<string>();
+/** Sign-in terminals by box: closing one counts as a finished `/login`. */
+const loginTerminals = new Map<string, string>();
+const claudeAccounts = new Map<string, ClaudeAccount>();
+const orgAccount = (): ClaudeAccount => ({ own: false, source: "stored login", email: "team@example.com", organization: "Example Org" });
 const touch = (machineId: string) => (touchedAt[machineId] = Math.max(touchedAt[machineId] ?? 0, Date.now()));
 
 function observe() {
@@ -846,7 +854,7 @@ export const mockApi: Api = {
   async createMachine(spec, presetId, variables) {
     if (presetId) prepareMockSetup(presetId, variables ?? {});
     await sleep(800);
-    const m = machine({ id: "vm_mock_" + Date.now(), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
+    const m = machine({ id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
     machines = [...machines, m];
     if (presetId) startMockSetup(m, presetId, variables ?? {});
     return m;
@@ -854,7 +862,7 @@ export const mockApi: Api = {
   async forkMachine(source, name) {
     await sleep(300);
     const src = await mockApi.getMachine(source);
-    const m = machine({ ...src, id: "vm_mock_" + Date.now(), name: name || src.name + "-fork", status: "running", source: "fork/" + src.name });
+    const m = machine({ ...src, id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: name || src.name + "-fork", status: "running", source: "fork/" + src.name });
     machines = [...machines, m];
     return m;
   },
@@ -863,6 +871,9 @@ export const mockApi: Api = {
     const next: Record<string, Machine["status"]> = { start: "running", stop: "stopped", reboot: "running", pause: "suspended", resume: "running", hibernate: "hibernated", wake: "running" };
     if (action === "destroy") {
       machines = machines.filter((m) => m.id !== id);
+      claudeAccounts.delete(id);
+      // Like the app: agents that lived there stay as history, stopped.
+      agents = agents.map((a) => (a.machineId === id ? { ...a, status: ["starting", "thinking", "tool", "reconnecting"].includes(a.status.kind) ? { kind: "stopped" } : a.status } : a));
       return;
     }
     machines = machines.map((m) => (m.id === id ? machine({ ...m, status: next[action] }) : m));
@@ -1256,24 +1267,59 @@ export const mockApi: Api = {
     console.info("mock: would open", url);
     return { url, alias: plan.alias, changes };
   },
-  async terminalOpen(machineId, _cols, _rows, onEvent) {
+  async terminalOpen(machineId, _cols, _rows, target, onEvent) {
     const enc = new TextEncoder();
     const send = (s: string) => onEvent({ type: "data", b64: btoa(String.fromCharCode(...enc.encode(s))) } as TermEvent);
-    setTimeout(() => send("mock terminal: the desktop build runs a real shell inside the box.\r\n$ "), 100);
     const id = `term_mock_${++terminalSeq}`;
+    if (target.kind === "agent") {
+      const a = agents.find((x) => x.id === target.id);
+      if (!a) throw new Error("no such agent");
+      if (["starting", "thinking", "tool", "reconnecting"].includes(a.status.kind)) throw new Error("a turn is running in the chat; wait for it to end or stop it first");
+      const cmd = a.harness === "claude-code" ? `claude${a.sessionId ? ` --resume ${a.sessionId}` : ""}` : `codex${a.sessionId ? ` resume ${a.sessionId}` : ""}`;
+      setTimeout(() => send(`mock terminal: the desktop build runs ${cmd} inside the box.\r\n\r\n> ${target.input ? `${target.input}\r\n> ` : ""}`), 100);
+      echoing.add(id);
+    } else if (target.kind === "claude-login") {
+      setTimeout(() => send("mock terminal: the desktop build runs claude /login inside the box.\r\nLeave this tab to pretend the sign-in worked.\r\n"), 100);
+      loginTerminals.set(id, machineId);
+    } else {
+      setTimeout(() => send("mock terminal: the desktop build runs a real shell inside the box.\r\n$ "), 100);
+    }
     openTerminals.set(id, machineId);
+    terminalEvents.set(id, send);
     touch(machineId);
     return id;
   },
-  async terminalWrite(id) {
+  async terminalWrite(id, bytes) {
     const m = openTerminals.get(id);
     if (m) touch(m);
+    if (echoing.has(id)) terminalEvents.get(id)?.(new TextDecoder().decode(bytes).replace(/\r/g, "\r\n> ").replace(/\x7f/g, "\b \b"));
   },
   async terminalResize() {},
   async terminalClose(id) {
     const m = openTerminals.get(id);
     openTerminals.delete(id);
+    terminalEvents.delete(id);
+    echoing.delete(id);
+    const login = loginTerminals.get(id);
+    loginTerminals.delete(id);
+    if (login) {
+      const acc = claudeAccounts.get(login) ?? orgAccount();
+      claudeAccounts.set(login, { ...acc, source: "stored login", email: acc.own ? "personal@example.com" : acc.email });
+    }
     if (m) touch(m);
+  },
+  async claudeAccount(machine) {
+    const m = machines.find((x) => x.id === machine);
+    if (!m) throw new Error("no such box");
+    await sleep(300);
+    return claudeAccounts.get(machine) ?? orgAccount();
+  },
+  async setClaudeAccount(machine, own) {
+    await sleep(400);
+    const acc: ClaudeAccount = own ? { own: true, source: null, email: null, organization: null } : orgAccount();
+    claudeAccounts.set(machine, acc);
+    touch(machine);
+    return acc;
   },
   // The browser's own Notification API stands in for the OS notifications.
   async notifyPermission() {
