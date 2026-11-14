@@ -2,7 +2,7 @@
 # GitHub release with the installers attached) or by hand from the Actions tab
 # (installers attached to the run as artifacts, no release). Never on PRs or
 # pushes: macOS minutes cost 10x and Windows 2x on a private repo.
-# Signing is optional; see "Release builds" in README.md for the secrets.
+# Signing is optional; see docs/releasing.md for the secrets.
 name: Release
 
 on:
