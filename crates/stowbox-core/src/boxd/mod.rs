@@ -67,6 +67,8 @@ pub struct Boxd {
 }
 
 impl Boxd {
+    /// Must be called inside a Tokio runtime: the channel connects lazily
+    /// and binds to the runtime it is created in.
     pub fn new(api_key: String, config: BoxdConfig) -> Result<Self> {
         let tls = ClientTlsConfig::new().with_webpki_roots();
         let channel = Channel::from_shared(config.endpoint.clone())
