@@ -4,7 +4,7 @@
 # invalid one boxd's refusal. Screenshots of the webview and of the whole
 # screen are attached to the run. Windows minutes bill 2x on a private repo,
 # so it runs by hand and on pull requests that change the app itself, never
-# on pushes; see README.md, "Windows".
+# on pushes; see docs/windows.md.
 name: Windows smoke
 
 on:
