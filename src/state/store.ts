@@ -29,6 +29,7 @@ import type {
   VariableValues,
 } from "../bridge/types";
 import { isBusy, money, spendLine } from "../ui/format";
+import { agentTerminalKey, boxTerminalKey, closeTerminal, sessions } from "../ui/termSessions";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
 export type BoxTab = "agents" | "setup" | "changes" | "ports" | "terminal" | "details";
@@ -682,15 +683,21 @@ export const actions = {
         saveTabs(state.ui.tabs);
       }
     }
+    // Another agent opens on its chat, or on its terminal when that session
+    // is still running; the Changes tab is per visit. Set before the view
+    // shows, so it never mounts on the previous agent's tab.
+    if (sel.kind === "agent" && !(prev.kind === "agent" && prev.id === sel.id))
+      setState("ui", "agentTab", sessions.has(agentTerminalKey(sel.id)) ? "terminal" : "chat");
     setState("ui", "selection", sel);
     if (sel.kind === "fleet" && Date.now() - state.metricsAt > 5_000) void actions.refreshMetrics();
     if (sel.kind === "agent") void actions.loadTranscript(sel.id);
     if (sel.kind === "box" && !(state.ui.selection.kind === "box" && state.ui.selection.id === sel.id)) setState("ui", "boxTab", "agents");
-    // Another agent opens on its chat; the Changes tab is per visit.
-    if (sel.kind === "agent" && !(prev.kind === "agent" && prev.id === sel.id)) setState("ui", "agentTab", "chat");
   },
 
   closeTab(sel: Selection) {
+    // A closed tab ends the terminal session it kept running in the box.
+    if (sel.kind === "agent") closeTerminal(agentTerminalKey(sel.id));
+    if (sel.kind === "box") closeTerminal(boxTerminalKey(sel.id));
     const tabs = state.ui.tabs;
     const i = tabs.findIndex((t) => sameSel(t, sel));
     if (i < 0) return;
@@ -709,6 +716,11 @@ export const actions = {
     const ok = (t: Selection) =>
       (t.kind === "box" && state.machines.some((m) => m.id === t.id)) || (t.kind === "agent" && state.agents.some((a) => a.id === t.id));
     const next = state.ui.tabs.filter(ok);
+    for (const t of state.ui.tabs) {
+      if (ok(t)) continue;
+      if (t.kind === "agent") closeTerminal(agentTerminalKey(t.id));
+      if (t.kind === "box") closeTerminal(boxTerminalKey(t.id));
+    }
     if (next.length !== state.ui.tabs.length) {
       setState("ui", "tabs", next);
       saveTabs(next);
