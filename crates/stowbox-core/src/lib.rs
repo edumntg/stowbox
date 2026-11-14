@@ -2,22 +2,21 @@
 //!
 //! - `provider`: the trait the UI talks to (list boxes, power actions, exec).
 //! - `boxd`: the first provider, boxd.sh, over its public gRPC API.
-//! - `agent`: how a coding agent is launched inside a box and how its
-//!   JSONL output becomes chat events.
+//! - `agent`: a coding agent's interactive session inside a box, its state,
+//!   and the Claude Code login the box uses.
 //! - `cost`: live €/h estimates from the provider's rate card.
 //! - `git`: the repository review (status, diff) and commit, push and pull
 //!   request, run inside the box.
 //! - `guard`: idle auto-standby decisions and the daily spend check.
 //! - `metrics`: CPU, memory, disk and uptime sampled inside a running box.
-//! - `notify`: which agent and setup outcomes deserve a desktop notification.
+//! - `notify`: which agent and setup changes deserve a desktop notification.
 //! - `ports`: HTTPS links and raw port forwards into a box, and the ports
 //!   something listens on inside it.
 //! - `provision`: setup presets (commands and secrets) run in a new box.
-//! - `search`: full-text search across the persisted transcripts.
 //! - `ssh`: the key, `~/.ssh/config` block and editor links that open a box
 //!   in VS Code or Cursor over Remote-SSH.
-//! - `store`: on-disk persistence of agent sessions and transcripts.
-//! - `upload`: files attached to a message, copied into the box.
+//! - `store`: on-disk persistence of agents, presets and setup runs.
+//! - `upload`: files dropped on an agent's terminal, copied into the box.
 //! - `worktree`: one git worktree and branch per agent, next to the repository.
 
 pub mod agent;
@@ -31,7 +30,6 @@ pub mod notify;
 pub mod ports;
 pub mod provider;
 pub mod provision;
-pub mod search;
 pub mod ssh;
 pub mod store;
 #[cfg(test)]

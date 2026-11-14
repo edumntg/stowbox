@@ -1,9 +1,9 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { AgentMeta, Machine, MachineMetrics } from "../bridge/types";
-import { actions, agentsForMachine, machineById, state, type Selection } from "../state/store";
+import { actions, agentWorking, agentsForMachine, machineById, phaseOf, state, type Selection } from "../state/store";
 import * as I from "../icons";
-import { Dot, agentDotState } from "./common";
-import { agentStatusLabel, gib, isBusy, money, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
+import { Dot, phaseDot } from "./common";
+import { agentPhaseLabel, gib, money, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
 
 /** Something a person should look at. Derived from state on every render;
  * nothing is stored, so an alert disappears the moment its cause does. */
@@ -24,6 +24,9 @@ const UNUSED_AFTER_MS = 2 * 3_600_000;
 const MEM_WARN = 0.9;
 const DISK_WARN = 0.1;
 
+/** When the agent's hooks last wrote its state, else when a terminal last opened it. */
+const waitingSince = (a: AgentMeta) => (state.live[a.id]?.since ? state.live[a.id].since * 1000 : a.updatedAt);
+
 function deriveAlerts(now: number): Alert[] {
   const out: Alert[] = [];
   for (const m of state.machines) {
@@ -32,29 +35,17 @@ function deriveAlerts(now: number): Alert[] {
     if (m.status === "failed") {
       out.push({ key: `box-failed-${m.id}`, level: "danger", title: `${m.name} failed`, body: "boxd reports the machine as failed. A reboot usually clears it.", sinceMs: 0, go });
     }
-    for (const a of agents) {
-      if (a.status.kind === "failed") {
-        out.push({
-          key: `agent-failed-${a.id}`,
-          level: "danger",
-          title: `${a.title || "An agent"} failed in ${m.name}`,
-          body: a.status.message,
-          sinceMs: a.updatedAt,
-          go: { kind: "agent", id: a.id },
-        });
-      }
-    }
     if (m.status === "running") {
-      const busy = agents.some((a) => isBusy(a.status));
-      const waiting = agents.filter((a) => a.status.kind === "done" && now - a.updatedAt > IDLE_AFTER_MS);
+      const busy = agents.some(agentWorking);
+      const waiting = agents.filter((a) => phaseOf(a) === "waiting" && now - waitingSince(a) > IDLE_AFTER_MS);
       if (!busy && waiting.length > 0) {
-        const oldest = waiting.reduce((x, y) => (x.updatedAt < y.updatedAt ? x : y));
+        const oldest = waiting.reduce((x, y) => (waitingSince(x) < waitingSince(y) ? x : y));
         out.push({
           key: `box-idle-${m.id}`,
           level: "warn",
           title: `${m.name} is running with nothing to do`,
-          body: `${oldest.title || "An agent"} finished ${relTime(oldest.updatedAt, now)}; the box bills ${money(m.estHourlyMicro, m.currency)}/h until it goes to standby.`,
-          sinceMs: oldest.updatedAt,
+          body: `${oldest.title || "An agent"} has waited for you since ${relTime(waitingSince(oldest), now)}; the box bills ${money(m.estHourlyMicro, m.currency)}/h until it goes to standby.`,
+          sinceMs: waitingSince(oldest),
           go,
         });
       } else if (agents.length === 0 && m.lastConnectedMs && now - m.lastConnectedMs > UNUSED_AFTER_MS) {
@@ -146,21 +137,22 @@ const Tile = (p: { label: string; value: string; sub: string; ratio?: number; do
 const AgentStrip = (p: { agents: AgentMeta[] }) => {
   const shown = () => p.agents.slice(0, 8);
   const summary = () => {
-    const working = p.agents.filter((a) => isBusy(a.status)).length;
-    const waiting = p.agents.filter((a) => a.status.kind === "done").length;
-    const failed = p.agents.filter((a) => a.status.kind === "failed").length;
+    const count = (phase: string) => p.agents.filter((a) => phaseOf(a) === phase).length;
+    const working = count("working");
+    const waiting = count("waiting");
+    const running = count("running");
     const parts: string[] = [];
     if (working) parts.push(`${working} working`);
     if (waiting) parts.push(`${waiting} waiting`);
-    if (failed) parts.push(`${failed} failed`);
-    const rest = p.agents.length - working - waiting - failed;
-    if (rest) parts.push(`${rest} idle`);
+    if (running) parts.push(`${running} running`);
+    const rest = p.agents.length - working - waiting - running;
+    if (rest) parts.push(`${rest} not running`);
     return parts.join(" · ");
   };
   return (
     <Show when={p.agents.length > 0} fallback={<span class="faint">none</span>}>
       <span class="strip" aria-hidden="true">
-        <For each={shown()}>{(a) => <span class="sq" data-state={agentDotState(a.status)} title={a.title || "New agent"} />}</For>
+        <For each={shown()}>{(a) => <span class="sq" data-state={phaseDot[phaseOf(a)]} title={a.title || "New agent"} />}</For>
         <Show when={p.agents.length > 8}>
           <span class="faint mono">+{p.agents.length - 8}</span>
         </Show>
@@ -231,11 +223,11 @@ const Row = (p: { machine: Machine; now: number }) => {
 
 const AgentLine = (p: { agent: AgentMeta; now: number }) => (
   <button class="aline" onClick={() => actions.select({ kind: "agent", id: p.agent.id })}>
-    <span class="sq" data-state={agentDotState(p.agent.status)} />
+    <span class="sq" data-state={phaseDot[phaseOf(p.agent)]} />
     <span class="name">{p.agent.title || "New agent"}</span>
     <span class="faint">{p.agent.machineName}</span>
     <span class="aline-right mono">
-      {p.agent.status.kind === "done" ? "finished" : agentStatusLabel(p.agent.status).toLowerCase()} · {relTime(p.agent.updatedAt, p.now)}
+      {agentPhaseLabel[phaseOf(p.agent)].toLowerCase()} · {relTime(waitingSince(p.agent), p.now)}
     </span>
   </button>
 );
@@ -259,8 +251,8 @@ export default function FleetView() {
 
   const running = () => state.machines.filter((m) => m.status === "running");
   const billing = () => state.machines.filter((m) => m.status === "running" || m.status === "suspended");
-  const working = () => state.agents.filter((a) => isBusy(a.status));
-  const waiting = () => state.agents.filter((a) => a.status.kind === "done");
+  const working = () => state.agents.filter(agentWorking);
+  const waiting = () => state.agents.filter((a) => phaseOf(a) === "waiting");
   const hourly = () => billing().reduce((s, m) => s + m.estHourlyMicro, 0);
   const currency = () => state.machines[0]?.currency ?? state.account?.billing.currency ?? "usd";
   const alerts = createMemo(() => deriveAlerts(now()));
@@ -315,14 +307,14 @@ export default function FleetView() {
           <div class="tiles">
             <Tile label="Running" value={String(running().length)} sub={`of ${state.machines.length} boxes`} ratio={state.machines.length ? running().length / state.machines.length : 0} dot="running" />
             <Tile label="Working" value={String(working().length)} sub={`of ${state.agents.length} agents`} dot="busy" />
-            <Tile label="Waiting for you" value={String(waiting().length)} sub="finished turns to read" dot="done" />
+            <Tile label="Waiting for you" value={String(waiting().length)} sub="their turn ended" dot="done" />
             <Tile label="Estimated" value={`${money(hourly(), currency())}/h`} sub={`${billing().length} running or standby`} />
           </div>
 
           <h3 class="fleet-h">
             Alerts <span class="count">{alerts().length}</span>
           </h3>
-          <Show when={alerts().length > 0} fallback={<div class="fleet-empty">Nothing needs you. Failed agents, boxes billing with nothing to do, boxes near their memory or disk limit, your daily spend warning and boxes put in standby while idle show up here.</div>}>
+          <Show when={alerts().length > 0} fallback={<div class="fleet-empty">Nothing needs you. Boxes billing with nothing to do, boxes near their memory or disk limit, your daily spend warning and boxes put in standby while idle show up here.</div>}>
             <div class="alerts">
               <For each={alerts()}>
                 {(a) => (
@@ -360,7 +352,7 @@ export default function FleetView() {
               <h3 class="fleet-h">
                 Waiting for you <span class="count">{waiting().length}</span>
               </h3>
-              <Show when={waiting().length > 0} fallback={<div class="fleet-empty">No finished turn is waiting to be read.</div>}>
+              <Show when={waiting().length > 0} fallback={<div class="fleet-empty">No agent is waiting for you.</div>}>
                 <div class="alines">
                   <For each={waiting()}>{(a) => <AgentLine agent={a} now={now()} />}</For>
                 </div>
@@ -374,16 +366,13 @@ export default function FleetView() {
             </h3>
             <span class="legend" aria-label="Agent states">
               <span>
-                <span class="sq" data-state="busy" /> Working
+                <span class="sq" data-state="busy" /> Working or running
               </span>
               <span>
                 <span class="sq" data-state="done" /> Waiting
               </span>
               <span>
-                <span class="sq" data-state="idle" /> Idle
-              </span>
-              <span>
-                <span class="sq" data-state="failed" /> Failed
+                <span class="sq" data-state="idle" /> Not running or not checked
               </span>
             </span>
           </div>

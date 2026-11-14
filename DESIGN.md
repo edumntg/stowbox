@@ -17,14 +17,12 @@ on `#171717`, or dark text on `#e5e5e5`.
 
 Colour means state and only state:
 
-- green: a box running, an agent working, a tool call in progress, a diff
-  line added
-- orange: standby, hibernated, pending, an agent that finished and
-  waits for the person, and an agent reconnecting to a turn that keeps
-  running in the box (the transcript says why: the stream dropped, or the
-  box is in standby)
+- green: a box running, an agent working (or running, for a harness
+  without hooks), a diff line added
+- orange: standby, hibernated, pending, and an agent whose turn ended and
+  that waits for the person
 - red: failed, a destructive button on hover, a diff line removed
-- grey: stopped, idle
+- grey: stopped, idle, an agent not running or not checked yet
 
 No accent colour on chrome. The focus ring is a neutral grey at 50%.
 
@@ -36,7 +34,7 @@ System monospace for ids, money, commands and the terminal. Letter-spacing
 0.01em on the body, as Orca sets it.
 
 Radius scale from a 10px base: 6px rows and small controls, 8px buttons,
-inputs and cards, 10px dialogs, 14px the composer. Borders are 1px, never
+inputs and cards, 10px dialogs. Borders are 1px, never
 shadows, except the floating shadow under dialogs and toasts.
 
 ## Layout
@@ -74,27 +72,21 @@ shadows, except the floating shadow under dialogs and toasts.
   values in the same name and value rows, prefilled with the defaults;
   the run shows "With name=value" above its steps, and the steps show the
   commands as they ran.
-- The chat composer: attached files sit inside it above the text as
-  bordered chips (paperclip, the name in monospace, the size or "copying";
-  a failed one turns red with the reason and blocks Send until removed),
-  and the paperclip button sits next to Send. While a turn runs the
-  buttons are Queue and Stop. Queued messages list between the transcript
-  and the composer under a "QUEUED · n" title with one line on when they
-  go out and a Clear button: one bordered row per message with a 6x10
-  square (orange while the queue will send, grey once Stop paused it),
-  the text cut at three lines, its files below, and edit and remove on
-  hover. A paused queue says why and offers Send next. Sent files show
-  under the message in the transcript, the path in the box on hover.
-- An agent has three sub-tabs, Chat, Terminal and Changes. Terminal is
-  the harness's own interface on the session, under a one-line bar (what
-  runs, the session id in monospace, Open again once it exits, Back to
-  chat); a green square on the sub-tab while it is open. The composer's
-  terminal button sits next to the paperclip, and a slash command that
-  needs the terminal turns Send into "Run in terminal" with the reason in
-  the foot. An agent whose box was deleted shows a grey dot, "Box
-  deleted" in the stats, a muted bordered line with a grey square, the
-  sentence and Remove, the transcript, and no composer; Terminal and
-  Changes are disabled. A box's Agents tab ends with CLAUDE CODE LOGIN: one
+- An agent is its harness's own interface in a terminal, one terminal per
+  agent, each on its own session. It has two sub-tabs, Terminal and
+  Changes; a green square on Terminal while it is open. Above the
+  terminal, a one-line bar says what runs where and whether it outlives
+  the terminal (tmux) or not, with Add files on the right and Open again
+  once the harness exits. Files dropped on the terminal or added there
+  are copied into the box and their paths typed at the prompt; the bar
+  says "Copying…" meanwhile, or the reason in red. The header's End
+  session (red, ghost) quits the harness in the box; the terminal then
+  gives way to a one-line empty state and "Open … again". The stats line
+  says the state from the box (Working, Waiting for you, Running, Not
+  running, Not checked yet) and the session id's first 8 characters. An
+  agent whose box was deleted shows a grey dot, "Box deleted" in the
+  stats, an empty state with the sentence and Remove the agent, and no
+  terminal; Changes is disabled. A box's Agents tab ends with CLAUDE CODE LOGIN: one
   bordered row with a square (neutral foreground when a login was found,
   orange when none), which login and the account in monospace, then Sign
   in, the switch, and refresh; a note under it says where the login
@@ -106,8 +98,7 @@ shadows, except the floating shadow under dialogs and toasts.
   all as the primary button, Push, Open pull request) with a line saying
   how the pull request will open, then the changed files as a bordered
   list (status letter, path, +added in green, -removed in red), then one
-  collapsible card per file with the diff in the transcript's diff
-  styles and hunk headers on the muted background. Files over 400 lines
+  collapsible card per file with the diff in the diff styles and hunk headers on the muted background. Files over 400 lines
   start folded. An action's result is a card under the actions: a neutral
   square and git's output when it worked, a red square, a red-tinted
   border and git's message verbatim when it did not ("Push rejected").
@@ -139,8 +130,8 @@ shadows, except the floating shadow under dialogs and toasts.
   ellipsis before it can widen the view; the box panel lists it under
   the directory with the repository it belongs to. Removing such an
   agent opens its own dialog: one checkbox, on by default, to remove the
-  worktree too (the branch stays), disabled with the reason while a turn
-  runs or once the box is gone. When git refuses, its message shows
+  worktree too (the branch stays), disabled with the reason once the box
+  is gone. When git refuses, its message shows
   verbatim in the red error style and the actions become "Keep the
   worktree" and "Discard changes and remove".
 - Right panel (280px) when an agent is open: a toolbar of icon buttons
@@ -164,12 +155,8 @@ shadows, except the floating shadow under dialogs and toasts.
   active row has the hover background; the mouse and the arrow keys move
   the same highlight. With no query it lists what fits the open box or
   agent first, then views, boxes and recent agents; with one, "Best
-  matches" then "In transcripts": the agent's square and title, "box ·
-  turn n · kind" muted, the agent's last activity right, and a two-line
-  snippet with the match in semibold and underlined in the ring grey, no
-  colour. Empty, searching and failed states are one muted line in the
-  list. A footer names the keys. Opening a match outlines the message in
-  the ring grey for a moment, which fades.
+  matches" across every box. No match is one muted line in the list. A
+  footer names the keys.
 - A 24px status bar: account, balance, how many boxes are running and the
   combined hourly estimate.
 - Settings dialog: a key/value list. Notifications are two checkboxes

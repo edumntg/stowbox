@@ -3,10 +3,8 @@
 
 import type {
   Account,
-  AgentEvent,
+  AgentLive,
   AgentMeta,
-  Attachment,
-  AgentPush,
   ClaudeAccount,
   Api,
   GitDiffFile,
@@ -16,14 +14,13 @@ import type {
   HttpsRoute,
   IdlePolicy,
   ListeningPort,
+  LivePush,
   Machine,
   MachineMetrics,
   Notice,
   NoticeTarget,
   PortForward,
   Preset,
-  SearchHit,
-  SearchResults,
   SetupPush,
   SshPlan,
   SetupRun,
@@ -111,15 +108,10 @@ let agents: AgentMeta[] = [
     machineName: "mock-api",
     cwd: "/home/user/api",
     model: null,
-    sessionId: "mock-session-1",
-    status: { kind: "done" },
+    sessionId: "6f1c2a4e-0b7d-4d39-9a51-3c2e8f0d1a01",
     skipPermissions: true,
     createdAt: Date.now() - 1_800_000,
     updatedAt: Date.now() - 600_000,
-    totalCostUsd: 0.0412,
-    turns: 6,
-    inputTokens: 18_204,
-    outputTokens: 1_311,
   },
   {
     id: "ag_2",
@@ -130,22 +122,9 @@ let agents: AgentMeta[] = [
     cwd: "/home/user/api",
     model: null,
     sessionId: null,
-    status: { kind: "tool", name: "command" },
     skipPermissions: true,
     createdAt: Date.now() - 300_000,
     updatedAt: Date.now() - 2_000,
-    totalCostUsd: 0,
-    turns: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    queue: [
-      {
-        id: "q_seed_1",
-        text: "Once you know why, open an issue draft with the failing log lines.",
-        attachments: [{ name: "nightly-arm64.log", path: "/home/boxd/.stowbox/uploads/ag_2/3f9a1c-nightly-arm64.log", size: 48_213 }],
-        queuedAt: Date.now() - 60_000,
-      },
-    ],
   },
   {
     id: "ag_3",
@@ -155,19 +134,12 @@ let agents: AgentMeta[] = [
     machineName: "mock-web",
     cwd: null,
     model: null,
-    sessionId: "mock-session-3",
-    status: { kind: "failed", message: "the agent process exited with code 1 before reporting a result" },
+    sessionId: "6f1c2a4e-0b7d-4d39-9a51-3c2e8f0d1a03",
     skipPermissions: true,
     createdAt: Date.now() - 7_200_000,
     updatedAt: Date.now() - 7_000_000,
-    totalCostUsd: 0.0021,
-    turns: 1,
-    inputTokens: 900,
-    outputTokens: 40,
   },
   {
-    // A turn left running when the app closed, on a box that went to standby
-    // since: the app waits for the box instead of waking it.
     id: "ag_4",
     title: "Upgrade the image pipeline to sharp 0.34",
     harness: "claude-code",
@@ -175,226 +147,65 @@ let agents: AgentMeta[] = [
     machineName: "mock-web",
     cwd: "/home/user/web",
     model: null,
-    sessionId: "mock-session-4",
-    status: { kind: "reconnecting", message: "the box is in standby; the turn continues when it runs again" },
+    sessionId: "6f1c2a4e-0b7d-4d39-9a51-3c2e8f0d1a04",
     skipPermissions: true,
     createdAt: Date.now() - 5_400_000,
     updatedAt: Date.now() - 3_000_000,
-    totalCostUsd: 0,
-    turns: 0,
-    inputTokens: 0,
-    outputTokens: 0,
   },
 ];
 
-const transcripts: Record<string, AgentEvent[]> = {
-  ag_1: [
-    { type: "user_message", text: "Add a /health endpoint and a test for it" },
-    { type: "init", session_id: "mock-session-1", model: "claude-sonnet", cwd: "/home/user/api" },
-    { type: "assistant", blocks: [{ type: "text", text: "I'll look at how routes are registered first." }] },
-    { type: "assistant", blocks: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "rg -n \"router.get\" src | head" } }] },
-    { type: "tool_result", tool_use_id: "t1", content: "src/routes.ts:12:router.get('/version', version)\nsrc/routes.ts:13:router.get('/me', me)", is_error: false },
-    { type: "assistant", blocks: [{ type: "tool_use", id: "t2", name: "Edit", input: { file_path: "src/routes.ts" } }] },
-    { type: "tool_result", tool_use_id: "t2", content: "The file src/routes.ts has been updated.", is_error: false },
-    { type: "assistant", blocks: [{ type: "tool_use", id: "t3", name: "Bash", input: { command: "npm test -- health" } }] },
-    { type: "tool_result", tool_use_id: "t3", content: "PASS test/health.test.ts\n  ✓ returns 200 and {ok:true} (18 ms)\n\nTests: 1 passed, 1 total", is_error: false },
-    {
-      type: "assistant",
-      blocks: [
-        {
-          type: "text",
-          text: "Done. `GET /health` returns `{ ok: true }` and `test/health.test.ts` covers it.\n\n```ts\nrouter.get('/health', (_req, res) => res.json({ ok: true }));\n```\n\nNothing else in the router needed changes.",
-        },
-      ],
-    },
-    { type: "result", ok: true, subtype: "success", message: "Done.", cost_usd: 0.0412, duration_ms: 48_210, turns: 6, session_id: "mock-session-1", input_tokens: 18_204, output_tokens: 1_311 },
-  ],
-  ag_4: [{ type: "user_message", text: "Upgrade the image pipeline to sharp 0.34 and fix whatever breaks" }],
-  ag_3: [
-    { type: "user_message", text: "Migrate the landing page to the new design tokens" },
-    { type: "stderr", text: "claude: command not found" },
-    { type: "exit", code: 1 },
-  ],
-};
+// What the boxes' watches show, by the rules of stowbox_core::agent::session:
+// Claude Code writes its state from hooks, Codex writes none, and tmux keeps
+// a harness running with no terminal open. mock-web has no tmux, so its
+// agents only run while their terminal is open.
+const nowSecs = () => Math.floor(Date.now() / 1000);
+const live = new Map<string, AgentLive>([
+  ["ag_1", { id: "ag_1", state: "working", since: nowSecs() - 40, running: true }],
+  ["ag_2", { id: "ag_2", state: null, since: 0, running: true }],
+  ["ag_3", { id: "ag_3", state: "waiting", since: nowSecs() - 7_000, running: false }],
+]);
+const noTmux = new Set(["vm_mock_2"]);
+const liveListeners = new Set<(p: LivePush) => void>();
+function livePush(machineId: string, notices: Notice[] = []): LivePush {
+  const mine = agents.filter((a) => a.machineId === machineId).map((a) => live.get(a.id)).filter((l): l is AgentLive => !!l);
+  return { machineId, tmux: !noTmux.has(machineId), agents: mine, notices };
+}
+function emitLive(machineId: string, notices: Notice[] = []) {
+  const p = livePush(machineId, notices);
+  for (const l of liveListeners) l(p);
+}
+function setLive(id: string, f: (l: AgentLive) => Partial<AgentLive>) {
+  const a = agents.find((x) => x.id === id);
+  if (!a) return;
+  const was = live.get(id) ?? { id, state: null, since: 0, running: false };
+  const next = { ...was, ...f(was) };
+  live.set(id, next);
+  // The same rule as stowbox_core::notify: working to waiting notifies once.
+  const notices: Notice[] =
+    was.state === "working" && next.state === "waiting"
+      ? [{ kind: "agent-done", title: `${a.title.trim() || "Claude Code agent"} is waiting for you`, body: `In ${a.machineName}`, agentId: id, machineId: a.machineId }]
+      : [];
+  emitLive(a.machineId, notices);
+}
+/** ag_1 finishes the turn it was on a little after the page loads. */
+setTimeout(() => setLive("ag_1", () => ({ state: "waiting", since: nowSecs() })), 12_000);
 
-/** The same rules as stowbox_core::search, over the mock transcripts. */
-function eventTexts(ev: AgentEvent): [SearchHit["kind"], string][] {
-  const strings = (v: unknown): string[] =>
-    typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === "object" ? Object.values(v).flatMap(strings) : [];
-  switch (ev.type) {
-    case "user_message":
-      return [["user", ev.text]];
-    case "assistant":
-      return ev.blocks.map((b): [SearchHit["kind"], string] =>
-        b.type === "text" ? ["assistant", b.text] : b.type === "thinking" ? ["thinking", b.text] : ["tool-call", [b.name, ...strings(b.input)].join(" ")],
-      );
-    case "tool_result":
-      return [["tool-output", ev.content]];
-    case "result":
-      return !ev.ok && ev.message ? [["error", ev.message]] : [];
-    case "stderr":
-      return [["note", ev.text]];
-    default:
-      return [];
-  }
-}
-
-function mockSnippet(text: string, start: number, end: number): Pick<SearchHit, "before" | "matched" | "after"> {
-  const collapse = (s: string) => s.split(/\s+/).filter(Boolean).join(" ");
-  const head = text.slice(0, start);
-  let before = head.length > 60 ? "…" + collapse(head.slice(-60)) : collapse(head);
-  if (/\s$/.test(head) && before) before += " ";
-  const matched = collapse(text.slice(start, end));
-  const tail = text.slice(end);
-  const room = Math.max(0, 180 - before.length - matched.length);
-  const rest = tail.trimStart();
-  const after = (/^\s/.test(tail) && rest ? " " : "") + (rest.length > room ? collapse(rest.slice(0, room)) + "…" : collapse(rest));
-  return { before, matched, after };
-}
-
-function searchMock(query: string, limit: number): SearchResults {
-  const q = query.trim().slice(0, 200).toLowerCase();
-  const out: SearchResults = { hits: [], truncated: false, scanned: 0 };
-  if (!q) return out;
-  for (const a of [...agents].sort((x, y) => y.updatedAt - x.updatedAt)) {
-    const events = transcripts[a.id];
-    if (!events) continue;
-    out.scanned++;
-    let turn = 0;
-    const found: SearchHit[] = [];
-    events.forEach((ev, i) => {
-      if (ev.type === "user_message") turn++;
-      for (const [kind, text] of eventTexts(ev)) {
-        const at = text.toLowerCase().indexOf(q);
-        if (at < 0) continue;
-        found.push({ agentId: a.id, event: i, turn, kind, ...mockSnippet(text, at, at + q.length) });
-        break;
-      }
-    });
-    if (found.length > 5) out.truncated = true;
-    const latest = found.reverse().slice(0, 5);
-    const room = limit - out.hits.length;
-    if (latest.length > room) out.truncated = true;
-    out.hits.push(...latest.slice(0, room));
-    if (out.hits.length >= limit) break;
-  }
-  return out;
-}
-
-const listeners = new Set<(p: AgentPush) => void>();
-// The same rule as stowbox_core::notify: an outcome notifies when the status
-// seen just before it was busy, so one turn notifies once.
-const lastStatus = new Map(agents.map((a) => [a.id, a.status.kind]));
-const busyKinds = new Set(["starting", "thinking", "tool", "reconnecting"]);
-function agentNotice(meta: AgentMeta): Notice | null {
-  const prev = lastStatus.get(meta.id);
-  lastStatus.set(meta.id, meta.status.kind);
-  if (!prev || !busyKinds.has(prev)) return null;
-  const name = meta.title.trim() || (meta.harness === "codex" ? "Codex agent" : "Claude Code agent");
-  const base = { agentId: meta.id, machineId: meta.machineId };
-  if (meta.status.kind === "done") return { ...base, kind: "agent-done", title: `${name} finished`, body: `Waiting for you in ${meta.machineName}` };
-  if (meta.status.kind === "failed") return { ...base, kind: "agent-failed", title: `${name} failed`, body: `${meta.machineName}: ${meta.status.message}` };
-  return null;
-}
-function emit(agentId: string, event: AgentEvent | null) {
-  const meta = agents.find((a) => a.id === agentId);
-  if (!meta) return; // the agent was removed while a simulated turn was running
-  const notice = agentNotice(meta);
-  for (const l of listeners) l({ agentId, event, meta, notice });
-}
-function setStatus(id: string, status: AgentMeta["status"]) {
-  agents = agents.map((a) => (a.id === id ? { ...a, status, updatedAt: Date.now() } : a));
-}
-function record(id: string, ev: AgentEvent) {
-  if (ev.type !== "text_delta") (transcripts[id] ??= []).push(ev);
-  emit(id, ev);
+/** A prompt submitted in a mock Claude Code terminal: a short turn that edits a file. */
+function simulateTurn(id: string) {
+  const a = agents.find((x) => x.id === id);
+  if (!a || a.harness !== "claude-code") return;
+  setLive(id, () => ({ state: "working", since: nowSecs(), running: true }));
+  setTimeout(() => {
+    if (!live.get(id)?.running) return;
+    dirtyWorktree(id);
+    setLive(id, () => ({ state: "waiting", since: nowSecs() }));
+  }, 4_000);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const stopped = (id: string) => agents.find((a) => a.id === id)?.status.kind === "stopped";
-
-/** Mimics the follower losing the stream and picking the turn up again. */
-async function simulateReconnect(id: string, resume: AgentMeta["status"]) {
-  setStatus(id, { kind: "reconnecting", message: "the stream dropped (connection reset by peer)" });
-  emit(id, null);
-  await sleep(2500);
-  if (stopped(id)) return false;
-  setStatus(id, resume);
-  emit(id, null);
-  return true;
-}
-
-/** The shell's rule (AgentMeta::queue_ready): after a turn really ends,
- * the next queued message goes out, unless Stop paused the queue.
- * `resume` is the person asking for it after a Stop. */
-function drainQueue(id: string, resume = false) {
-  const a = agents.find((x) => x.id === id);
-  if (!a || !a.queue?.length || busyKinds.has(a.status.kind)) return;
-  if (!resume && (a.queuePaused || a.status.kind === "stopped")) return;
-  const [next, ...rest] = a.queue;
-  agents = agents.map((x) => (x.id === id ? { ...x, queue: rest } : x));
-  void simulateTurn(id, next.text, next.attachments);
-}
-
-function setQueue(id: string, f: (a: AgentMeta) => Partial<AgentMeta>): AgentMeta {
-  const a = agents.find((x) => x.id === id);
-  if (!a) throw new Error("agent not found");
-  agents = agents.map((x) => (x.id === id ? { ...x, ...f(x), updatedAt: Date.now() } : x));
-  emit(id, null);
-  return agents.find((x) => x.id === id)!;
-}
-
 const UPLOAD_MAX = 20 * 1024 * 1024;
 const mb = (n: number) => (n / (1024 * 1024)).toFixed(1) + " MB";
-
-async function simulateTurn(id: string, text: string, attachments: Attachment[] = []) {
-  setStatus(id, { kind: "starting" });
-  record(id, { type: "user_message", text, ...(attachments.length ? { attachments } : {}) });
-  await sleep(600);
-  record(id, { type: "init", session_id: "mock-session", model: "claude-sonnet", cwd: null });
-  setStatus(id, { kind: "thinking" });
-  const reply = "Looking into it. I'll check the current state before changing anything.";
-  for (const word of reply.split(" ")) {
-    await sleep(60);
-    record(id, { type: "text_delta", text: word + " " });
-  }
-  record(id, { type: "assistant", blocks: [{ type: "text", text: reply }] });
-  setStatus(id, { kind: "tool", name: "Bash" });
-  record(id, { type: "assistant", blocks: [{ type: "tool_use", id: "x1", name: "Bash", input: { command: "git status --short" } }] });
-  await sleep(900);
-  if (stopped(id) || !(await simulateReconnect(id, { kind: "tool", name: "Bash" }))) return;
-  record(id, { type: "tool_result", tool_use_id: "x1", content: " M src/app.ts", is_error: false });
-  dirtyWorktree(id);
-  setStatus(id, { kind: "thinking" });
-  await sleep(700);
-  record(id, { type: "assistant", blocks: [{ type: "text", text: "One modified file. Tell me whether to commit it or keep going." }] });
-  agents = agents.map((a) => (a.id === id ? { ...a, totalCostUsd: a.totalCostUsd + 0.0031, turns: a.turns + 2, status: { kind: "done" } } : a));
-  record(id, { type: "result", ok: true, subtype: "success", message: null, cost_usd: 0.0031, duration_ms: 3200, turns: 2, session_id: "mock-session", input_tokens: 1200, output_tokens: 80 });
-  await sleep(300);
-  drainQueue(id);
-}
-
-/** A box came back: turns that waited for it are followed again. */
-async function resumeWaitingTurns(machineId: string) {
-  const waiting = agents.filter((a) => a.machineId === machineId && a.status.kind === "reconnecting");
-  for (const a of waiting) {
-    setStatus(a.id, { kind: "reconnecting", message: "following the turn again" });
-    emit(a.id, null);
-  }
-  await sleep(1200);
-  for (const a of waiting) {
-    if (stopped(a.id)) continue;
-    setStatus(a.id, { kind: "thinking" });
-    record(a.id, { type: "init", session_id: a.sessionId ?? "mock-session", model: "claude-sonnet", cwd: a.cwd });
-    await sleep(800);
-    if (stopped(a.id)) continue;
-    record(a.id, { type: "assistant", blocks: [{ type: "text", text: "sharp is on 0.34 now; the resize tests pass." }] });
-    agents = agents.map((x) => (x.id === a.id ? { ...x, turns: x.turns + 1, totalCostUsd: x.totalCostUsd + 0.0112, status: { kind: "done" } } : x));
-    record(a.id, { type: "result", ok: true, subtype: "success", message: null, cost_usd: 0.0112, duration_ms: 812_000, turns: 1, session_id: a.sessionId, input_tokens: 4100, output_tokens: 220 });
-    drainQueue(a.id);
-  }
-}
 
 // Setup presets. Secret values are kept here only to mimic the keychain;
 // the UI never receives them.
@@ -552,8 +363,13 @@ const touchedAt: Record<string, number> = {};
 const openTerminals = new Map<string, string>();
 let terminalSeq = 0;
 const terminalEvents = new Map<string, (s: string) => void>();
-/** Agent terminals echo what is typed, like a prompt would. */
-const echoing = new Set<string>();
+/** Agent terminals by terminal id; they echo what is typed, like a prompt would. */
+const agentTerminals = new Map<string, string>();
+const terminalEnds = new Map<string, (code: number) => void>();
+function endTerminal(id: string, code: number) {
+  terminalEnds.get(id)?.(code);
+  terminalEnds.delete(id);
+}
 /** Sign-in terminals by box: closing one counts as a finished `/login`. */
 const loginTerminals = new Map<string, string>();
 const claudeAccounts = new Map<string, ClaudeAccount>();
@@ -572,8 +388,7 @@ function decide(m: Machine, policy: IdlePolicy, now: number): GuardVerdict {
   if (m.status !== "running") return { kind: "keep", reason: "not-running" };
   if (policy.optedOut.includes(m.id)) return { kind: "keep", reason: "opted-out" };
   const mine = agents.filter((a) => a.machineId === m.id);
-  const queueGoesOn = (a: AgentMeta) => !!a.queue?.length && !a.queuePaused && a.status.kind !== "stopped";
-  if (mine.some((a) => busyKinds.has(a.status.kind) || queueGoesOn(a))) return { kind: "keep", reason: "agent-working" };
+  if (mine.some((a) => live.get(a.id)?.running && live.get(a.id)?.state === "working")) return { kind: "keep", reason: "agent-working" };
   const runs = setupRuns.filter((r) => r.machineId === m.id);
   if (runs.some((r) => r.status === "waiting" || r.status === "running")) return { kind: "keep", reason: "setup-running" };
   if ([...openTerminals.values()].includes(m.id)) return { kind: "keep", reason: "terminal-open" };
@@ -872,12 +687,13 @@ export const mockApi: Api = {
     if (action === "destroy") {
       machines = machines.filter((m) => m.id !== id);
       claudeAccounts.delete(id);
-      // Like the app: agents that lived there stay as history, stopped.
-      agents = agents.map((a) => (a.machineId === id ? { ...a, status: ["starting", "thinking", "tool", "reconnecting"].includes(a.status.kind) ? { kind: "stopped" } : a.status } : a));
+      // Like the app: agents that lived there stay as history.
+      for (const a of agents) if (a.machineId === id) live.delete(a.id);
       return;
     }
     machines = machines.map((m) => (m.id === id ? machine({ ...m, status: next[action] }) : m));
-    if (next[action] === "running") void resumeWaitingTurns(id);
+    // A stop or reboot ends every process in the box; standby keeps them.
+    if (action === "stop" || action === "reboot") for (const a of agents) if (a.machineId === id && live.has(a.id)) setLive(a.id, () => ({ running: false }));
   },
   async machineUsage(id) {
     const m = await mockApi.getMachine(id);
@@ -969,102 +785,54 @@ export const mockApi: Api = {
       cwd,
       worktree,
       model: spec.model ?? null,
-      sessionId: null,
-      status: { kind: "idle" },
+      sessionId: spec.harness === "claude-code" ? crypto.randomUUID() : null,
       skipPermissions: spec.skipPermissions,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      totalCostUsd: 0,
-      turns: 0,
-      inputTokens: 0,
-      outputTokens: 0,
     };
     agents = [meta, ...agents];
     return meta;
-  },
-  async agentEvents(id) {
-    // A copy: the store keeps what it gets and pushes live events onto it,
-    // so handing out this array made every event show up twice.
-    return [...(transcripts[id] ?? [])];
-  },
-  async searchTranscripts(query, limit) {
-    await sleep(120);
-    return searchMock(query, Math.min(Math.max(limit ?? 50, 1), 200));
-  },
-  async agentSend(id, text, attachments) {
-    const a = agents.find((a) => a.id === id);
-    if (!a) throw new Error("agent not found");
-    if (busyKinds.has(a.status.kind)) throw new Error("this agent is still working on the previous message");
-    const title = text.trim() || attachments?.[0]?.name || "";
-    if (!a.title) agents = agents.map((x) => (x.id === id ? { ...x, title: title.slice(0, 64) } : x));
-    void simulateTurn(id, text, attachments ?? []);
-  },
-  async agentQueueAdd(id, text, attachments) {
-    if (!text.trim() && !attachments?.length) throw new Error("write something for the agent first");
-    const a = agents.find((x) => x.id === id);
-    if ((a?.queue?.length ?? 0) >= 20) throw new Error("the queue holds 20 messages; wait for some to be sent or remove one");
-    const msg = { id: "q_" + Math.random().toString(16).slice(2, 10), text: text.trimEnd(), attachments: attachments ?? [], queuedAt: Date.now() };
-    const meta = setQueue(id, (x) => ({ queue: [...(x.queue ?? []), msg] }));
-    drainQueue(id);
-    return agents.find((x) => x.id === id) ?? meta;
-  },
-  async agentQueueEdit(id, messageId, text) {
-    const a = agents.find((x) => x.id === id);
-    const m = a?.queue?.find((q) => q.id === messageId);
-    if (!m) throw new Error("not found: that message was already sent");
-    const remove = !text.trim() && !m.attachments.length;
-    return setQueue(id, (x) => ({ queue: remove ? x.queue!.filter((q) => q.id !== messageId) : x.queue!.map((q) => (q.id === messageId ? { ...q, text: text.trimEnd() } : q)) }));
-  },
-  async agentQueueRemove(id, messageId) {
-    return setQueue(id, (x) => {
-      const queue = (x.queue ?? []).filter((q) => q.id !== messageId);
-      return { queue, queuePaused: queue.length ? x.queuePaused : false };
-    });
-  },
-  async agentQueueClear(id) {
-    return setQueue(id, () => ({ queue: [], queuePaused: false }));
-  },
-  async agentQueueResume(id) {
-    setQueue(id, () => ({ queuePaused: false }));
-    drainQueue(id, true);
   },
   async agentUpload(id, name, bytes) {
     const a = agents.find((x) => x.id === id);
     if (!a) throw new Error("agent not found");
     if (bytes.length === 0) throw new Error(`${name} is empty`);
-    if (bytes.length > UPLOAD_MAX) throw new Error(`${name} is ${mb(bytes.length)}; attachments are limited to 20 MB each`);
+    if (bytes.length > UPLOAD_MAX) throw new Error(`${name} is ${mb(bytes.length)}; files are limited to 20 MB each`);
     await sleep(400 + Math.min(1600, bytes.length / 4000));
     const clean = (name.split(/[\\/]/).pop() ?? "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "") || "file";
     const tag = Math.random().toString(16).slice(2, 8);
     return { name, path: `/home/boxd/.stowbox/uploads/${id}/${tag}-${clean}`, size: bytes.length };
   },
   async agentStop(id) {
-    const a = agents.find((x) => x.id === id);
-    agents = agents.map((x) => (x.id === id ? { ...x, queuePaused: !!a?.queue?.length } : x));
-    setStatus(id, { kind: "stopped" });
-    record(id, { type: "exit", code: -1 });
+    await sleep(300);
+    if (live.has(id)) setLive(id, () => ({ running: false }));
+    // The harness exits, so its terminal ends too.
+    for (const [term, agent] of agentTerminals) if (agent === id) endTerminal(term, 0);
+  },
+  async agentsLive() {
+    const boxes = new Set(agents.filter((a) => live.has(a.id)).map((a) => a.machineId));
+    return [...boxes].map((m) => livePush(m));
   },
   async deleteAgent(id, removeWorktree, force) {
     const a = agents.find((x) => x.id === id);
     const wt = a?.worktree;
     if (a && wt && removeWorktree) {
-      if (a.status.kind === "starting" || a.status.kind === "thinking" || a.status.kind === "tool" || a.status.kind === "reconnecting")
-        throw new Error("stop the agent's turn before removing its worktree");
       await sleep(500);
       const key = `${a.machineId}:${wt.path}`;
       if (repos[key]?.review.files.length && !force) throw new Error(`fatal: '${wt.path}' contains modified or untracked files, use --force to delete it`);
       delete repos[key];
     }
     agents = agents.filter((a) => a.id !== id);
-    delete transcripts[id];
+    live.delete(id);
+    if (a) emitLive(a.machineId);
   },
   async renameAgent(id, title) {
     agents = agents.map((a) => (a.id === id ? { ...a, title } : a));
     return agents.find((a) => a.id === id)!;
   },
-  async onAgentEvent(cb) {
-    listeners.add(cb);
-    return () => listeners.delete(cb);
+  async onAgentsLive(cb) {
+    liveListeners.add(cb);
+    return () => liveListeners.delete(cb);
   },
   async listPresets() {
     return presets.map((p) => ({ ...p, secrets: p.secretNames.map((name) => ({ name, hasValue: !!presetValues[p.id]?.[name] })) }));
@@ -1274,10 +1042,14 @@ export const mockApi: Api = {
     if (target.kind === "agent") {
       const a = agents.find((x) => x.id === target.id);
       if (!a) throw new Error("no such agent");
-      if (["starting", "thinking", "tool", "reconnecting"].includes(a.status.kind)) throw new Error("a turn is running in the chat; wait for it to end or stop it first");
-      const cmd = a.harness === "claude-code" ? `claude${a.sessionId ? ` --resume ${a.sessionId}` : ""}` : `codex${a.sessionId ? ` resume ${a.sessionId}` : ""}`;
-      setTimeout(() => send(`mock terminal: the desktop build runs ${cmd} inside the box.\r\n\r\n> ${target.input ? `${target.input}\r\n> ` : ""}`), 100);
-      echoing.add(id);
+      const cmd = a.harness === "claude-code" ? `claude --resume ${a.sessionId}` : `codex${a.sessionId ? ` resume ${a.sessionId}` : ""}`;
+      const where = noTmux.has(machineId) ? "" : " in tmux, so it keeps running when this terminal closes";
+      setTimeout(() => send(`mock terminal: the desktop build runs ${cmd} inside the box${where}.\r\n\r\n> ${target.input ? `${target.input}\r\n> ` : ""}`), 100);
+      agentTerminals.set(id, a.id);
+      terminalEnds.set(id, (code) => onEvent({ type: "exit", code }));
+      agents = agents.map((x) => (x.id === a.id ? { ...x, updatedAt: Date.now() } : x));
+      if (target.input?.trim()) simulateTurn(a.id);
+      else setLive(a.id, () => ({ running: true }));
     } else if (target.kind === "claude-login") {
       setTimeout(() => send("mock terminal: the desktop build runs claude /login inside the box.\r\nLeave this tab to pretend the sign-in worked.\r\n"), 100);
       loginTerminals.set(id, machineId);
@@ -1292,14 +1064,22 @@ export const mockApi: Api = {
   async terminalWrite(id, bytes) {
     const m = openTerminals.get(id);
     if (m) touch(m);
-    if (echoing.has(id)) terminalEvents.get(id)?.(new TextDecoder().decode(bytes).replace(/\r/g, "\r\n> ").replace(/\x7f/g, "\b \b"));
+    const agent = agentTerminals.get(id);
+    if (!agent) return;
+    const text = new TextDecoder().decode(bytes);
+    terminalEvents.get(id)?.(text.replace(/\r/g, "\r\n> ").replace(/\x7f/g, "\b \b"));
+    if (text.includes("\r")) simulateTurn(agent);
   },
   async terminalResize() {},
   async terminalClose(id) {
     const m = openTerminals.get(id);
     openTerminals.delete(id);
     terminalEvents.delete(id);
-    echoing.delete(id);
+    terminalEnds.delete(id);
+    const agent = agentTerminals.get(id);
+    agentTerminals.delete(id);
+    // Without tmux the harness dies with its terminal.
+    if (agent && m && noTmux.has(m)) setLive(agent, () => ({ running: false }));
     const login = loginTerminals.get(id);
     loginTerminals.delete(id);
     if (login) {

@@ -28,12 +28,12 @@ const Tab = (p: { sel: Selection }) => {
           <Match when={p.sel.kind === "box" && machineById((p.sel as { id: string }).id)}>{(m) => <Dot status={m().status} />}</Match>
           <Match when={p.sel.kind === "agent" && agentById((p.sel as { id: string }).id)}>{(a) => (
             <Show when={!agentBoxGone(a())} fallback={<Dot status="stopped" />}>
-              <AgentDot status={a().status} />
+              <AgentDot agent={a()} />
             </Show>
           )}</Match>
         </Switch>
         <Show when={p.sel.kind === "agent"} fallback={<I.Box />}>
-          <I.Chat />
+          <I.Terminal />
         </Show>
         <span class="tab-label">{label()}</span>
       </button>

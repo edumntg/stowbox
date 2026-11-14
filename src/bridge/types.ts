@@ -1,6 +1,5 @@
-// Mirrors the Rust types in crates/stowbox-core/src/types.rs and agent/mod.rs.
-// Machine and AgentMeta are camelCase; transcript events keep snake_case
-// because they are stored verbatim on disk.
+// Mirrors the Rust types in crates/stowbox-core/src/types.rs, agent/mod.rs
+// and agent/session.rs. Everything crosses the bridge camelCase.
 
 export type MachineStatus =
   | "pending"
@@ -176,10 +175,10 @@ export interface SetupRun {
 }
 
 /** Mirrors stowbox_core::notify::Notice: set on a push that is a real
- * outcome (a turn finished or failed, a setup run ended), once per outcome. */
+ * outcome (an agent stopped working, a setup run ended), once per outcome. */
 export interface Notice {
   /** "spend" is raised by the UI itself, from the daily spend check. */
-  kind: "agent-done" | "agent-failed" | "setup-done" | "setup-failed" | "spend";
+  kind: "agent-done" | "setup-done" | "setup-failed" | "spend";
   title: string;
   body: string;
   agentId: string | null;
@@ -248,17 +247,6 @@ export interface PrOutcome {
 
 export type Harness = "claude-code" | "codex";
 
-export type AgentStatus =
-  | { kind: "idle" }
-  | { kind: "starting" }
-  | { kind: "thinking" }
-  | { kind: "tool"; name: string }
-  /** A turn runs detached in the box; its output stream is not attached yet. */
-  | { kind: "reconnecting"; message: string }
-  | { kind: "done" }
-  | { kind: "failed"; message: string }
-  | { kind: "stopped" };
-
 export interface AgentMeta {
   id: string;
   title: string;
@@ -267,21 +255,39 @@ export interface AgentMeta {
   machineName: string;
   cwd: string | null;
   model: string | null;
+  /** The harness's own session: set up front for Claude Code, so every
+   * terminal resumes the same conversation. */
   sessionId: string | null;
-  status: AgentStatus;
   skipPermissions: boolean;
   createdAt: number;
+  /** The last time a terminal was opened on it. */
   updatedAt: number;
-  totalCostUsd: number;
-  turns: number;
-  inputTokens: number;
-  outputTokens: number;
   /** The agent's own worktree and branch; `cwd` is inside it. */
   worktree?: AgentWorktree | null;
-  /** Messages written while a turn ran, sent one per turn once it ends. */
-  queue?: QueuedMessage[];
-  /** Set by Stop or a message that could not be sent: the queue waits for the person. */
-  queuePaused?: boolean;
+}
+
+/** Mirrors stowbox_core::agent::session::AgentState, from Claude Code's
+ * hooks: "working" from a prompt until the turn stops, then "waiting". */
+export type AgentState = "working" | "waiting";
+
+/** One agent as its box shows it. Codex has no hooks, so no `state`. */
+export interface AgentLive {
+  id: string;
+  state: AgentState | null;
+  /** Unix seconds the state was written. */
+  since: number;
+  /** Its tmux session is alive in the box. */
+  running: boolean;
+}
+
+/** What a box's watch saw last. */
+export interface LivePush {
+  machineId: string;
+  /** The box has tmux, so agents keep running with no terminal open. */
+  tmux: boolean;
+  agents: AgentLive[];
+  /** Agents that just went from working to waiting. */
+  notices: Notice[];
 }
 
 /** A file already copied into the box (stowbox_core::upload::Attachment). */
@@ -291,13 +297,6 @@ export interface Attachment {
   /** Absolute path in the box, under ~/.stowbox/uploads/<agent>/. */
   path: string;
   size: number;
-}
-
-export interface QueuedMessage {
-  id: string;
-  text: string;
-  attachments: Attachment[];
-  queuedAt: number;
 }
 
 export interface AgentWorktree {
@@ -319,41 +318,8 @@ export interface NewAgent {
   skipPermissions: boolean;
   /** Make a worktree on a new branch from the repository that contains `cwd`. */
   ownBranch?: boolean;
-  /** Text the branch is named after when there is no title (the first task). */
+  /** Text the branch is named after when there is no title (the first prompt). */
   branchHint?: string | null;
-}
-
-export type Block =
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown };
-
-export type AgentEvent =
-  | { type: "user_message"; text: string; attachments?: Attachment[] }
-  | { type: "init"; session_id: string; model: string | null; cwd: string | null }
-  | { type: "text_delta"; text: string }
-  | { type: "assistant"; blocks: Block[] }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error: boolean }
-  | {
-      type: "result";
-      ok: boolean;
-      subtype: string;
-      message: string | null;
-      cost_usd: number | null;
-      duration_ms: number | null;
-      turns: number | null;
-      session_id: string | null;
-      input_tokens: number | null;
-      output_tokens: number | null;
-    }
-  | { type: "stderr"; text: string }
-  | { type: "exit"; code: number };
-
-export interface AgentPush {
-  agentId: string;
-  event: AgentEvent | null;
-  meta: AgentMeta;
-  notice?: Notice | null;
 }
 
 export type TermEvent = { type: "data"; b64: string } | { type: "exit"; code: number } | { type: "error"; message: string };
@@ -440,31 +406,6 @@ export type SpendCheck = (
   | { basis: "projected"; hourlyMicro: number; why: string }
 ) & { amountMicro: number; limitMicro: number; currency: string; over: boolean };
 
-/** Mirrors stowbox_core::search::HitKind: where in the event the match is. */
-export type HitKind = "user" | "assistant" | "thinking" | "tool-call" | "tool-output" | "error" | "note";
-
-/** Mirrors stowbox_core::search::SearchHit. `event` indexes the agent's
- * events as `agentEvents` returns them; `turn` counts user messages up to
- * it. `before` starts and `after` ends with "…" when the text was cut. */
-export interface SearchHit {
-  agentId: string;
-  event: number;
-  turn: number;
-  kind: HitKind;
-  before: string;
-  matched: string;
-  after: string;
-}
-
-export interface SearchResults {
-  /** Newest agent first; within an agent, its latest matches first. */
-  hits: SearchHit[];
-  /** More matches exist than were returned. */
-  truncated: boolean;
-  /** Transcripts read. */
-  scanned: number;
-}
-
 /** One HTTPS route into a box (a boxd proxy). Mirrors core ports::HttpsRoute. */
 export interface HttpsRoute {
   name: string;
@@ -527,25 +468,16 @@ export interface Api {
   spendToday(since: number, limitMicro: number): Promise<SpendCheck>;
   listAgents(): Promise<AgentMeta[]>;
   createAgent(spec: NewAgent): Promise<AgentMeta>;
-  agentEvents(id: string): Promise<AgentEvent[]>;
-  /** Case-insensitive full-text search over every agent's transcript. */
-  searchTranscripts(query: string, limit?: number): Promise<SearchResults>;
-  agentSend(id: string, text: string, attachments?: Attachment[]): Promise<void>;
-  /** Queues a message for when the running turn ends; sent now if no turn runs and the queue is not paused. */
-  agentQueueAdd(id: string, text: string, attachments?: Attachment[]): Promise<AgentMeta>;
-  /** An emptied message without files is removed. */
-  agentQueueEdit(id: string, messageId: string, text: string): Promise<AgentMeta>;
-  agentQueueRemove(id: string, messageId: string): Promise<AgentMeta>;
-  agentQueueClear(id: string): Promise<AgentMeta>;
-  /** Unpauses the queue and sends its first message now. */
-  agentQueueResume(id: string): Promise<void>;
-  /** Copies a file into the box for the agent's next message. */
+  /** Copies a file into the box; the terminal gets its path typed. */
   agentUpload(id: string, name: string, bytes: Uint8Array): Promise<Attachment>;
+  /** Ends the agent's tmux session; the conversation stays and resumes on the next terminal. */
   agentStop(id: string): Promise<void>;
+  /** What every watched box showed last. */
+  agentsLive(): Promise<LivePush[]>;
   /** `removeWorktree` removes the agent's worktree first (its branch stays); git's refusal keeps the agent. */
   deleteAgent(id: string, removeWorktree?: boolean, force?: boolean): Promise<void>;
   renameAgent(id: string, title: string): Promise<AgentMeta>;
-  onAgentEvent(cb: (push: AgentPush) => void): Promise<() => void>;
+  onAgentsLive(cb: (push: LivePush) => void): Promise<() => void>;
   listPresets(): Promise<Preset[]>;
   savePreset(input: PresetInput): Promise<Preset>;
   deletePreset(id: string): Promise<void>;

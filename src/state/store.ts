@@ -4,10 +4,10 @@ import { presetVariables } from "../bridge/variables";
 import type {
   TermTarget,
   Account,
-  AgentEvent,
   AgentMeta,
-  AgentPush,
+  AgentLive,
   Attachment,
+  LivePush,
   CreateSpec,
   Editor,
   GuardEntry,
@@ -28,12 +28,12 @@ import type {
   SpendCheck,
   VariableValues,
 } from "../bridge/types";
-import { isBusy, money, spendLine } from "../ui/format";
-import { agentTerminalKey, boxTerminalKey, closeTerminal, sessions } from "../ui/termSessions";
+import { agentPhase, money, spendLine } from "../ui/format";
+import { agentTerminalKey, boxTerminalKey, closeTerminal } from "../ui/termSessions";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
 export type BoxTab = "agents" | "setup" | "changes" | "ports" | "terminal" | "details";
-export type AgentTab = "chat" | "terminal" | "changes";
+export type AgentTab = "terminal" | "changes";
 export type Theme = "dark" | "light";
 export type Dialog =
   | null
@@ -94,8 +94,10 @@ interface AppState {
   machinesLoaded: boolean;
   machinesError: string;
   agents: AgentMeta[];
-  transcripts: Record<string, AgentEvent[]>;
-  live: Record<string, string>;
+  /** What the box's watch saw last, by agent id; missing until it reports. */
+  live: Record<string, AgentLive>;
+  /** Per box: whether it has tmux, so agents outlive their terminal. */
+  tmux: Record<string, boolean>;
   pending: Record<string, boolean>;
   /** Last sample per box, kept after the box leaves `running` so the fleet
    * view can say "as of 24 min ago" instead of forgetting. */
@@ -130,13 +132,10 @@ interface AppState {
     filter: string;
     /** The command palette (⌘K / Ctrl+K) is open. */
     palette: boolean;
-    /** An event to bring into view once the agent's transcript shows; `seq`
-     * tells two requests for the same event apart. */
-    focusEvent: { agentId: string; event: number; seq: number } | null;
     /** The preset the presets view should show. */
     presetFocus: string | null;
-    /** What the agent's Terminal tab runs first, once: a slash command sent
-     * from the chat. `seq` tells two requests apart. */
+    /** What the agent's terminal submits first, once: the first prompt of
+     * a new agent. `seq` tells two requests apart. */
     agentTerminal: { agentId: string; input: string | null; seq: number } | null;
     /** What the box's Terminal tab runs instead of a shell; `seq` reopens it. */
     boxTerminal: { machineId: string; target: TermTarget; seq: number } | null;
@@ -199,8 +198,8 @@ export const [state, setState] = createStore<AppState>({
   machinesLoaded: false,
   machinesError: "",
   agents: [],
-  transcripts: {},
   live: {},
+  tmux: {},
   pending: {},
   metrics: {},
   metricsError: {},
@@ -218,13 +217,12 @@ export const [state, setState] = createStore<AppState>({
     sidebar: true,
     inspector: true,
     boxTab: "agents",
-    agentTab: "chat",
+    agentTab: "terminal",
     dialog: null,
     toasts: [],
     collapsed: {},
     filter: "",
     palette: false,
-    focusEvent: null,
     presetFocus: null,
     agentTerminal: null,
     boxTerminal: null,
@@ -363,30 +361,25 @@ export const agentsForMachine = (id: string) => state.agents.filter((a) => a.mac
 export const selectedMachine = () => (state.ui.selection.kind === "box" ? machineById(state.ui.selection.id) : undefined);
 export const selectedAgent = () => (state.ui.selection.kind === "agent" ? agentById(state.ui.selection.id) : undefined);
 
-function putAgent(meta: AgentMeta) {
-  setState("agents", (as) => as.map((a) => (a.id === meta.id ? meta : a)));
-}
+/** The harness is running in the box and Claude Code's hooks say it is on a turn. */
+export const phaseOf = (a: AgentMeta) => agentPhase(state.live[a.id]);
 
-function onPush(p: AgentPush) {
-  if (!p || !p.meta || !p.agentId) return;
+export const agentWorking = (a: AgentMeta) => {
+  const l = state.live[a.id];
+  return !!l && l.running && l.state === "working";
+};
+
+/** A box's watch reported: its agents' states replace what was known. */
+function onLive(p: LivePush) {
+  if (!p || !p.machineId) return;
   setState(
     produce((s) => {
-      const i = s.agents.findIndex((a) => a.id === p.agentId);
-      if (i >= 0) s.agents[i] = p.meta;
-      else s.agents.unshift(p.meta);
-      const ev = p.event;
-      if (!ev) return;
-      if (ev.type === "text_delta") {
-        s.live[p.agentId] = (s.live[p.agentId] ?? "") + ev.text;
-        return;
-      }
-      if ((ev.type === "assistant" && ev.blocks.some((b) => b.type === "text")) || ev.type === "result" || ev.type === "exit") {
-        delete s.live[p.agentId];
-      }
-      if (s.transcripts[p.agentId]) s.transcripts[p.agentId].push(ev);
+      s.tmux[p.machineId] = p.tmux;
+      for (const a of s.agents) if (a.machineId === p.machineId) delete s.live[a.id];
+      for (const l of p.agents) s.live[l.id] = l;
     }),
   );
-  if (p.notice) void deliver(p.notice);
+  for (const n of p.notices ?? []) void deliver(n);
 }
 
 /** Shows a notice the shell flagged as an outcome, if the settings and the
@@ -475,7 +468,11 @@ export const actions = {
   },
 
   async loadAll() {
-    if (!unlisten) unlisten = await api.onAgentEvent(onPush);
+    if (!unlisten) unlisten = await api.onAgentsLive(onLive);
+    api
+      .agentsLive()
+      .then((pushes) => pushes.forEach((p) => onLive({ ...p, notices: [] })))
+      .catch(() => undefined);
     if (!unlistenSetup) unlistenSetup = await api.onSetupEvent(onSetupPush);
     if (!unlistenNotify) await listenNotify().catch((e) => console.warn("notification listeners failed", e));
     api
@@ -620,8 +617,8 @@ export const actions = {
       machines: [],
       machinesLoaded: false,
       agents: [],
-      transcripts: {},
       live: {},
+      tmux: {},
       metrics: {},
       metricsError: {},
       metricsAt: 0,
@@ -683,14 +680,11 @@ export const actions = {
         saveTabs(state.ui.tabs);
       }
     }
-    // Another agent opens on its chat, or on its terminal when that session
-    // is still running; the Changes tab is per visit. Set before the view
-    // shows, so it never mounts on the previous agent's tab.
-    if (sel.kind === "agent" && !(prev.kind === "agent" && prev.id === sel.id))
-      setState("ui", "agentTab", sessions.has(agentTerminalKey(sel.id)) ? "terminal" : "chat");
+    // Another agent opens on its terminal; the Changes tab is per visit. Set
+    // before the view shows, so it never mounts on the previous agent's tab.
+    if (sel.kind === "agent" && !(prev.kind === "agent" && prev.id === sel.id)) setState("ui", "agentTab", "terminal");
     setState("ui", "selection", sel);
     if (sel.kind === "fleet" && Date.now() - state.metricsAt > 5_000) void actions.refreshMetrics();
-    if (sel.kind === "agent") void actions.loadTranscript(sel.id);
     if (sel.kind === "box" && !(state.ui.selection.kind === "box" && state.ui.selection.id === sel.id)) setState("ui", "boxTab", "agents");
   },
 
@@ -707,7 +701,6 @@ export const actions = {
     if (sameSel(state.ui.selection, sel)) {
       const neighbour = next[Math.min(i, next.length - 1)];
       setState("ui", "selection", neighbour ?? FLEET);
-      if (neighbour?.kind === "agent") void actions.loadTranscript(neighbour.id);
     }
   },
 
@@ -740,16 +733,6 @@ export const actions = {
 
   setFilter(filter: string) {
     setState("ui", "filter", filter);
-  },
-
-  async loadTranscript(id: string) {
-    if (state.transcripts[id]) return;
-    try {
-      const events = await api.agentEvents(id);
-      setState("transcripts", id, events);
-    } catch (e) {
-      actions.toast("Could not load the transcript: " + message(e));
-    }
   },
 
   /** Turning notifications on asks the OS once, if it has not been asked. */
@@ -786,8 +769,7 @@ export const actions = {
   setAgentTab(tab: AgentTab) {
     setState("ui", "agentTab", tab);
   },
-  /** Switches the agent to its Terminal tab, the harness's own interface on
-   * the same session, and submits `input` there (a slash command). */
+  /** Shows the agent's terminal and submits `input` there. */
   openAgentTerminal(agentId: string, input: string | null = null) {
     actions.select({ kind: "agent", id: agentId });
     setState("ui", { agentTab: "terminal", agentTerminal: { agentId, input, seq: (state.ui.agentTerminal?.seq ?? 0) + 1 } });
@@ -810,15 +792,6 @@ export const actions = {
   },
   closePalette() {
     setState("ui", "palette", false);
-  },
-  /** Opens the agent's chat with one event of its transcript in view. */
-  openAgentAt(agentId: string, event: number) {
-    actions.select({ kind: "agent", id: agentId });
-    setState("ui", "agentTab", "chat");
-    setState("ui", "focusEvent", { agentId, event, seq: (state.ui.focusEvent?.seq ?? 0) + 1 });
-  },
-  clearFocusEvent() {
-    setState("ui", "focusEvent", null);
   },
   openPreset(id: string) {
     actions.select({ kind: "presets" });
@@ -855,7 +828,7 @@ export const actions = {
   },
 
   confirmDestroy(m: Machine) {
-    const running = agentsForMachine(m.id).filter((a) => isBusy(a.status));
+    const running = agentsForMachine(m.id).filter(agentWorking);
     actions.openDialog({
       kind: "confirm",
       title: `Delete ${m.name}?`,
@@ -941,74 +914,25 @@ export const actions = {
     }
   },
 
-  async createAgent(spec: NewAgent, firstMessage?: string): Promise<AgentMeta> {
+  /** Opens the new agent's terminal, which submits `firstPrompt` once the harness starts. */
+  async createAgent(spec: NewAgent, firstPrompt?: string): Promise<AgentMeta> {
     const meta = await api.createAgent(spec);
     setState("agents", (as) => [meta, ...as]);
-    setState("transcripts", meta.id, []);
-    actions.select({ kind: "agent", id: meta.id });
-    if (firstMessage && firstMessage.trim()) await actions.send(meta.id, firstMessage);
+    actions.openAgentTerminal(meta.id, firstPrompt?.trim() || null);
     return meta;
   },
 
-  async send(id: string, text: string, attachments: Attachment[] = []) {
-    try {
-      await api.agentSend(id, text, attachments);
-    } catch (e) {
-      actions.toast(message(e));
-      throw e;
-    }
-  },
-
-  /** Queues a follow-up for when the running turn ends. */
-  async queue(id: string, text: string, attachments: Attachment[] = []) {
-    try {
-      putAgent(await api.agentQueueAdd(id, text, attachments));
-    } catch (e) {
-      actions.toast("Could not queue the message: " + message(e));
-      throw e;
-    }
-  },
-
-  async editQueued(id: string, messageId: string, text: string) {
-    try {
-      putAgent(await api.agentQueueEdit(id, messageId, text));
-    } catch (e) {
-      actions.toast("Could not change the queued message: " + message(e));
-    }
-  },
-
-  async removeQueued(id: string, messageId: string) {
-    try {
-      putAgent(await api.agentQueueRemove(id, messageId));
-    } catch (e) {
-      actions.toast("Could not remove the queued message: " + message(e));
-    }
-  },
-
-  async clearQueue(id: string) {
-    try {
-      putAgent(await api.agentQueueClear(id));
-    } catch (e) {
-      actions.toast("Could not clear the queue: " + message(e));
-    }
-  },
-
-  async resumeQueue(id: string) {
-    try {
-      await api.agentQueueResume(id);
-    } catch (e) {
-      actions.toast(message(e));
-    }
-  },
-
-  /** Throws the provider's message; the composer shows it on the file. */
+  /** Throws the provider's message; the terminal view shows it. */
   upload(id: string, name: string, bytes: Uint8Array): Promise<Attachment> {
     return api.agentUpload(id, name, bytes);
   },
 
+  /** Ends the harness in the box; the next terminal resumes the conversation. */
   async stop(id: string) {
     try {
+      closeTerminal(agentTerminalKey(id));
       await api.agentStop(id);
+      setState("live", id, (l) => (l ? { ...l, running: false } : l));
     } catch (e) {
       actions.toast("Stop failed: " + message(e));
     }
@@ -1029,7 +953,7 @@ export const actions = {
     actions.openDialog({
       kind: "confirm",
       title: `Remove "${a.title || "this agent"}"?`,
-      body: "The transcript is deleted from this computer. The box and its files are not touched.",
+      body: "Its session in the box is ended and Stowbox forgets it. The conversation and the box's files are not touched.",
       confirmLabel: "Remove agent",
       danger: true,
       run: () => actions.deleteAgent(a.id),
@@ -1040,6 +964,7 @@ export const actions = {
   async deleteAgent(id: string, removeWorktree = false, force = false) {
     await api.deleteAgent(id, removeWorktree, force);
     setState("agents", (as) => as.filter((x) => x.id !== id));
+    setState("live", id, undefined!);
     actions.closeTab({ kind: "agent", id });
   },
 

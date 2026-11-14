@@ -1,4 +1,4 @@
-import type { AgentStatus, Machine, MachineStatus, SpendCheck } from "../bridge/types";
+import type { AgentLive, Machine, MachineStatus, SpendCheck } from "../bridge/types";
 
 const GIB = 1024 ** 3;
 
@@ -23,13 +23,6 @@ export function spendLine(c: SpendCheck): string {
     return `boxd has metered ${money(c.totalMicro, c.currency)} since midnight` + (c.complete ? "." : "; metering lags up to 25 minutes, so it can still grow.");
   }
   return `Estimate: at the current ${money(c.hourlyMicro, c.currency)}/h, a full day costs ${money(c.amountMicro, c.currency)}. boxd's metered usage is not readable with this key (${c.why}).`;
-}
-
-export function usd(amount: number): string {
-  if (amount === 0) return "$0";
-  if (amount < 0.01) return "$" + amount.toFixed(4);
-  if (amount < 1) return "$" + amount.toFixed(3);
-  return "$" + amount.toFixed(2);
 }
 
 export function gib(bytes: number): string {
@@ -57,30 +50,24 @@ export const statusLabel: Record<MachineStatus, string> = {
   unknown: "Unknown",
 };
 
-export function agentStatusLabel(s: AgentStatus): string {
-  switch (s.kind) {
-    case "idle":
-      return "Not started";
-    case "starting":
-      return "Starting";
-    case "thinking":
-      return "Thinking";
-    case "tool":
-      return "Running " + s.name;
-    case "reconnecting":
-      return "Reconnecting";
-    case "done":
-      return "Finished";
-    case "failed":
-      return "Failed";
-    case "stopped":
-      return "Stopped";
-  }
+/** Where an agent is, from its box's last watch round. "running" is a
+ * harness without hooks (Codex), or Claude Code before its first hook;
+ * "unknown" means nothing has watched the box since the app started. */
+export type AgentPhase = "working" | "waiting" | "running" | "stopped" | "unknown";
+
+export function agentPhase(l: AgentLive | undefined): AgentPhase {
+  if (!l) return "unknown";
+  if (!l.running) return "stopped";
+  return l.state ?? "running";
 }
 
-export function isBusy(s: AgentStatus): boolean {
-  return s.kind === "starting" || s.kind === "thinking" || s.kind === "tool" || s.kind === "reconnecting";
-}
+export const agentPhaseLabel: Record<AgentPhase, string> = {
+  working: "Working",
+  waiting: "Waiting for you",
+  running: "Running",
+  stopped: "Not running",
+  unknown: "Not checked yet",
+};
 
 export function relTime(ms: number, now = Date.now()): string {
   if (!ms) return "never";
@@ -95,27 +82,10 @@ export function relTime(ms: number, now = Date.now()): string {
   return `${days} d ago`;
 }
 
-export function duration(ms: number): string {
-  if (ms < 1000) return `${ms} ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)} s`;
-  const m = Math.floor(s / 60);
-  const rs = Math.round(s - m * 60);
-  if (m < 60) return `${m} min ${rs} s`;
-  const h = Math.floor(m / 60);
-  return `${h} h ${m - h * 60} min`;
-}
-
 export function hours(seconds: number): string {
   const h = seconds / 3600;
   if (h < 1) return `${Math.round(seconds / 60)} min`;
   return `${h.toFixed(1)} h`;
-}
-
-export function tokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
-  return (n / 1_000_000).toFixed(2) + "M";
 }
 
 export function pct(n: number): string {

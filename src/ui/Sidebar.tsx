@@ -1,21 +1,21 @@
 import { For, Show, createMemo } from "solid-js";
 import type { AgentMeta, Machine } from "../bridge/types";
-import { actions, agentsForMachine, state } from "../state/store";
+import { actions, agentsForMachine, phaseOf, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot } from "./common";
-import { agentStatusLabel, money, relTime, sizeLabel, statusLabel } from "./format";
+import { agentPhaseLabel, money, relTime, sizeLabel, statusLabel } from "./format";
 
 const AgentRow = (p: { agent: AgentMeta }) => {
   const selected = () => state.ui.selection.kind === "agent" && state.ui.selection.id === p.agent.id;
   return (
     <li>
       <button class="row" classList={{ selected: selected() }} onClick={() => actions.select({ kind: "agent", id: p.agent.id })} title={p.agent.title || "New agent"}>
-        <AgentDot status={p.agent.status} />
+        <AgentDot agent={p.agent} />
         <span class="row-name">{p.agent.title || "New agent"}</span>
         <span class="row-right">
           <span class="row-time">{relTime(p.agent.updatedAt)}</span>
         </span>
-        <span class="row-sub">{p.agent.status.kind === "done" ? "Ready for you" : agentStatusLabel(p.agent.status)}</span>
+        <span class="row-sub">{agentPhaseLabel[phaseOf(p.agent)]}</span>
       </button>
     </li>
   );

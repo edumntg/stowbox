@@ -6,7 +6,7 @@ import { Dot, PowerActions } from "./common";
 import { money, sizeLabel, statusLabel } from "./format";
 
 /** The box behind the selected agent: state, live cost and quick controls,
- * so pausing or opening a shell never means leaving the conversation. */
+ * so pausing or opening a shell never means leaving the agent. */
 export default function Inspector(p: { agent: AgentMeta }) {
   const m = () => machineById(p.agent.machineId);
   return (
@@ -88,7 +88,7 @@ export default function Inspector(p: { agent: AgentMeta }) {
               </Show>
             </dd>
             <dt>Approvals</dt>
-            <dd>{p.agent.skipPermissions ? "skipped (box is disposable)" : "denied when asked"}</dd>
+            <dd>{p.agent.skipPermissions ? "skipped (box is disposable)" : "asked in the terminal"}</dd>
           </dl>
         </div>
       </div>

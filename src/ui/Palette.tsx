@@ -1,10 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
-import { api } from "../bridge/api";
-import type { AgentMeta, HitKind, Machine, SearchHit } from "../bridge/types";
-import { actions, agentById, machineById, selectedAgent, selectedMachine, state } from "../state/store";
+import { For, Show, createEffect, createMemo, createSignal, on, onMount, type JSX } from "solid-js";
+import type { Machine } from "../bridge/types";
+import { actions, machineById, phaseOf, selectedAgent, selectedMachine, state } from "../state/store";
 import * as I from "../icons";
-import { agentDotState, dotState, isMac, powerButtons } from "./common";
-import { agentStatusLabel, relTime, sizeLabel, statusLabel } from "./format";
+import { dotState, isMac, phaseDot, powerButtons } from "./common";
+import { agentPhaseLabel, sizeLabel, statusLabel } from "./format";
 import { highlight, rank, type Match } from "./fuzzy";
 
 /** Something the palette can do: go somewhere or run an action. */
@@ -19,23 +18,13 @@ interface Command {
   run: () => void;
 }
 
-/** One row of the list: a command or a transcript match. */
-type Row = { type: "command"; cmd: Command; match: Match } | { type: "hit"; hit: SearchHit; agent: AgentMeta };
+interface Row {
+  cmd: Command;
+  match: Match;
+}
 
-const SEARCH_MIN = 2;
-const SEARCH_DELAY_MS = 180;
 const COMMANDS_SHOWN = 12;
 export const paletteShortcut = isMac ? "⌘K" : "Ctrl+K";
-
-const hitKindLabel: Record<HitKind, string> = {
-  user: "message",
-  assistant: "reply",
-  thinking: "reasoning",
-  "tool-call": "tool call",
-  "tool-output": "tool output",
-  error: "error",
-  note: "output",
-};
 
 const Sq = (p: { state: string }) => <span class="sq" data-state={p.state} />;
 
@@ -55,7 +44,7 @@ function boxCommands(m: Machine, all: boolean): Command[] {
     id: `newagent:${m.id}`,
     kind: "Action",
     label: `New agent in ${m.name}`,
-    keywords: "claude codex chat",
+    keywords: "claude codex terminal session",
     icon: () => <I.Plus />,
     run: () => actions.openDialog({ kind: "new-agent", machineId: m.id }),
   });
@@ -89,7 +78,7 @@ function commands(query: boolean): Command[] {
   if (ctxBox && !query) out.push(...boxCommands(ctxBox, false));
   if (query) for (const m of state.machines) out.push(...boxCommands(m, true));
   if (state.machines.length > 0 && (query || !ctxBox)) {
-    out.push({ id: "newagent", kind: "Action", label: "New agent", keywords: "claude codex chat", icon: () => <I.Chat />, run: () => actions.openDialog({ kind: "new-agent" }) });
+    out.push({ id: "newagent", kind: "Action", label: "New agent", keywords: "claude codex terminal session", icon: () => <I.Terminal />, run: () => actions.openDialog({ kind: "new-agent" }) });
   }
   out.push({ id: "newbox", kind: "Action", label: "New box", keywords: "create machine vm", icon: () => <I.Plus />, run: () => actions.openDialog({ kind: "new-box" }) });
 
@@ -116,9 +105,9 @@ function commands(query: boolean): Command[] {
       id: `agent:${a.id}`,
       kind: "Agent",
       label: a.title || "New agent",
-      detail: `${a.machineName} · ${a.status.kind === "done" ? "Ready for you" : agentStatusLabel(a.status)}`,
+      detail: `${a.machineName} · ${agentPhaseLabel[phaseOf(a)]}`,
       keywords: `agent ${a.machineName} ${a.worktree?.branch ?? ""}`,
-      icon: () => <Sq state={agentDotState(a.status)} />,
+      icon: () => <Sq state={phaseDot[phaseOf(a)]} />,
       run: () => actions.select({ kind: "agent", id: a.id }),
     });
   }
@@ -147,41 +136,11 @@ export default function Palette() {
   const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
-  const [searchFor, setSearchFor] = createSignal("");
-
-  // Transcript search waits for a pause in typing and a query long enough
-  // to mean something.
-  let timer: number | undefined;
-  createEffect(
-    on(query, (q) => {
-      window.clearTimeout(timer);
-      const t = q.trim();
-      if (t.length < SEARCH_MIN) {
-        setSearchFor("");
-        return;
-      }
-      timer = window.setTimeout(() => setSearchFor(t), SEARCH_DELAY_MS);
-    }),
-  );
-  onCleanup(() => window.clearTimeout(timer));
-  const [results] = createResource(searchFor, (q) => api.searchTranscripts(q, 50));
-  const searching = () => query().trim().length >= SEARCH_MIN && (results.loading || searchFor() !== query().trim());
-
-  const cmdRows = createMemo<Row[]>(() => {
+  const rows = createMemo<Row[]>(() => {
     const q = query().trim();
     const ranked = rank(commands(!!q), q, (c) => ({ label: c.label, keywords: [c.keywords, c.detail, c.kind].filter(Boolean).join(" ") }));
-    return (q ? ranked.slice(0, COMMANDS_SHOWN) : ranked).map(({ item, match }) => ({ type: "command" as const, cmd: item, match }));
+    return (q ? ranked.slice(0, COMMANDS_SHOWN) : ranked).map(({ item, match }) => ({ cmd: item, match }));
   });
-  const hitRows = createMemo<Row[]>(() => {
-    const r = searchFor() && !results.error ? results.latest : undefined;
-    if (!r || !query().trim()) return [];
-    return r.hits.flatMap((hit) => {
-      const agent = agentById(hit.agentId);
-      return agent ? [{ type: "hit" as const, hit, agent }] : [];
-    });
-  });
-  const rows = createMemo(() => [...cmdRows(), ...hitRows()]);
-
   createEffect(on(query, () => setActive(0), { defer: true }));
   createEffect(
     on(rows, (rs) => {
@@ -201,8 +160,7 @@ export default function Palette() {
   const run = (row: Row | undefined) => {
     if (!row) return;
     actions.closePalette();
-    if (row.type === "command") row.cmd.run();
-    else actions.openAgentAt(row.agent.id, row.hit.event);
+    row.cmd.run();
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -235,7 +193,6 @@ export default function Palette() {
   onMount(() => input.focus());
 
   const optionId = (i: number) => `pal-opt-${i}`;
-  const scanned = () => results.latest?.scanned ?? 0;
 
   return (
     <div class="overlay palette-overlay" onMouseDown={(e) => e.target === e.currentTarget && close()}>
@@ -251,7 +208,7 @@ export default function Palette() {
             aria-controls="palette-list"
             aria-autocomplete="list"
             aria-activedescendant={rows().length ? optionId(active()) : undefined}
-            placeholder="Search boxes, agents, actions and transcripts"
+            placeholder="Search boxes, agents and actions"
             spellcheck={false}
             autocomplete="off"
             value={query()}
@@ -261,14 +218,13 @@ export default function Palette() {
           <kbd class="palette-kbd">Esc</kbd>
         </div>
         <div class="palette-list scroll" id="palette-list" role="listbox" aria-label="Results" ref={list}>
-          <Show when={cmdRows().length > 0}>
+          <Show when={rows().length > 0}>
             <div class="palette-group" role="presentation">
               {query().trim() ? "Best matches" : "Go to and do"}
             </div>
           </Show>
-          <For each={cmdRows()}>
-            {(row, i) => {
-              const r = row as Extract<Row, { type: "command" }>;
+          <For each={rows()}>
+            {(r, i) => {
               return (
                 <div
                   id={optionId(i())}
@@ -277,7 +233,7 @@ export default function Palette() {
                   role="option"
                   aria-selected={active() === i()}
                   onMouseMove={() => active() !== i() && setActive(i())}
-                  onClick={() => run(row)}
+                  onClick={() => run(r)}
                 >
                   <span class="palette-icon">{r.cmd.icon()}</span>
                   <span class="palette-label">
@@ -289,66 +245,7 @@ export default function Palette() {
               );
             }}
           </For>
-          <Show when={query().trim().length >= SEARCH_MIN}>
-            <div class="palette-group" role="presentation">
-              In transcripts
-              <Show when={hitRows().length > 0}>
-                <span class="palette-count"> · {hitRows().length}{results.latest?.truncated ? "+" : ""}</span>
-              </Show>
-            </div>
-            <For each={hitRows()}>
-              {(row, j) => {
-                const r = row as Extract<Row, { type: "hit" }>;
-                const i = () => cmdRows().length + j();
-                return (
-                  <div
-                    id={optionId(i())}
-                    class="palette-row palette-hit"
-                    classList={{ active: active() === i() }}
-                    role="option"
-                    aria-selected={active() === i()}
-                    onMouseMove={() => active() !== i() && setActive(i())}
-                    onClick={() => run(row)}
-                  >
-                    <span class="palette-icon">
-                      <Sq state={agentDotState(r.agent.status)} />
-                    </span>
-                    <span class="palette-label">{r.agent.title || "New agent"}</span>
-                    <span class="palette-detail">
-                      {r.agent.machineName} · turn {r.hit.turn} · {hitKindLabel[r.hit.kind]}
-                    </span>
-                    <span class="palette-kind" title="When the agent last did something; transcript lines carry no time of their own">
-                      {relTime(r.agent.updatedAt)}
-                    </span>
-                    <span class="palette-snippet">
-                      {r.hit.before}
-                      <mark>{r.hit.matched}</mark>
-                      {r.hit.after}
-                    </span>
-                  </div>
-                );
-              }}
-            </For>
-            <Show when={!searching()}>
-              <Show
-                when={!results.error}
-                fallback={<p class="palette-note danger-text">Search failed: {String(results.error?.message ?? results.error)}</p>}
-              >
-                <Show when={hitRows().length === 0}>
-                  <p class="palette-note">
-                    {scanned() === 0 ? "No transcripts yet: they fill as agents run turns." : `No transcript mentions “${query().trim()}”. Searched ${scanned()} transcript${scanned() === 1 ? "" : "s"}.`}
-                  </p>
-                </Show>
-                <Show when={results.latest?.truncated}>
-                  <p class="palette-note">Showing up to 5 matches per agent, the latest, and 50 in all. Add words to narrow it down.</p>
-                </Show>
-              </Show>
-            </Show>
-            <Show when={searching() && hitRows().length === 0}>
-              <p class="palette-note">Searching transcripts…</p>
-            </Show>
-          </Show>
-          <Show when={rows().length === 0 && query().trim().length < SEARCH_MIN}>
+          <Show when={rows().length === 0}>
             <p class="palette-note">Nothing matches “{query().trim()}”.</p>
           </Show>
         </div>
