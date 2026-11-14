@@ -158,6 +158,39 @@ pub struct SpendCheck {
     pub limit_micro: i64,
     pub currency: String,
     pub over: bool,
+    /// Providers left out of the figure because they bill in another
+    /// currency than the limit's.
+    #[serde(default)]
+    pub excluded: Vec<String>,
+}
+
+/// One figure for several providers. Metered only when every one of them
+/// is; otherwise the metered parts count as an hourly rate spread over the
+/// day so far would be a guess, so the whole figure is the projection, and
+/// `why` keeps each provider's reason.
+pub fn combine(figures: Vec<SpendFigure>) -> SpendFigure {
+    if figures.iter().all(|f| matches!(f, SpendFigure::Metered { .. })) {
+        let (total_micro, complete) = figures.iter().fold((0i64, true), |(t, c), f| match f {
+            SpendFigure::Metered { total_micro, complete } => (t.saturating_add(*total_micro), c && *complete),
+            SpendFigure::Projected { .. } => (t, c),
+        });
+        return SpendFigure::Metered { total_micro, complete };
+    }
+    let mut hourly = 0i64;
+    let mut whys = Vec::new();
+    for f in figures {
+        match f {
+            SpendFigure::Projected { hourly_micro, why } => {
+                hourly = hourly.saturating_add(hourly_micro);
+                if !why.is_empty() && !whys.contains(&why) {
+                    whys.push(why);
+                }
+            }
+            // A metered day so far, as the hourly rate that would reach it over 24 h.
+            SpendFigure::Metered { total_micro, .. } => hourly = hourly.saturating_add(total_micro / 24),
+        }
+    }
+    SpendFigure::Projected { hourly_micro: hourly, why: whys.join("; ") }
 }
 
 pub fn check_spend(figure: SpendFigure, limit_micro: i64, currency: &str) -> SpendCheck {
@@ -165,7 +198,7 @@ pub fn check_spend(figure: SpendFigure, limit_micro: i64, currency: &str) -> Spe
         SpendFigure::Metered { total_micro, .. } => *total_micro,
         SpendFigure::Projected { hourly_micro, .. } => hourly_micro.saturating_mul(24),
     };
-    SpendCheck { over: limit_micro > 0 && amount_micro >= limit_micro, amount_micro, limit_micro, currency: currency.to_string(), figure }
+    SpendCheck { over: limit_micro > 0 && amount_micro >= limit_micro, amount_micro, limit_micro, currency: currency.to_string(), figure, excluded: Vec::new() }
 }
 
 #[cfg(test)]
@@ -176,6 +209,15 @@ mod tests {
 
     fn idle_box(last: i64) -> BoxActivity {
         BoxActivity { machine_id: "vm_1".into(), status: MachineStatus::Running, agents_busy: 0, setup_active: false, terminals_open: 0, last_activity_ms: last }
+    }
+
+    #[test]
+    fn combined_spend_is_metered_only_when_every_part_is() {
+        let m = |t| SpendFigure::Metered { total_micro: t, complete: true };
+        assert_eq!(combine(vec![m(2_000_000), SpendFigure::Metered { total_micro: 1_000_000, complete: false }]), SpendFigure::Metered { total_micro: 3_000_000, complete: false });
+        let p = combine(vec![m(2_400_000), SpendFigure::Projected { hourly_micro: 36_000, why: "boat does not report usage".into() }]);
+        assert_eq!(p, SpendFigure::Projected { hourly_micro: 100_000 + 36_000, why: "boat does not report usage".into() });
+        assert_eq!(combine(vec![]), SpendFigure::Metered { total_micro: 0, complete: true });
     }
 
     fn policy(mins: u32) -> IdlePolicy {

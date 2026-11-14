@@ -38,12 +38,22 @@ export function compactSize(m: Pick<Machine, "vcpu" | "memoryBytes">): string {
   return `${m.vcpu}c ${Math.round(m.memoryBytes / GIB)}G`;
 }
 
+/** Amounts in several currencies, summed per currency and never across
+ * them: "€0.18/h + $0.04/h". `suffix` goes after each part. */
+export function moneyByCurrency(items: { micro: number; currency: string }[], fallbackCurrency: string, suffix = ""): string {
+  const by = new Map<string, number>();
+  for (const i of items) by.set(i.currency.toLowerCase(), (by.get(i.currency.toLowerCase()) ?? 0) + i.micro);
+  if (by.size === 0) return money(0, fallbackCurrency) + suffix;
+  return [...by].map(([c, v]) => money(v, c) + suffix).join(" + ");
+}
+
 export const statusLabel: Record<MachineStatus, string> = {
   pending: "Pending",
   starting: "Starting",
   running: "Running",
   suspended: "Standby",
   hibernated: "Hibernated",
+  stopping: "Stopping",
   stopped: "Stopped",
   failed: "Failed",
   migrating: "Migrating",

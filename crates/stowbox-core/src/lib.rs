@@ -1,7 +1,10 @@
 //! Stowbox core: everything that does not depend on the desktop shell.
 //!
 //! - `provider`: the trait the UI talks to (list boxes, power actions, exec).
-//! - `boxd`: the first provider, boxd.sh, over its public gRPC API.
+//! - `boxd`: boxd.sh, over its public gRPC API.
+//! - `boat`: boat.dev, over its REST API, with exec over SSH.
+//! - `capabilities`: what each provider supports, for the UI.
+//! - `registry`: the connected providers, and which one owns each box.
 //! - `agent`: a coding agent's interactive session inside a box, its state,
 //!   and the Claude Code login the box uses.
 //! - `cost`: live €/h estimates from the provider's rate card.
@@ -20,7 +23,9 @@
 //! - `worktree`: one git worktree and branch per agent, next to the repository.
 
 pub mod agent;
+pub mod boat;
 pub mod boxd;
+pub mod capabilities;
 pub mod cost;
 pub mod error;
 pub mod git;
@@ -30,6 +35,7 @@ pub mod notify;
 pub mod ports;
 pub mod provider;
 pub mod provision;
+pub mod registry;
 pub mod ssh;
 pub mod store;
 #[cfg(test)]

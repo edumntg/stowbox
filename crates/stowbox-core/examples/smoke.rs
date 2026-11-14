@@ -149,7 +149,8 @@ async fn main() {
         );
     }
     let rates = step(&mut r, "rates", p.rates()).await;
-    if let Some((cur, rt)) = &rates {
+    if let Some(card) = &rates {
+        let (cur, rt) = (&card.currency, &card.rates);
         println!(
             "     rate card {cur}: {} vCPU·h · {} GiB·h · {} disk GiB·h",
             cost::money(rt.vcpu_hour_micro, cur),
@@ -167,7 +168,7 @@ async fn main() {
                 format!("{:?}", m.status).to_lowercase(),
                 m.vcpu,
                 m.memory_bytes / (1 << 30),
-                rates.as_ref().map(|(c, rt)| cost::money(cost::hourly_micro(m, rt), c)).unwrap_or_default(),
+                rates.as_ref().map(|c| cost::money(c.hourly_micro(m), &c.currency)).unwrap_or_default(),
                 if m.source.is_empty() { "standalone" } else { &m.source }
             );
         }

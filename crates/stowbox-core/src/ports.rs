@@ -417,6 +417,9 @@ ESTAB  0      0          10.0.0.5:22      10.0.0.1:51234
             fn id(&self) -> &'static str {
                 "asleep"
             }
+            fn capabilities(&self) -> crate::capabilities::Capabilities {
+                crate::boxd::capabilities()
+            }
             async fn whoami(&self) -> Result<Account> {
                 unimplemented!()
             }
@@ -450,7 +453,7 @@ ESTAB  0      0          10.0.0.5:22      10.0.0.1:51234
             async fn org_billing(&self, _: &str) -> Result<OrgBilling> {
                 unimplemented!()
             }
-            async fn rates(&self) -> Result<(String, Rates)> {
+            async fn rates(&self) -> Result<crate::cost::RateCard> {
                 unimplemented!()
             }
         }

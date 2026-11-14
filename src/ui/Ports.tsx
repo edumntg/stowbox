@@ -1,15 +1,17 @@
 import { For, Match, Show, Switch, createMemo, createSignal, onMount } from "solid-js";
 import type { HttpsRoute, Listening, ListeningPort, Machine, PortForward } from "../bridge/types";
 import { api } from "../bridge/api";
-import { actions } from "../state/store";
+import { actions, capsFor, providerLabel } from "../state/store";
 import * as I from "../icons";
 import { relTime, statusLabel } from "./format";
 
-// A box's servers, reached from the browser. HTTPS links are boxd proxies:
-// the default one at the box's own address and named ones at
-// `<name>.<box address>`. Raw forwards are boxd's ExposePort, for non-HTTP
-// servers. Both are read from the API without waking the box; what listens
-// inside it is read over exec, so only while it runs unless asked.
+// A box's servers, reached from the browser. HTTPS links are the provider's
+// proxies. On boxd: the default one at the box's own address and named ones
+// at `<name>.<box address>`, and raw forwards (ExposePort) for non-HTTP
+// servers. On boat: one tokened link per port, which its API cannot list, so
+// only the links made from this session show. Links are read without waking
+// the box; what listens inside it is read over exec, so only while it runs
+// unless asked. The capabilities decide which parts show.
 
 function message(e: unknown): string {
   if (typeof e === "string") return e;
@@ -35,6 +37,10 @@ type Form = { kind: "link"; port: string; name: string; nameEdited: boolean } | 
 
 export default function Ports(p: { machine: Machine }) {
   const m = () => p.machine;
+  const caps = () => capsFor(m());
+  const label = () => providerLabel(m().provider);
+  const named = () => caps()?.httpsNamed ?? true;
+  const canForward = () => caps()?.portForwards ?? true;
   const [routes, setRoutes] = createSignal<HttpsRoute[] | null>(null);
   const [routesError, setRoutesError] = createSignal("");
   const [forwards, setForwards] = createSignal<PortForward[] | null>(null);
@@ -57,6 +63,10 @@ export default function Ports(p: { machine: Machine }) {
     }
   };
   const loadForwards = async () => {
+    if (!canForward()) {
+      setForwards([]);
+      return;
+    }
     try {
       setForwards(await api.portForwards(m().id));
       setForwardsError("");
@@ -110,6 +120,7 @@ export default function Ports(p: { machine: Machine }) {
     if (!f.port.trim()) return "Enter the port the server listens on in the box.";
     if (formPort() === null) return "A port is a number from 1 to 65535.";
     if (f.kind === "link") {
+      if (!named()) return "";
       if (!NAME_RE.test(f.name)) return "Name: lowercase letters, digits and hyphens, up to 63, not starting or ending with a hyphen.";
       if (takenNames().includes(f.name)) return `${f.name} is already a link on this box.`;
     }
@@ -126,11 +137,11 @@ export default function Ports(p: { machine: Machine }) {
     try {
       if (f.kind === "link") {
         const r = await api.addHttpsRoute(m().id, f.name, port);
-        actions.toast(r.url ? `Public link to port ${port}: ${host(r.url)}` : `Created link ${f.name} to port ${port}; boxd returned no address for it.`, "info");
+        actions.toast(r.url ? `Public link to port ${port}: ${host(r.url)}` : `Created link ${f.name} to port ${port}; ${label()} returned no address for it.`, "info");
         await loadRoutes();
       } else {
         const fw = await api.exposePort(m().id, port, f.protocol);
-        actions.toast(fw.address ? `Port ${port} is public at ${fw.address}` : `Exposed port ${port}; boxd returned no address for it.`, "info");
+        actions.toast(fw.address ? `Port ${port} is public at ${fw.address}` : `Exposed port ${port}; ${label()} returned no address for it.`, "info");
         await loadForwards();
       }
       setForm(null);
@@ -179,7 +190,7 @@ export default function Ports(p: { machine: Machine }) {
       <li class="ports-row">
         <span class="sq" data-state={sq().state} title={sq().title} />
         <span class="ports-main">
-          <Show when={r().url} fallback={<span class="muted">boxd returned no address{r().domain ? `: ${r().domain}` : ""}</span>}>
+          <Show when={r().url} fallback={<span class="muted">{label()} returned no address{r().domain ? `: ${r().domain}` : ""}</span>}>
             {(url) => (
               <button class="link mono ports-host" title={`Open ${url()}`} onClick={() => void actions.open(url())}>
                 {host(url())}
@@ -208,11 +219,13 @@ export default function Ports(p: { machine: Machine }) {
             )}
           </Show>
           <Show
-            when={r().isDefault}
+            when={r().isDefault && (caps()?.httpsDefaultRoute ?? true)}
             fallback={
-              <button class="btn sm ghost danger" disabled={busy() === `route:${r().name}`} onClick={() => void removeRoute(r())}>
-                Remove
-              </button>
+              <Show when={caps()?.httpsRemove ?? true}>
+                <button class="btn sm ghost danger" disabled={busy() === `route:${r().name}`} onClick={() => void removeRoute(r())}>
+                  Remove
+                </button>
+              </Show>
             }
           >
             <button
@@ -267,7 +280,7 @@ export default function Ports(p: { machine: Machine }) {
               )}
             </Match>
             <Match when={l().localOnly}>
-              <span class="muted">localhost only, so boxd cannot reach it</span>
+              <span class="muted">localhost only, so {label()} cannot reach it</span>
             </Match>
           </Switch>
         </span>
@@ -288,7 +301,7 @@ export default function Ports(p: { machine: Machine }) {
       <span>
         <strong>This is public.</strong> Anyone on the internet who has the {np.kind === "link" ? "link" : "address"} reaches whatever listens on{" "}
         {np.port ? <span class="mono">{np.port}</span> : "that port"} in {m().name}. Stowbox puts no login in front of it
-        {np.kind === "forward" ? ", and boxd passes the traffic through without TLS" : ""}. Expose only a server you would put online as it is.
+        {np.kind === "forward" ? `, and ${label()} passes the traffic through without TLS` : ""}. Expose only a server you would put online as it is.
       </span>
     </p>
   );
@@ -299,9 +312,11 @@ export default function Ports(p: { machine: Machine }) {
         <button class="btn sm" onClick={() => openLinkForm()}>
           <I.Link /> New link
         </button>
-        <button class="btn sm" disabled={(forwards()?.length ?? 0) >= MAX_FORWARDS} title={(forwards()?.length ?? 0) >= MAX_FORWARDS ? "boxd allows 3 per box: unexpose one first" : "A raw TCP or UDP port for a non-HTTP server"} onClick={() => openForwardForm()}>
-          <I.Plus /> Forward a port
-        </button>
+        <Show when={canForward()}>
+          <button class="btn sm" disabled={(forwards()?.length ?? 0) >= MAX_FORWARDS} title={(forwards()?.length ?? 0) >= MAX_FORWARDS ? "boxd allows 3 per box: unexpose one first" : "A raw TCP or UDP port for a non-HTTP server"} onClick={() => openForwardForm()}>
+            <I.Plus /> Forward a port
+          </button>
+        </Show>
         <span class="spacer" />
         <button class="btn sm ghost" disabled={listenState() === "reading"} onClick={() => void loadAll()}>
           <I.Refresh /> Refresh
@@ -347,16 +362,18 @@ export default function Ports(p: { machine: Machine }) {
                 }
               >
                 {(lf) => (
-                  <label>
-                    <span class="muted">Name, the first part of the address</span>
-                    <input class="input mono" value={lf().name} placeholder="api" onInput={(e) => setForm({ ...lf(), name: e.currentTarget.value.trim(), nameEdited: true })} />
-                  </label>
+                  <Show when={named()}>
+                    <label>
+                      <span class="muted">Name, the first part of the address</span>
+                      <input class="input mono" value={lf().name} placeholder="api" onInput={(e) => setForm({ ...lf(), name: e.currentTarget.value.trim(), nameEdited: true })} />
+                    </label>
+                  </Show>
                 )}
               </Show>
             </div>
             <Show when={formPort() !== null && byPort().get(formPort()!)?.localOnly}>
               <p class="hint">
-                Port <span class="mono">{formPort()}</span> listens on localhost only, so boxd cannot reach it. Restart the server on 0.0.0.0 (for Vite,{" "}
+                Port <span class="mono">{formPort()}</span> listens on localhost only, so {label()} cannot reach it. Restart the server on 0.0.0.0 (for Vite,{" "}
                 <span class="mono">--host</span>).
               </p>
             </Show>
@@ -386,10 +403,12 @@ export default function Ports(p: { machine: Machine }) {
             <div class="form-error">Could not read the links: {routesError()}</div>
           </Match>
           <Match when={routes() === null}>
-            <div class="muted">Asking boxd for the links…</div>
+            <div class="muted">Asking {label()} for the links…</div>
           </Match>
           <Match when={routes()!.length === 0}>
-            <div class="muted">boxd lists no HTTPS links for {m().name}.</div>
+            <div class="muted">
+              {caps()?.httpsList ?? true ? `${label()} lists no HTTPS links for ${m().name}.` : `No links made from this Stowbox session for ${m().name}.`}
+            </div>
           </Match>
           <Match when={true}>
             <ul class="ports-list">
@@ -397,10 +416,20 @@ export default function Ports(p: { machine: Machine }) {
             </ul>
           </Match>
         </Switch>
-        <p class="note">
-          boxd serves these over HTTPS. The box address follows the first of 80, 443, 8080, 8000, 3000, 5000 and 5173 that something listens on, else 8000, unless
-          a port is pinned; a named link points at one port.
-        </p>
+        <Show
+          when={caps()?.httpsDefaultRoute ?? true}
+          fallback={
+            <p class="note">
+              {label()} serves these over HTTPS, one link per port, with a token in the address. It has no way to list or remove them, so this shows only the links
+              made since Stowbox started; a stop ends them.
+            </p>
+          }
+        >
+          <p class="note">
+            {label()} serves these over HTTPS. The box address follows the first of 80, 443, 8080, 8000, 3000, 5000 and 5173 that something listens on, else 8000,
+            unless a port is pinned; a named link points at one port.
+          </p>
+        </Show>
       </section>
 
       <section>
@@ -453,57 +482,59 @@ export default function Ports(p: { machine: Machine }) {
         </Switch>
       </section>
 
-      <section>
-        <h3 class="section-title">
-          Raw forwards
-          <Show when={forwards()}>{(fs) => <span class="faint"> · {fs().length} of {MAX_FORWARDS}</span>}</Show>
-        </h3>
-        <Switch>
-          <Match when={forwardsError()}>
-            <div class="form-error">Could not read the forwards: {forwardsError()}</div>
-          </Match>
-          <Match when={forwards() === null}>
-            <div class="muted">Asking boxd for the forwards…</div>
-          </Match>
-          <Match when={forwards()!.length === 0}>
-            <div class="muted">No raw ports are exposed on {m().name}.</div>
-          </Match>
-          <Match when={true}>
-            <ul class="ports-list">
-              <For each={forwards()}>
-                {(f) => {
-                  const sq = () => portSq(f.vmPort);
-                  return (
-                    <li class="ports-row">
-                      <span class="sq" data-state={sq().state} title={sq().title} />
-                      <span class="ports-main">
-                        <Show when={f.address} fallback={<span class="muted">boxd returned no address{f.dns ? `: ${f.dns}` : ""}</span>}>
-                          <span class="mono ports-host">{f.address}</span>
-                        </Show>
-                        <span class="tag">{protocolLabel[f.protocol] ?? f.protocol}</span>
-                      </span>
-                      <span class="mono ports-target">:{f.vmPort}</span>
-                      <span class="ports-actions">
-                        <Show when={f.address}>
-                          {(a) => (
-                            <button class="icon-btn" title="Copy the address" aria-label={`Copy ${a()}`} onClick={() => void actions.copy(a(), "Address copied")}>
-                              <I.Copy />
-                            </button>
-                          )}
-                        </Show>
-                        <button class="btn sm ghost danger" disabled={busy() === `fwd:${f.vmPort}`} onClick={() => void unexpose(f)}>
-                          Unexpose
-                        </button>
-                      </span>
-                    </li>
-                  );
-                }}
-              </For>
-            </ul>
-          </Match>
-        </Switch>
-        <p class="note">For databases and other servers that do not speak HTTP. boxd passes the traffic through untouched, with no TLS, at most three per box.</p>
-      </section>
+      <Show when={canForward()}>
+        <section>
+          <h3 class="section-title">
+            Raw forwards
+            <Show when={forwards()}>{(fs) => <span class="faint"> · {fs().length} of {MAX_FORWARDS}</span>}</Show>
+          </h3>
+          <Switch>
+            <Match when={forwardsError()}>
+              <div class="form-error">Could not read the forwards: {forwardsError()}</div>
+            </Match>
+            <Match when={forwards() === null}>
+              <div class="muted">Asking {label()} for the forwards…</div>
+            </Match>
+            <Match when={forwards()!.length === 0}>
+              <div class="muted">No raw ports are exposed on {m().name}.</div>
+            </Match>
+            <Match when={true}>
+              <ul class="ports-list">
+                <For each={forwards()}>
+                  {(f) => {
+                    const sq = () => portSq(f.vmPort);
+                    return (
+                      <li class="ports-row">
+                        <span class="sq" data-state={sq().state} title={sq().title} />
+                        <span class="ports-main">
+                          <Show when={f.address} fallback={<span class="muted">{label()} returned no address{f.dns ? `: ${f.dns}` : ""}</span>}>
+                            <span class="mono ports-host">{f.address}</span>
+                          </Show>
+                          <span class="tag">{protocolLabel[f.protocol] ?? f.protocol}</span>
+                        </span>
+                        <span class="mono ports-target">:{f.vmPort}</span>
+                        <span class="ports-actions">
+                          <Show when={f.address}>
+                            {(a) => (
+                              <button class="icon-btn" title="Copy the address" aria-label={`Copy ${a()}`} onClick={() => void actions.copy(a(), "Address copied")}>
+                                <I.Copy />
+                              </button>
+                            )}
+                          </Show>
+                          <button class="btn sm ghost danger" disabled={busy() === `fwd:${f.vmPort}`} onClick={() => void unexpose(f)}>
+                            Unexpose
+                          </button>
+                        </span>
+                      </li>
+                    );
+                  }}
+                </For>
+              </ul>
+            </Match>
+          </Switch>
+          <p class="note">For databases and other servers that do not speak HTTP. {label()} passes the traffic through untouched, with no TLS, at most three per box.</p>
+        </section>
+      </Show>
     </div>
   );
 }

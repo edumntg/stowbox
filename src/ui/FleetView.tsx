@@ -1,9 +1,9 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { AgentMeta, Machine, MachineMetrics } from "../bridge/types";
-import { actions, agentWorking, agentsForMachine, machineById, phaseOf, state, type Selection } from "../state/store";
+import { actions, agentWorking, agentsForMachine, capsFor, connectedProviders, machineById, multiProvider, phaseOf, providerLabel, spendCurrency, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import { Dot, phaseDot } from "./common";
-import { agentPhaseLabel, gib, money, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
+import { agentPhaseLabel, gib, money, moneyByCurrency, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
 
 /** Something a person should look at. Derived from state on every render;
  * nothing is stored, so an alert disappears the moment its cause does. */
@@ -23,17 +23,34 @@ const IDLE_AFTER_MS = 30 * 60_000;
 const UNUSED_AFTER_MS = 2 * 3_600_000;
 const MEM_WARN = 0.9;
 const DISK_WARN = 0.1;
+/** A box with an agent at work this close to its auto-stop gets an alert. */
+const AUTO_STOP_WARN_MS = 20 * 60_000;
 
 /** When the agent's hooks last wrote its state, else when a terminal last opened it. */
 const waitingSince = (a: AgentMeta) => (state.live[a.id]?.since ? state.live[a.id].since * 1000 : a.updatedAt);
 
 function deriveAlerts(now: number): Alert[] {
   const out: Alert[] = [];
+  for (const e of state.providerErrors) {
+    out.push({ key: `provider-${e.provider}`, level: "danger", title: `Could not list the ${providerLabel(e.provider)} boxes`, body: `${e.message}. Its boxes are missing below until it answers again.`, sinceMs: 0, go: "settings" });
+  }
   for (const m of state.machines) {
     const agents = agentsForMachine(m.id);
     const go: Selection = { kind: "box", id: m.id };
+    const caps = capsFor(m);
     if (m.status === "failed") {
-      out.push({ key: `box-failed-${m.id}`, level: "danger", title: `${m.name} failed`, body: "boxd reports the machine as failed. A reboot usually clears it.", sinceMs: 0, go });
+      const fix = caps?.power.includes("reboot") ? "A reboot usually clears it." : "Start it again, or delete it.";
+      out.push({ key: `box-failed-${m.id}`, level: "danger", title: `${m.name} failed`, body: `${providerLabel(m.provider)} reports the machine as failed. ${fix}`, sinceMs: 0, go });
+    }
+    if (m.status === "running" && m.autoStopAt > 0 && m.autoStopAt * 1000 - now < AUTO_STOP_WARN_MS && agents.some(agentWorking)) {
+      out.push({
+        key: `auto-stop-${m.id}`,
+        level: "warn",
+        title: `${m.name} stops on its own ${relTime(m.autoStopAt * 1000, now).replace(" ago", "")}`,
+        body: "An agent is working in it. Its auto-stop ends every process in the box; push it out from the box's Details.",
+        sinceMs: 0,
+        go,
+      });
     }
     if (m.status === "running") {
       const busy = agents.some(agentWorking);
@@ -44,7 +61,7 @@ function deriveAlerts(now: number): Alert[] {
           key: `box-idle-${m.id}`,
           level: "warn",
           title: `${m.name} is running with nothing to do`,
-          body: `${oldest.title || "An agent"} has waited for you since ${relTime(waitingSince(oldest), now)}; the box bills ${money(m.estHourlyMicro, m.currency)}/h until it goes to standby.`,
+          body: `${oldest.title || "An agent"} has waited for you since ${relTime(waitingSince(oldest), now)}; the box bills ${money(m.estHourlyMicro, m.currency)}/h until it ${caps?.power.includes("pause") ? "goes to standby" : "stops"}.`,
           sinceMs: waitingSince(oldest),
           go,
         });
@@ -175,7 +192,10 @@ const Row = (p: { machine: Machine; now: number }) => {
         <Dot status={m().status} />
         <span class="fname">
           <span class="name">{m().name}</span>
-          <span class="mono faint">{sizeLabel(m())}</span>
+          <span class="mono faint">
+            {sizeLabel(m())}
+            <Show when={multiProvider()}> · {providerLabel(m().provider)}</Show>
+          </span>
           <Show when={stale() && sample()}>
             <span class="asof">
               {statusLabel[m().status]} · as of {relTime(sample()!.sampledAtMs, p.now)}
@@ -210,7 +230,7 @@ const Row = (p: { machine: Machine; now: number }) => {
           </>
         )}
       </Show>
-      <span class="fcell mono" classList={{ faint: stale() }} title={m().createdAt ? `Created ${new Date(m().createdAt * 1000).toLocaleString()}` : "boxd did not say when"}>
+      <span class="fcell mono" classList={{ faint: stale() }} title={m().createdAt ? `Created ${new Date(m().createdAt * 1000).toLocaleString()}` : `${providerLabel(m().provider)} did not say when`}>
         {m().createdAt ? span(Math.max(0, p.now / 1000 - m().createdAt)) : "—"}
       </span>
       <span class="fcell mono">{money(m().estHourlyMicro, m().currency)}/h</span>
@@ -237,6 +257,7 @@ const statusOrder: Record<Machine["status"], number> = {
   starting: 1,
   pending: 1,
   migrating: 1,
+  stopping: 4,
   suspended: 2,
   hibernated: 3,
   failed: 4,
@@ -253,8 +274,12 @@ export default function FleetView() {
   const billing = () => state.machines.filter((m) => m.status === "running" || m.status === "suspended");
   const working = () => state.agents.filter(agentWorking);
   const waiting = () => state.agents.filter((a) => phaseOf(a) === "waiting");
-  const hourly = () => billing().reduce((s, m) => s + m.estHourlyMicro, 0);
-  const currency = () => state.machines[0]?.currency ?? state.account?.billing.currency ?? "usd";
+  const hourly = () => moneyByCurrency(billing().map((m) => ({ micro: m.estHourlyMicro, currency: m.currency })), spendCurrency(), "/h");
+  const accountNames = () =>
+    connectedProviders()
+      .map((p) => state.accounts[p.id] && (multiProvider() ? `${p.capabilities.label} ${state.accounts[p.id].displayName}` : state.accounts[p.id].displayName))
+      .filter(Boolean)
+      .join(", ");
   const alerts = createMemo(() => deriveAlerts(now()));
   const rows = createMemo(() => [...state.machines].sort((a, b) => statusOrder[a.status] - statusOrder[b.status] || a.name.localeCompare(b.name)));
   const sampled = () => {
@@ -275,7 +300,7 @@ export default function FleetView() {
           <h1>Fleet</h1>
           <span class="meta">
             {state.machines.length} {state.machines.length === 1 ? "box" : "boxes"} · {state.agents.length} {state.agents.length === 1 ? "agent" : "agents"}
-            <Show when={state.account}> · {state.account!.displayName}</Show>
+            <Show when={accountNames()}> · {accountNames()}</Show>
           </span>
         </div>
         <div class="view-actions">
@@ -294,7 +319,7 @@ export default function FleetView() {
           fallback={
             <div class="empty-state">
               <Show when={!state.machinesLoaded} fallback={<span>No boxes in this account yet. The fleet view fills in as soon as one exists.</span>}>
-                <span>Reading your boxes from boxd…</span>
+                <span>Reading your boxes…</span>
               </Show>
               <Show when={state.machinesLoaded}>
                 <button class="btn primary" onClick={() => actions.openDialog({ kind: "new-box" })}>
@@ -308,7 +333,7 @@ export default function FleetView() {
             <Tile label="Running" value={String(running().length)} sub={`of ${state.machines.length} boxes`} ratio={state.machines.length ? running().length / state.machines.length : 0} dot="running" />
             <Tile label="Working" value={String(working().length)} sub={`of ${state.agents.length} agents`} dot="busy" />
             <Tile label="Waiting for you" value={String(waiting().length)} sub="their turn ended" dot="done" />
-            <Tile label="Estimated" value={`${money(hourly(), currency())}/h`} sub={`${billing().length} running or standby`} />
+            <Tile label="Estimated" value={hourly()} sub={`${billing().length} running or standby`} />
           </div>
 
           <h3 class="fleet-h">

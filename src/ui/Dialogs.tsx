@@ -2,9 +2,10 @@ import { For, Match, Show, Switch, createResource, createSignal, onCleanup, onMo
 import { api } from "../bridge/api";
 import type { Editor, Harness, Preset, VariableValues } from "../bridge/types";
 import { presetVariables } from "../bridge/variables";
-import { GUARD_COUNTDOWN_MS, actions, machineById, state, type Dialog } from "../state/store";
+import { GUARD_COUNTDOWN_MS, actions, capsFor, capsOf, connectedProviders, machineById, spendCurrency, state, type Dialog } from "../state/store";
 import * as I from "../icons";
 import { isWindows } from "./common";
+import { ProviderKeyForm } from "./Onboarding";
 import { currencySymbol, money, spendLine } from "./format";
 
 const GIB = 1024 ** 3;
@@ -70,16 +71,38 @@ const VariableFields = (p: { preset: Preset; values: VariableValues; onInput: (n
   </Show>
 );
 
+/** Auto-stop choices for providers that have one, in seconds; 0 is never. */
+const AUTO_STOP = [
+  { secs: 3600, label: "1 hour" },
+  { secs: 4 * 3600, label: "4 hours" },
+  { secs: 8 * 3600, label: "8 hours" },
+  { secs: 24 * 3600, label: "1 day" },
+  { secs: 0, label: "Never" },
+];
+
+/** What a new box is, in the provider's own terms. */
+const newBoxBlurb: Record<string, string> = {
+  boxd: "A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.",
+  boat: "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.",
+};
+
 const NewBox = () => {
-  const billing = () => state.account?.billing;
-  const rates = () => state.rateCard;
-  const sizes = () => [
-    { vcpu: 1, mem: 4 },
-    { vcpu: 2, mem: 8 },
-    { vcpu: 4, mem: 16 },
-  ].filter((s) => !billing() || billing()!.ceilingVcpu === 0 || s.vcpu <= billing()!.ceilingVcpu);
+  const providers = connectedProviders;
+  const [providerId, setProviderId] = createSignal(providers()[0]?.id ?? "");
+  const caps = () => capsOf(providerId());
+  const billing = () => state.accounts[providerId()]?.billing;
+  const rates = () => state.rateCards[providerId()];
+  // boxd: free vCPU and memory, capped by the plan. Fixed menus come from the provider.
+  const freeSizes = () =>
+    [
+      { vcpu: 1, mem: 4 },
+      { vcpu: 2, mem: 8 },
+      { vcpu: 4, mem: 16 },
+    ].filter((s) => !billing() || billing()!.ceilingVcpu === 0 || s.vcpu <= billing()!.ceilingVcpu);
   const [name, setName] = createSignal("");
   const [vcpu, setVcpu] = createSignal(billing()?.defaultVcpu || 2);
+  const [sizeId, setSizeId] = createSignal("default");
+  const [autoStop, setAutoStop] = createSignal(4 * 3600);
   const [isolated, setIsolated] = createSignal(false);
   const [presetId, setPresetId] = createSignal("");
   const preset = () => state.presets.find((x) => x.id === presetId());
@@ -93,7 +116,7 @@ const NewBox = () => {
 
   const estimate = (s: { vcpu: number; mem: number }) => {
     const r = rates();
-    if (!r) return "";
+    if (!r || !r.rates.vcpuHourMicro) return "";
     const micro = s.vcpu * r.rates.vcpuHourMicro + s.mem * r.rates.ramGibHourMicro + 100 * r.rates.diskGibHourMicro;
     return money(micro, r.currency) + "/h running";
   };
@@ -101,16 +124,21 @@ const NewBox = () => {
   const create = async () => {
     const missing = missingValue(preset(), values());
     if (missing) return setError(missing);
+    const c = caps();
+    if (!c) return setError("Connect a provider first.");
     setBusy(true);
     setError("");
     try {
-      const size = sizes().find((s) => s.vcpu === vcpu());
+      const size = freeSizes().find((s) => s.vcpu === vcpu());
       await actions.createBox(
         {
+          provider: providerId(),
           name: name().trim() || null,
-          vcpu: size?.vcpu ?? null,
-          memoryBytes: size ? size.mem * GIB : null,
-          isolated: isolated(),
+          vcpu: c.customSize ? (size?.vcpu ?? null) : null,
+          memoryBytes: c.customSize && size ? size.mem * GIB : null,
+          size: c.customSize ? null : sizeId(),
+          autoStopSecs: c.autoStop ? autoStop() : null,
+          isolated: c.isolated && isolated(),
         },
         presetId() || null,
         preset() ? values() : null,
@@ -125,26 +153,73 @@ const NewBox = () => {
 
   return (
     <Modal title="New box" onClose={actions.closeDialog}>
-      <p>A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.</p>
+      <Show when={providers().length > 1}>
+        <div class="field">
+          <span class="label">Provider</span>
+          <div class="choices two" role="group" aria-label="Provider">
+            <For each={providers()}>
+              {(p) => (
+                <button class="choice" aria-pressed={providerId() === p.id} onClick={() => setProviderId(p.id)}>
+                  <span>{p.capabilities.label}</span>
+                  <span class="faint">{p.capabilities.currency.toUpperCase()}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+      <p>{newBoxBlurb[providerId()] ?? ""}</p>
       <div class="field">
         <label for="nb-name">Name</label>
         <input id="nb-name" class="input mono" placeholder="leave empty for a suggested name" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
       </div>
       <div class="field">
         <span class="label">Size</span>
-        <div class="choices">
-          <For each={sizes()}>
-            {(s) => (
-              <button class="choice" aria-pressed={vcpu() === s.vcpu} onClick={() => setVcpu(s.vcpu)}>
-                <span>
-                  {s.vcpu} vCPU · {s.mem} GiB
-                </span>
-                <span class="faint mono">{estimate(s)}</span>
-              </button>
-            )}
-          </For>
-        </div>
+        <Show
+          when={caps()?.customSize ?? true}
+          fallback={
+            <div class="choices" style={{ "grid-template-columns": "1fr 1fr" }}>
+              <For each={caps()?.sizes ?? []}>
+                {(z) => (
+                  <button class="choice" aria-pressed={sizeId() === z.id} onClick={() => setSizeId(z.id)} title={z.note || undefined}>
+                    <span>
+                      {z.id} · {z.vcpu} vCPU · {Math.round(z.memoryBytes / GIB)} GiB
+                    </span>
+                    <span class="faint mono">
+                      {money(z.hourlyMicro, caps()!.currency)}/h running{z.note ? ` · ${z.note}` : ""}
+                    </span>
+                  </button>
+                )}
+              </For>
+            </div>
+          }
+        >
+          <div class="choices">
+            <For each={freeSizes()}>
+              {(s) => (
+                <button class="choice" aria-pressed={vcpu() === s.vcpu} onClick={() => setVcpu(s.vcpu)}>
+                  <span>
+                    {s.vcpu} vCPU · {s.mem} GiB
+                  </span>
+                  <span class="faint mono">{estimate(s)}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
       </div>
+      <Show when={caps()?.autoStop}>
+        <div class="field">
+          <label for="nb-stop">Auto-stop</label>
+          <select id="nb-stop" class="input" value={String(autoStop())} onChange={(e) => setAutoStop(Number(e.currentTarget.value))}>
+            <For each={AUTO_STOP}>{(o) => <option value={String(o.secs)}>{o.secs ? `After ${o.label}` : o.label}</option>}</For>
+          </select>
+          <p class="hint">
+            The box stops on its own this long after it starts, agents and all; the disk stays. Push it out later from the box's Details. Free-trial accounts
+            must pick 2 hours or less.
+          </p>
+        </div>
+      </Show>
       <div class="field">
         <label for="nb-setup">Setup</label>
         <select id="nb-setup" class="input" value={presetId()} onChange={(e) => pickPreset(e.currentTarget.value)}>
@@ -186,13 +261,15 @@ const NewBox = () => {
         </Show>
         <Show when={preset()}>{(pr) => <VariableFields preset={pr()} values={values()} onInput={(n, v) => setValues((vs) => ({ ...vs, [n]: v }))} />}</Show>
       </div>
-      <label class="check">
-        <input type="checkbox" checked={isolated()} onChange={(e) => setIsolated(e.currentTarget.checked)} />
-        <span>
-          <strong>Isolated sandbox.</strong> No in-VM boxd CLI, no org integrations, no stored agent logins. Cannot be changed later. Pick this for untrusted
-          code.
-        </span>
-      </label>
+      <Show when={caps()?.isolated}>
+        <label class="check">
+          <input type="checkbox" checked={isolated()} onChange={(e) => setIsolated(e.currentTarget.checked)} />
+          <span>
+            <strong>Isolated sandbox.</strong> No in-VM boxd CLI, no org integrations, no stored agent logins. Cannot be changed later. Pick this for untrusted
+            code.
+          </span>
+        </label>
+      </Show>
       <Show when={error()}>
         <div class="form-error">{error()}</div>
       </Show>
@@ -200,7 +277,7 @@ const NewBox = () => {
         <button class="btn" onClick={actions.closeDialog} disabled={busy()}>
           Cancel
         </button>
-        <button class="btn primary" onClick={() => void create()} disabled={busy()}>
+        <button class="btn primary" onClick={() => void create()} disabled={busy() || !caps()}>
           <I.Plus /> {busy() ? "Creating…" : "Create box"}
         </button>
       </div>
@@ -309,8 +386,12 @@ const NewAgent = (p: { machineId?: string }) => {
       </div>
       <p class="hint">
         The agent opens in its own terminal, in its own session. It signs in with whatever the box has: an{" "}
-        <span class="mono">ANTHROPIC_API_KEY</span> or <span class="mono">CLAUDE_CODE_OAUTH_TOKEN</span> secret set with <span class="mono">boxd env set</span>, a
-        login stored for your org, or the box's own login; <span class="mono">/login</span> works in the terminal.
+        <span class="mono">ANTHROPIC_API_KEY</span> or <span class="mono">CLAUDE_CODE_OAUTH_TOKEN</span> secret from a setup preset
+        <Show when={capsOf(machineById(machineId())?.provider ?? "")?.label === "boxd"}>
+          {" "}
+          or <span class="mono">boxd env set</span>, a login stored for your org
+        </Show>
+        , or the box's own login; <span class="mono">/login</span> works in the terminal.
       </p>
       <Show when={error()}>
         <div class="form-error">{error()}</div>
@@ -327,27 +408,56 @@ const NewAgent = (p: { machineId?: string }) => {
   );
 };
 
+/** Where a provider's key is kept, in words. */
+const keyStore = (backend: string | null) =>
+  backend === "keyring"
+    ? isWindows
+      ? "key in Windows Credential Manager"
+      : "key in the OS keychain"
+    : isWindows
+      ? "key in a file in your user's app data folder, no OS keychain was available"
+      : "key in a file only your user can read, no OS keychain was available";
+
 const Settings = () => {
-  const backend = () => state.provider?.secretBackend;
+  const [adding, setAdding] = createSignal("");
+  const providers = () => state.providers?.providers ?? [];
+  const labels = () => connectedProviders().map((p) => p.capabilities.label).join(" and ");
   return (
     <Modal title="Settings" onClose={actions.closeDialog}>
       <dl class="kv">
-        <dt>Account</dt>
-        <dd>{state.account?.displayName ?? "unknown"}</dd>
-        <dt>Provider</dt>
-        <dd>
-          boxd ·{" "}
-          <button class="link" onClick={() => void actions.open(state.provider?.consoleUrl ?? "https://app.boxd.sh")}>
-            open console
-          </button>
-        </dd>
-        <dt>API key</dt>
-        <dd>
-          <Show
-            when={backend() === "keyring"}
-            fallback={<span>{isWindows ? "stored in a file in your user's app data folder" : "stored in a file only your user can read"}, no OS keychain was available</span>}
-          >
-            {isWindows ? "stored in Windows Credential Manager" : "stored in the OS keychain"}
+        <dt>Providers</dt>
+        <dd class="stack">
+          <For each={providers()}>
+            {(p) => (
+              <div class="provider-row">
+                <span class="sq" data-state={p.connected ? "running" : "idle"} title={p.connected ? "Connected" : "Not connected"} />
+                <span class="provider-name">{p.capabilities.label}</span>
+                <Show
+                  when={p.connected}
+                  fallback={
+                    <>
+                      <span class="faint">not connected</span>
+                      <button class="btn sm" aria-expanded={adding() === p.id} onClick={() => setAdding(adding() === p.id ? "" : p.id)}>
+                        <I.Key /> Connect
+                      </button>
+                    </>
+                  }
+                >
+                  <span class="faint">
+                    {state.accounts[p.id]?.displayName ?? "account not read"} · {keyStore(p.secretBackend)}
+                  </span>
+                  <button class="btn sm ghost" onClick={() => void actions.open(p.capabilities.consoleUrl)}>
+                    Console
+                  </button>
+                  <button class="btn sm danger" onClick={() => void actions.disconnect(p.id)} title={`Forget the ${p.capabilities.label} key. Its boxes keep running.`}>
+                    Disconnect
+                  </button>
+                </Show>
+              </div>
+            )}
+          </For>
+          <Show when={providers().find((p) => p.id === adding() && !p.connected)} keyed>
+            {(p) => <ProviderKeyForm provider={p} onDone={() => setAdding("")} />}
           </Show>
         </dd>
         <dt>Theme</dt>
@@ -400,7 +510,8 @@ const Settings = () => {
           <label class="check">
             <input type="checkbox" checked={state.guard.idleOn} onChange={(e) => actions.setGuard({ idleOn: e.currentTarget.checked })} />
             <span>
-              <strong>Put a box in standby when nothing happens in it.</strong> No agent working, no setup running, no terminal open.
+              <strong>Put a box in standby when nothing happens in it.</strong> No agent working, no setup running, no terminal open. A provider without
+              standby (boat) stops the box instead; its disk stays.
             </span>
           </label>
           <div class="guard-num" classList={{ off: !state.guard.idleOn }}>
@@ -435,7 +546,7 @@ const Settings = () => {
             </span>
           </label>
           <div class="guard-num" classList={{ off: !state.guard.spendOn }}>
-            <label for="guard-spend">Limit {currencySymbol(state.rateCard?.currency ?? state.account?.billing.currency ?? "eur")}</label>
+            <label for="guard-spend">Limit {currencySymbol(spendCurrency())}</label>
             <input
               id="guard-spend"
               class="input mono"
@@ -460,15 +571,18 @@ const Settings = () => {
               <Match when={state.guard.spend}>{(c) => <p class="hint">{spendLine(c())}</p>}</Match>
             </Switch>
           </Show>
-          <p class="hint">Uses boxd's metered usage since midnight when the key can read it (org owners and admins); otherwise the current hourly estimate over a full day, and the warning says so.</p>
+          <p class="hint">
+            Uses each provider's metered usage since midnight when the key can read it (boxd org owners and admins); otherwise the current hourly estimate over a
+            full day, and the warning says so. Boxes billed in another currency than the limit's are not counted.
+          </p>
         </dd>
         <dt>Version</dt>
         <dd class="mono">0.1.0</dd>
       </dl>
-      <p class="hint">Stowbox talks to boxd directly from this computer. No Stowbox server sees your key, your boxes or your agents.</p>
+      <p class="hint">Stowbox talks to {labels() || "the provider"} directly from this computer. No Stowbox server sees your keys, your boxes or your agents.</p>
       <div class="dialog-actions">
         <button class="btn danger" onClick={() => void actions.signOut()}>
-          <I.Key /> Forget API key
+          <I.Key /> Forget all keys
         </button>
         <button class="btn primary" onClick={actions.closeDialog}>
           Done
@@ -546,7 +660,7 @@ const DeleteAgent = (p: { agentId: string }) => {
               <span class="mono">{ag().worktree!.branch}</span> stays in the repository, with everything committed on it.
               <Show when={boxGone()}>
                 <span class="hint" style={{ display: "block" }}>
-                  The box is no longer in your boxd account.
+                  The box no longer exists.
                 </span>
               </Show>
             </span>
@@ -656,6 +770,7 @@ const OpenEditor = (p: { machineId: string; dir: string | null }) => {
   const [error, setError] = createSignal("");
   const label = () => EDITORS.find((e) => e.id === editor())!.label;
   const asleep = () => m()?.status === "suspended" || m()?.status === "hibernated";
+  const home = () => (m() && capsFor(m()!)?.remoteHome) || "/home/boxd";
   const run = async () => {
     setBusy(true);
     setError("");
@@ -690,7 +805,7 @@ const OpenEditor = (p: { machineId: string; dir: string | null }) => {
       </div>
       <div class="field">
         <label for="oe-dir">Folder in the box</label>
-        <input id="oe-dir" class="input mono" placeholder="empty = /home/boxd" value={dir()} onInput={(e) => setDir(e.currentTarget.value)} />
+        <input id="oe-dir" class="input mono" placeholder={`empty = ${home()}`} value={dir()} onInput={(e) => setDir(e.currentTarget.value)} />
       </div>
       <div class="field">
         <span class="label">What happens</span>
@@ -739,7 +854,7 @@ const OpenEditor = (p: { machineId: string; dir: string | null }) => {
                       <li>Wake {m()!.name}; it is {m()!.status === "suspended" ? "in standby" : "hibernated"}.</li>
                     </Show>
                     <li>
-                      Open <span class="mono">{dir().trim() || "/home/boxd"}</span> in {label()}. It needs the Remote - SSH extension.
+                      Open <span class="mono">{dir().trim() || home()}</span> in {label()}. It needs the Remote - SSH extension.
                     </li>
                   </ol>
                 </Show>

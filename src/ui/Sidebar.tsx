@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
 import type { AgentMeta, Machine } from "../bridge/types";
-import { actions, agentsForMachine, phaseOf, state } from "../state/store";
+import { actions, agentsForMachine, multiProvider, phaseOf, providerLabel, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot } from "./common";
 import { agentPhaseLabel, money, relTime, sizeLabel, statusLabel } from "./format";
@@ -49,6 +49,7 @@ const BoxRow = (p: { machine: Machine; agents: AgentMeta[] }) => {
         </span>
         <span class="row-sub">
           {statusLabel[p.machine.status]} · {sizeLabel(p.machine)}
+          {multiProvider() ? ` · ${providerLabel(p.machine.provider)}` : ""}
         </span>
       </div>
       <Show when={open() && p.agents.length > 0}>
@@ -110,7 +111,7 @@ export default function Sidebar() {
 
       <nav class="side-list scroll">
         <Show when={!state.machinesLoaded}>
-          <div class="side-state">Reading your boxes from boxd…</div>
+          <div class="side-state">Reading your boxes…</div>
         </Show>
         <Show when={state.machinesLoaded && state.machinesError}>
           <div class="side-state">

@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 import type { AgentMeta } from "../bridge/types";
-import { actions, machineById } from "../state/store";
+import { actions, capsFor, machineById } from "../state/store";
 import * as I from "../icons";
 import { Dot, PowerActions } from "./common";
 import { money, sizeLabel, statusLabel } from "./format";
@@ -18,12 +18,16 @@ export default function Inspector(p: { agent: AgentMeta }) {
               <button class="icon-btn" title="Open a terminal in the box" aria-label="Terminal" onClick={() => actions.openBoxTab(box().id, "terminal")}>
                 <I.Terminal />
               </button>
-              <button class="icon-btn" title="Open the live desktop" aria-label="Desktop" onClick={() => void actions.open(box().desktopUrl)}>
-                <I.Desktop />
-              </button>
-              <button class="icon-btn" title="Open this agent's directory in VS Code or Cursor" aria-label="Open in editor" onClick={() => actions.openDialog({ kind: "open-editor", machineId: box().id, dir: p.agent.cwd ?? null })}>
-                <I.Code />
-              </button>
+              <Show when={box().desktopUrl}>
+                <button class="icon-btn" title="Open the live desktop" aria-label="Desktop" onClick={() => void actions.open(box().desktopUrl)}>
+                  <I.Desktop />
+                </button>
+              </Show>
+              <Show when={capsFor(box())?.editorSsh ?? true}>
+                <button class="icon-btn" title="Open this agent's directory in VS Code or Cursor" aria-label="Open in editor" onClick={() => actions.openDialog({ kind: "open-editor", machineId: box().id, dir: p.agent.cwd ?? null })}>
+                  <I.Code />
+                </button>
+              </Show>
               <button class="icon-btn" title="Cost and details" aria-label="Details and cost" onClick={() => actions.openBoxTab(box().id, "details")}>
                 <I.Coins />
               </button>
@@ -36,7 +40,7 @@ export default function Inspector(p: { agent: AgentMeta }) {
         </button>
       </div>
       <div class="panel-body scroll">
-        <Show when={m()} fallback={<div class="panel-card muted">This agent's box is no longer in your boxd account.</div>}>
+        <Show when={m()} fallback={<div class="panel-card muted">This agent's box no longer exists.</div>}>
           {(box) => (
             <div class="panel-card">
               <div class="title">

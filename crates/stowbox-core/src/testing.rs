@@ -7,6 +7,9 @@ use crate::Result;
 pub fn machine(id: &str, status: MachineStatus) -> Machine {
     Machine {
         id: id.into(),
+        provider: "boxd".into(),
+        size: String::new(),
+        auto_stop_at: 0,
         name: "box".into(),
         status,
         vcpu: 2,
@@ -93,6 +96,9 @@ impl Provider for LocalBash {
     fn id(&self) -> &'static str {
         "local"
     }
+    fn capabilities(&self) -> crate::capabilities::Capabilities {
+        crate::boxd::capabilities()
+    }
     async fn whoami(&self) -> Result<Account> {
         unimplemented!()
     }
@@ -123,7 +129,7 @@ impl Provider for LocalBash {
     async fn org_billing(&self, _: &str) -> Result<OrgBilling> {
         unimplemented!()
     }
-    async fn rates(&self) -> Result<(String, Rates)> {
+    async fn rates(&self) -> Result<crate::cost::RateCard> {
         unimplemented!()
     }
     async fn exec(&self, _: &str, spec: ExecSpec) -> Result<ExecHandle> {

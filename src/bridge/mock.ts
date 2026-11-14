@@ -7,6 +7,7 @@ import type {
   AgentMeta,
   ClaudeAccount,
   Api,
+  Capabilities,
   GitDiffFile,
   GitFileChange,
   GitReview,
@@ -32,7 +33,102 @@ import { substitute, variablesIn } from "./variables";
 const GIB = 1024 ** 3;
 let nextSshPort = 21843;
 
+// Mirrors core boxd::capabilities and boat::capabilities.
+const BOXD_CAPS: Capabilities = {
+  label: "boxd",
+  consoleUrl: "https://app.boxd.sh",
+  keyHint: "Make one at app.boxd.sh or with `boxd auth keys create stowbox`. Keys are fenced to one organization.",
+  keyPrefixes: ["bxd_"],
+  currency: "eur",
+  power: ["start", "stop", "reboot", "pause", "resume", "hibernate", "wake", "destroy"],
+  fork: true,
+  isolated: true,
+  autoSuspend: true,
+  autoHibernate: true,
+  autoStop: false,
+  customSize: true,
+  sizes: [],
+  httpsLinks: true,
+  httpsNamed: true,
+  httpsList: true,
+  httpsRemove: true,
+  httpsDefaultRoute: true,
+  portForwards: true,
+  editorSsh: true,
+  remoteUser: "boxd",
+  remoteHome: "/home/boxd",
+  meteringNote: "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.",
+};
+const BOAT_SIZES = [
+  { id: "small", vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 51e9, hourlyMicro: 18_000, note: "" },
+  { id: "default", vcpu: 4, memoryBytes: 8 * GIB, diskBytes: 51e9, hourlyMicro: 36_000, note: "" },
+  { id: "large", vcpu: 8, memoryBytes: 16 * GIB, diskBytes: 111e9, hourlyMicro: 72_000, note: "not on the free trial" },
+  { id: "xlarge", vcpu: 16, memoryBytes: 32 * GIB, diskBytes: 251e9, hourlyMicro: 200_000, note: "needs the $100 plan or higher" },
+];
+const BOAT_CAPS: Capabilities = {
+  label: "boat",
+  consoleUrl: "https://boat.dev/dashboard",
+  keyHint: "Make one with `boat api-key create stowbox` or on the boat dashboard. It needs the ssh action: Stowbox runs every command over SSH.",
+  keyPrefixes: ["boat_", "box_"],
+  currency: "usd",
+  power: ["start", "stop", "destroy"],
+  fork: true,
+  isolated: false,
+  autoSuspend: false,
+  autoHibernate: false,
+  autoStop: true,
+  customSize: false,
+  sizes: BOAT_SIZES,
+  httpsLinks: true,
+  httpsNamed: false,
+  httpsList: false,
+  httpsRemove: false,
+  httpsDefaultRoute: false,
+  portForwards: false,
+  editorSsh: false,
+  remoteUser: "user",
+  remoteHome: "/home/user",
+  meteringNote: "boat counts by the second at list price; time included in the plan is not taken off here.",
+};
+const CAPS: Record<string, Capabilities> = { boxd: BOXD_CAPS, boat: BOAT_CAPS };
+
+// `?providers=boxd` or `?providers=boat` previews a single connected provider.
+const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat").split(",").filter((p) => p in CAPS));
+
+function boatMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
+  const size = BOAT_SIZES.find((z) => z.id === (partial.size || "default")) ?? BOAT_SIZES[1];
+  const live = partial.status === "running" || partial.status === "starting";
+  return {
+    vcpu: size.vcpu,
+    memoryBytes: size.memoryBytes,
+    diskBytes: size.diskBytes,
+    publicIp: "0.0.0.0",
+    accessDomain: "on.boat.dev",
+    url: "",
+    desktopUrl: "",
+    sshPort: 0,
+    org: "",
+    billingOrg: "",
+    source: "",
+    isolated: false,
+    createdAt: Math.floor(Date.now() / 1000) - 86_400,
+    hibernatedAtMs: 0,
+    bootTimeMs: 0,
+    lastConnectedMs: 0,
+    autoSuspendSecs: 0,
+    autoHibernateSecs: 0,
+    autoDestroySecs: 0,
+    currency: "usd",
+    ...partial,
+    provider: "boat",
+    size: size.id,
+    autoStopAt: live ? partial.autoStopAt || Math.floor(Date.now() / 1000) + 4 * 3600 : 0,
+    estHourlyMicro: live ? size.hourlyMicro : 0,
+  };
+}
+
 function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
+  if (partial.provider === "boat") return boatMachine(partial);
   const vcpu = partial.vcpu ?? 2;
   const memoryBytes = partial.memoryBytes ?? 8 * GIB;
   const running = partial.status === "running";
@@ -61,6 +157,9 @@ function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "stat
     autoDestroySecs: 0,
     currency: "eur",
     ...partial,
+    provider: "boxd",
+    size: "",
+    autoStopAt: 0,
     // Always from the state passed in, so a power change re-prices the box.
     estHourlyMicro: Math.round(est),
   };
@@ -72,7 +171,9 @@ let machines: Machine[] = [
   machine({ id: "vm_mock_3", name: "mock-scratch", status: "hibernated", vcpu: 1, memoryBytes: 4 * GIB }),
   machine({ id: "vm_mock_4", name: "mock-old", status: "stopped" }),
   machine({ id: "vm_mock_5", name: "mock-worker", status: "running", vcpu: 4, memoryBytes: 16 * GIB, lastConnectedMs: Date.now() - 3 * 3_600_000 }),
-];
+  machine({ id: "sbx_mock_6", name: "boat-ci", status: "running", provider: "boat", size: "large", autoStopAt: Math.floor(Date.now() / 1000) + 12 * 60 }),
+  machine({ id: "sbx_mock_7", name: "boat-notes", status: "stopped", provider: "boat", size: "small" }),
+].filter((m) => connected.has(m.provider));
 
 // Metrics drift a little per sample so the fleet view shows movement, and
 // the worker box sits near its memory ceiling so the pressure colours show.
@@ -98,6 +199,29 @@ const account: Account = {
     subscriptionStatus: "active",
   },
 };
+
+const boatAccount: Account = {
+  userId: "usr_mock",
+  displayName: "mock-boat-user",
+  billing: {
+    mode: "wallet",
+    currency: "usd",
+    balanceMicro: 18_500_000,
+    accruingMicro: null,
+    maxVms: 10,
+    defaultVcpu: 4,
+    defaultMemoryBytes: 8 * GIB,
+    ceilingVcpu: 0,
+    ceilingMemoryBytes: 0,
+    subscriptionStatus: "pro",
+  },
+};
+const accounts: Record<string, Account> = { boxd: account, boat: boatAccount };
+
+function ownerCaps(id: string): Capabilities {
+  const m = machines.find((m) => m.id === id || m.name === id);
+  return CAPS[m?.provider ?? "boxd"];
+}
 
 let agents: AgentMeta[] = [
   {
@@ -616,6 +740,12 @@ const mockForwards: Record<string, { vmPort: number; publicPort: number; protoco
 const AUTO_PORTS = [80, 443, 8080, 8000, 3000, 5000, 5173];
 
 function mockRouteList(m: Machine): HttpsRoute[] {
+  // boat: one tokened link per port, only those made in this session.
+  if (m.provider === "boat")
+    return (mockRoutes[m.id] ?? []).map((r): HttpsRoute => {
+      const domain = `${r.port}-${m.id.replace(/_/g, "")}.on.boat.dev`;
+      return { name: String(r.port), domain, url: `https://${domain}/?token=mock${r.port}`, port: r.port, portMode: "locked", isDefault: false };
+    });
   const host = `${m.name}.${m.accessDomain || "boxd.sh"}`;
   const pinned = mockDefaultPort[m.id] ?? null;
   const listening = new Set((mockListening[m.id] ?? []).map((l) => l.port));
@@ -644,22 +774,32 @@ function requireRepo(machineId: string, cwd: string | null): MockRepo {
 export const mockApi: Api = {
   async providerStatus() {
     // `?onboarding` previews the first-run screen.
-    const configured = !window.location.search.includes("onboarding");
-    return { configured, provider: "boxd", secretBackend: "file", consoleUrl: "https://app.boxd.sh" };
+    if (window.location.search.includes("onboarding")) connected.clear();
+    const providers = Object.entries(CAPS).map(([id, capabilities]) => ({ id, connected: connected.has(id), secretBackend: connected.has(id) ? ("file" as const) : null, capabilities }));
+    return { configured: connected.size > 0, providers };
   },
-  async setApiKey(key) {
-    // The same shape check, and message, as the desktop shell's set_api_key.
+  async setApiKey(provider, key) {
+    // The same shape check as the desktop shell's set_api_key.
+    const caps = CAPS[provider];
+    if (!caps) throw new Error(`unknown provider ${provider}`);
     const k = key.trim();
-    if (!k.startsWith("bxd_") || k.length < 20) throw new Error("That does not look like a boxd API key. Keys start with bxd_ and come from app.boxd.sh or `boxd auth keys create`.");
-    return account;
+    if (!caps.keyPrefixes.some((p) => k.startsWith(p)) || k.length < 20)
+      throw new Error(`That does not look like a ${caps.label} API key. Keys start with ${caps.keyPrefixes.join(" or ")}.`);
+    connected.add(provider);
+    return accounts[provider];
   },
-  async clearApiKey() {},
-  async whoami() {
-    return account;
+  async clearApiKey(provider) {
+    if (provider) connected.delete(provider);
+    else connected.clear();
+    machines = machines.filter((m) => connected.has(m.provider));
+  },
+  async whoami(provider) {
+    if (!connected.has(provider)) throw new Error(`${provider} is not connected`);
+    return accounts[provider];
   },
   async listMachines() {
     await sleep(150);
-    return machines;
+    return { machines, errors: [] };
   },
   async getMachine(id) {
     const m = machines.find((m) => m.id === id || m.name === id);
@@ -669,7 +809,11 @@ export const mockApi: Api = {
   async createMachine(spec, presetId, variables) {
     if (presetId) prepareMockSetup(presetId, variables ?? {});
     await sleep(800);
-    const m = machine({ id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
+    const provider = spec.provider ?? [...connected][0] ?? "boxd";
+    const m =
+      provider === "boat"
+        ? machine({ id: "sbx_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "boat-new", status: "running", provider, size: spec.size ?? "default", autoStopAt: spec.autoStopSecs ? Math.floor(Date.now() / 1000) + spec.autoStopSecs : 0 })
+        : machine({ id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
     machines = [...machines, m];
     if (presetId) startMockSetup(m, presetId, variables ?? {});
     return m;
@@ -677,12 +821,14 @@ export const mockApi: Api = {
   async forkMachine(source, name) {
     await sleep(300);
     const src = await mockApi.getMachine(source);
-    const m = machine({ ...src, id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: name || src.name + "-fork", status: "running", source: "fork/" + src.name });
+    const m = machine({ ...src, id: (src.provider === "boat" ? "sbx_mock_" : "vm_mock_") + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: name || src.name + "-fork", status: "running", source: "fork/" + src.name });
     machines = [...machines, m];
     return m;
   },
   async machinePower(id, action) {
     await sleep(400);
+    const caps = ownerCaps(id);
+    if (!caps.power.includes(action)) throw new Error(`${caps.label} cannot ${action} a box`);
     const next: Record<string, Machine["status"]> = { start: "running", stop: "stopped", reboot: "running", pause: "suspended", resume: "running", hibernate: "hibernated", wake: "running" };
     if (action === "destroy") {
       machines = machines.filter((m) => m.id !== id);
@@ -695,8 +841,26 @@ export const mockApi: Api = {
     // A stop or reboot ends every process in the box; standby keeps them.
     if (action === "stop" || action === "reboot") for (const a of agents) if (a.machineId === id && live.has(a.id)) setLive(a.id, () => ({ running: false }));
   },
+  async setAutoStop(id, secs) {
+    await sleep(200);
+    machines = machines.map((m) => (m.id === id ? { ...m, autoStopAt: secs > 0 && m.status === "running" ? Math.floor(Date.now() / 1000) + secs : 0 } : m));
+    return mockApi.getMachine(id);
+  },
   async machineUsage(id) {
     const m = await mockApi.getMachine(id);
+    if (m.provider === "boat")
+      return {
+        periodStart: m.createdAt,
+        periodEnd: Math.floor(Date.now() / 1000),
+        currency: "usd",
+        rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 },
+        vcpuHours: 0,
+        ramGibHours: 0,
+        diskGibHours: 0,
+        costMicro: 410_000,
+        seconds: { running: 20_500, standby: 0, hibernated: 0, stopped: 0 },
+        complete: true,
+      };
     return {
       periodStart: m.createdAt,
       periodEnd: Math.floor(Date.now() / 1000),
@@ -730,8 +894,9 @@ export const mockApi: Api = {
       uptimeSecs: b.up + Math.round((Date.now() - 1_700_000_000_000) / 1000) % 60,
     };
   },
-  async rates() {
-    return { currency: "eur", rates: { vcpuHourMicro: 39_000, ramGibHourMicro: 12_000, diskGibHourMicro: 80 } };
+  async rates(provider) {
+    if (provider === "boat") return { currency: "usd", rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 }, sizes: BOAT_SIZES.map((z) => ({ size: z.id, hourlyMicro: z.hourlyMicro })) };
+    return { currency: "eur", rates: { vcpuHourMicro: 39_000, ramGibHourMicro: 12_000, diskGibHourMicro: 80 }, sizes: [] };
   },
   async guardCheck(policy) {
     observe();
@@ -742,25 +907,34 @@ export const mockApi: Api = {
     observe();
     const m = await mockApi.getMachine(machineId);
     const verdict = decide(m, policy, Date.now());
-    const suspended = verdict.kind === "suspend";
-    if (suspended) await mockApi.machinePower(m.id, "pause");
-    const after = suspended ? machine({ ...m, status: "suspended" }).estHourlyMicro : m.estHourlyMicro;
-    return { verdict, suspended, machineName: m.name, hourlyBeforeMicro: m.estHourlyMicro, hourlyAfterMicro: after, currency: m.currency };
+    const act = verdict.kind === "suspend";
+    // Like the shell: standby where the provider has it, a stop otherwise.
+    const pause = ownerCaps(m.id).power.includes("pause");
+    if (act) await mockApi.machinePower(m.id, pause ? "pause" : "stop");
+    const after = act ? machine({ ...m, status: pause ? "suspended" : "stopped" }).estHourlyMicro : m.estHourlyMicro;
+    return { verdict, suspended: act && pause, stopped: act && !pause, machineName: m.name, hourlyBeforeMicro: m.estHourlyMicro, hourlyAfterMicro: after, currency: m.currency };
   },
   async guardTouch(machineId) {
     touch(machineId);
   },
   // `?spend=projected` previews a key that cannot read boxd's meter.
-  async spendToday(_since, limitMicro) {
+  async spendToday(_since, limitMicro, currency) {
     await sleep(200);
-    const amount = (over: number) => ({ amountMicro: over, limitMicro, currency: "eur", over: limitMicro > 0 && over >= limitMicro });
+    const cur = currency ?? "eur";
+    // Providers billing in another currency are left out, as in the shell.
+    const excluded = [...connected].filter((p) => CAPS[p].currency !== cur).map((p) => CAPS[p].label);
+    if (cur === "usd") {
+      return { basis: "metered", totalMicro: 410_000, complete: true, amountMicro: 410_000, limitMicro, currency: cur, over: limitMicro > 0 && 410_000 >= limitMicro, excluded };
+    }
+    const amount = (over: number) => ({ amountMicro: over, limitMicro, currency: cur, over: limitMicro > 0 && over >= limitMicro, excluded });
     if (window.location.search.includes("spend=projected")) {
-      const hourlyMicro = machines.reduce((s, m) => s + m.estHourlyMicro, 0);
+      const hourlyMicro = machines.filter((m) => m.currency === cur).reduce((s, m) => s + m.estHourlyMicro, 0);
       return { basis: "projected", hourlyMicro, why: "permission denied: usage is visible to org owners and admins", ...amount(hourlyMicro * 24) };
     }
     return { basis: "metered", totalMicro: 1_840_000, complete: false, ...amount(1_840_000) };
   },
-  async orgBilling() {
+  async orgBilling(provider) {
+    if (provider === "boat") return { id: "team_mock", name: "", isAdmin: false, currency: "usd", mode: "wallet", balanceMicro: 18_500_000, accruingMicro: null, vmCount: machines.filter((m) => m.provider === "boat").length, maxVms: 10 };
     return { id: "org_mock", name: "mock-org", isAdmin: true, currency: "eur", mode: "credits", balanceMicro: 24_310_000, accruingMicro: 410_000, vmCount: machines.length, maxVms: 50 };
   },
   async listAgents() {
@@ -956,6 +1130,11 @@ export const mockApi: Api = {
   async addHttpsRoute(machineId, name, port) {
     const m = await mockApi.getMachine(machineId);
     mockPort(port);
+    if (m.provider === "boat") {
+      await sleep(400);
+      mockRoutes[m.id] = [...(mockRoutes[m.id] ?? []).filter((r) => r.port !== port), { name: String(port), port }].sort((a, b) => a.port - b.port);
+      return mockRouteList(m).find((r) => r.port === port)!;
+    }
     if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) throw new Error(`"${name}" cannot be a link name: use lowercase letters, digits and hyphens, up to 63, not starting or ending with a hyphen`);
     const list = (mockRoutes[m.id] ??= []);
     if (name === "default" || list.some((r) => r.name === name)) throw new Error(`proxy "${name}" already exists on ${m.name}`);

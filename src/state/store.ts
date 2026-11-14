@@ -5,6 +5,7 @@ import type {
   TermTarget,
   Account,
   AgentMeta,
+  Capabilities,
   AgentLive,
   Attachment,
   LivePush,
@@ -62,9 +63,11 @@ export interface GuardPrefs {
   /** In whole units of the rate card's currency. */
   spendLimit: number;
 }
-/** One box the idle guard put in standby. */
+/** One box the idle guard put in standby, or stopped where there is none. */
 export interface GuardAction {
   machineId: string;
+  /** Stopped instead of put in standby: the provider has no standby. */
+  stopped?: boolean;
   machineName: string;
   atMs: number;
   idleSinceMs: number;
@@ -87,12 +90,17 @@ export interface Toast {
 interface AppState {
   phase: "booting" | "needs-key" | "ready" | "error";
   bootError: string;
-  provider: ProviderStatus | null;
-  account: Account | null;
-  rateCard: RateCard | null;
+  /** Every provider Stowbox knows, connected or not. */
+  providers: ProviderStatus | null;
+  /** By provider id, for the connected ones that answered. */
+  accounts: Record<string, Account>;
+  rateCards: Record<string, RateCard>;
   machines: Machine[];
   machinesLoaded: boolean;
+  /** Every connected provider failed to list. */
   machinesError: string;
+  /** Providers whose listing failed while others answered. */
+  providerErrors: { provider: string; message: string }[];
   agents: AgentMeta[];
   /** What the box's watch saw last, by agent id; missing until it reports. */
   live: Record<string, AgentLive>;
@@ -191,12 +199,13 @@ function initialTheme(): Theme {
 export const [state, setState] = createStore<AppState>({
   phase: "booting",
   bootError: "",
-  provider: null,
-  account: null,
-  rateCard: null,
+  providers: null,
+  accounts: {},
+  rateCards: {},
   machines: [],
   machinesLoaded: false,
   machinesError: "",
+  providerErrors: [],
   agents: [],
   live: {},
   tmux: {},
@@ -304,7 +313,9 @@ function localMidnightSecs(): number {
 function startCountdown(e: GuardEntry) {
   if (state.guard.pending[e.machineId] || Date.now() - (keptAt.get(e.machineId) ?? 0) < GUARD_EVERY_MS * 2) return;
   const untilMs = Date.now() + GUARD_COUNTDOWN_MS;
-  const toastId = actions.toast(`${e.machineName} goes to standby`, "info", {
+  const m = machineById(e.machineId);
+  const stops = !!m && !capsFor(m)?.power.includes("pause");
+  const toastId = actions.toast(stops ? `${e.machineName} stops` : `${e.machineName} goes to standby`, "info", {
     untilMs,
     detail: `Nothing has happened in it for ${state.guard.idleMinutes} min: no agent working, no setup, no terminal open.`,
     action: { label: "Undo", run: () => void actions.keepRunning(e.machineId) },
@@ -329,6 +340,7 @@ async function finishCountdown(machineId: string) {
     if (r.suspended && r.verdict.kind === "suspend") {
       const entry: GuardAction = {
         machineId,
+        stopped: r.stopped,
         machineName: r.machineName,
         atMs: Date.now(),
         idleSinceMs: r.verdict.idleSinceMs,
@@ -354,8 +366,26 @@ function message(e: unknown): string {
 }
 
 export const machineById = (id: string) => state.machines.find((m) => m.id === id);
-/** The agent's box is gone from boxd: the agent is history and nothing can run. */
-export const agentBoxGone = (a: AgentMeta) => state.machinesLoaded && !state.machinesError && !machineById(a.machineId);
+/** The agent's box is gone from its provider: the agent is history and
+ * nothing can run. Not decided while any provider failed to list, since
+ * the box may be one of that provider's. */
+export const agentBoxGone = (a: AgentMeta) => state.machinesLoaded && !state.machinesError && state.providerErrors.length === 0 && !machineById(a.machineId);
+
+/** Providers with a key, in Stowbox's order. */
+export const connectedProviders = () => (state.providers?.providers ?? []).filter((p) => p.connected);
+export const capsOf = (provider: string): Capabilities | undefined => state.providers?.providers.find((p) => p.id === provider)?.capabilities;
+export const capsFor = (m: Machine): Capabilities | undefined => capsOf(m.provider);
+/** The short name of a provider for the UI: "boxd", "boat". */
+export const providerLabel = (provider: string) => capsOf(provider)?.label ?? provider;
+/** More than one provider is connected, so boxes carry their provider's name. */
+export const multiProvider = () => connectedProviders().length > 1;
+/** The label of a box's provider, or of the only one connected. */
+export const boxProvider = (m: Machine | undefined) => (m ? providerLabel(m.provider) : connectedProviders().map((p) => p.capabilities.label).join(" or ") || "the provider");
+/** The currency the spend limit is in: the first connected provider's. */
+export const spendCurrency = () => {
+  const first = connectedProviders()[0];
+  return (first && state.rateCards[first.id]?.currency) || first?.capabilities.currency || "usd";
+};
 export const agentById = (id: string) => state.agents.find((a) => a.id === id);
 export const agentsForMachine = (id: string) => state.agents.filter((a) => a.machineId === id);
 export const selectedMachine = () => (state.ui.selection.kind === "box" ? machineById(state.ui.selection.id) : undefined);
@@ -459,7 +489,7 @@ export const actions = {
     setState({ phase: "booting", bootError: "" });
     try {
       const provider = await api.providerStatus();
-      setState("provider", provider);
+      setState("providers", provider);
       if (!provider.configured) {
         setState("phase", "needs-key");
         return;
@@ -488,18 +518,18 @@ export const actions = {
       .setupRuns()
       .then((runs) => setState("setupRuns", Object.fromEntries(runs.map((r) => [r.machineId, r]))))
       .catch((e) => actions.toast("Could not read setup runs: " + message(e)));
-    const [account, agents] = await Promise.all([
-      api.whoami().catch((e) => {
-        actions.toast("Could not read the account: " + message(e));
-        return null;
-      }),
-      api.listAgents().catch((e) => {
-        actions.toast("Could not read saved agents: " + message(e));
-        return [] as AgentMeta[];
-      }),
-    ]);
-    setState({ account, agents });
-    api.rates().then((rateCard) => setState("rateCard", rateCard)).catch(() => undefined);
+    const agents = await api.listAgents().catch((e) => {
+      actions.toast("Could not read saved agents: " + message(e));
+      return [] as AgentMeta[];
+    });
+    setState({ agents });
+    await actions.refreshAccount();
+    for (const p of connectedProviders()) {
+      api
+        .rates(p.id)
+        .then((card) => setState("rateCards", p.id, card))
+        .catch(() => undefined);
+    }
     await actions.refreshMachines();
     if (state.ui.tabs.length === 0) setState("ui", "tabs", loadTabs());
     actions.pruneTabs();
@@ -564,7 +594,7 @@ export const actions = {
       return;
     }
     try {
-      const check = await api.spendToday(localMidnightSecs(), Math.round(g.spendLimit * 1_000_000));
+      const check = await api.spendToday(localMidnightSecs(), Math.round(g.spendLimit * 1_000_000), spendCurrency());
       setState("guard", { spend: check, spendError: "" });
       const today = new Date().toDateString();
       let warned = "";
@@ -601,15 +631,28 @@ export const actions = {
     actions.setGuard({ optedOut: out ? [...rest, machineId] : rest });
   },
 
-  async saveKey(key: string) {
-    const account = await api.setApiKey(key);
-    setState({ account, provider: await api.providerStatus() });
+  /** Connects `provider`; the others stay connected. */
+  async saveKey(provider: string, key: string) {
+    const account = await api.setApiKey(provider, key);
+    setState("accounts", provider, account);
+    setState("providers", await api.providerStatus());
+    setState("rateCards", provider, undefined!);
     await actions.loadAll();
     setState("phase", "ready");
   },
 
+  /** Forgets one provider's key. The last one going is a sign-out. */
+  async disconnect(provider: string) {
+    if (connectedProviders().length <= 1) return actions.signOut();
+    await api.clearApiKey(provider);
+    setState("providers", await api.providerStatus());
+    setState("accounts", provider, undefined!);
+    setState("rateCards", provider, undefined!);
+    await actions.refreshMachines();
+  },
+
   async signOut() {
-    await api.clearApiKey();
+    await api.clearApiKey(null);
     window.clearInterval(pollTimer);
     window.clearInterval(guardTimer);
     window.clearInterval(spendTimer);
@@ -617,9 +660,11 @@ export const actions = {
     setState("guard", { spend: null, spendError: "" });
     setState({
       phase: "needs-key",
-      account: null,
+      accounts: {},
+      rateCards: {},
       machines: [],
       machinesLoaded: false,
+      providerErrors: [],
       agents: [],
       live: {},
       tmux: {},
@@ -629,7 +674,7 @@ export const actions = {
       presets: [],
       presetsLoaded: false,
       setupRuns: {},
-      provider: await api.providerStatus(),
+      providers: await api.providerStatus(),
     });
     setState("ui", { selection: FLEET, dialog: null, tabs: [] });
     saveTabs([]);
@@ -637,8 +682,8 @@ export const actions = {
 
   async refreshMachines() {
     try {
-      const machines = await api.listMachines();
-      setState({ machines, machinesLoaded: true, machinesError: "" });
+      const { machines, errors } = await api.listMachines();
+      setState({ machines, machinesLoaded: true, machinesError: "", providerErrors: errors });
       actions.pruneTabs();
     } catch (e) {
       setState({ machinesError: message(e), machinesLoaded: true });
@@ -668,12 +713,17 @@ export const actions = {
     }
   },
 
+  /** Every connected provider's account, side by side. */
   async refreshAccount() {
-    try {
-      setState("account", await api.whoami());
-    } catch (e) {
-      actions.toast("Could not refresh the balance: " + message(e));
-    }
+    await Promise.all(
+      connectedProviders().map(async (p) => {
+        try {
+          setState("accounts", p.id, await api.whoami(p.id));
+        } catch (e) {
+          actions.toast(`Could not read the ${p.capabilities.label} account: ` + message(e));
+        }
+      }),
+    );
   },
 
   select(sel: Selection) {
@@ -830,8 +880,24 @@ export const actions = {
       await actions.refreshMachines();
       window.setTimeout(() => void actions.refreshMachines(), 2500);
       window.setTimeout(() => void actions.refreshMachines(), 8000);
+      // A boat stop saves the disk first, which takes longer.
+      window.setTimeout(() => void actions.refreshMachines(), 25_000);
     } catch (e) {
       actions.toast(`${action} failed: ${message(e)}`);
+    } finally {
+      setState("pending", id, false);
+    }
+  },
+
+  /** Moves the box's auto-stop to `secs` from now; 0 turns it off. */
+  async setAutoStop(id: string, secs: number) {
+    setState("pending", id, true);
+    try {
+      const m = await api.setAutoStop(id, secs);
+      setState("machines", (ms) => ms.map((x) => (x.id === id ? m : x)));
+      actions.toast(secs === 0 ? `${m.name} no longer stops on its own.` : `${m.name} stops on its own in ${Math.round(secs / 3600)} h.`, "info");
+    } catch (e) {
+      actions.toast("Could not change the auto-stop: " + message(e));
     } finally {
       setState("pending", id, false);
     }

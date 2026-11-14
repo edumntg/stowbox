@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
-import { actions, agentBoxGone, agentById, machineById, selectedAgent, selectedMachine, state, type Selection } from "../state/store";
+import { actions, agentBoxGone, agentById, connectedProviders, machineById, multiProvider, selectedAgent, selectedMachine, spendCurrency, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import AgentView from "./AgentView";
 import BoxView from "./BoxView";
@@ -12,7 +12,7 @@ import Palette, { paletteShortcut } from "./Palette";
 import Sidebar from "./Sidebar";
 import Toasts from "./Toasts";
 import { AgentDot, BrandMark, Dot, isMac, isWindows } from "./common";
-import { money } from "./format";
+import { money, moneyByCurrency } from "./format";
 
 const Tab = (p: { sel: Selection }) => {
   const active = () => state.ui.selection.kind === p.sel.kind && (state.ui.selection as { id?: string }).id === (p.sel as { id?: string }).id;
@@ -91,29 +91,37 @@ const Topbar = () => (
 
 const Statusbar = () => {
   const running = () => state.machines.filter((m) => m.status === "running" || m.status === "suspended");
-  const hourly = () => running().reduce((s, m) => s + m.estHourlyMicro, 0);
-  const currency = () => state.machines[0]?.currency ?? state.account?.billing.currency ?? "usd";
+  const hourly = () => moneyByCurrency(running().map((m) => ({ micro: m.estHourlyMicro, currency: m.currency })), spendCurrency(), "/h");
   return (
     <footer class="statusbar">
-      <Show when={state.account}>
-        {(a) => (
-          <>
-            <span>{a().displayName}</span>
-            <Show when={a().billing.mode === "credits"}>
-              <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
-                {money(a().billing.balanceMicro, a().billing.currency)} balance
-              </span>
-            </Show>
-          </>
+      <For each={connectedProviders()}>
+        {(p) => (
+          <Show when={state.accounts[p.id]}>
+            {(a) => (
+              <>
+                <span>
+                  <Show when={multiProvider()}>
+                    <span class="faint">{p.capabilities.label} </span>
+                  </Show>
+                  {a().displayName}
+                </span>
+                <Show when={a().billing.mode === "credits" || a().billing.mode === "wallet"}>
+                  <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
+                    {money(a().billing.balanceMicro, a().billing.currency)} {a().billing.mode === "wallet" ? "wallet" : "balance"}
+                  </span>
+                </Show>
+              </>
+            )}
+          </Show>
         )}
-      </Show>
+      </For>
       <span class="spacer" />
       <span>
         <span class="dot" data-state={running().length ? "running" : "stopped"} />
         {running().length} running or standby
       </span>
       <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
-        {money(hourly(), currency())}/h est.
+        {hourly()} est.
       </span>
     </footer>
   );
