@@ -182,6 +182,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn switching_keeps_sessions_and_hides_the_org_login() {
         if !has_bash() {
             return;
