@@ -1,7 +1,8 @@
 import { For } from "solid-js";
-import type { AgentStatus, Machine, MachineStatus, PowerAction } from "../bridge/types";
+import type { AgentMeta, Machine, MachineStatus, PowerAction } from "../bridge/types";
 import { actions, state } from "../state/store";
 import * as I from "../icons";
+import { agentPhase, agentPhaseLabel, type AgentPhase } from "./format";
 
 export function dotState(s: MachineStatus): string {
   switch (s) {
@@ -22,27 +23,14 @@ export function dotState(s: MachineStatus): string {
   }
 }
 
-export function agentDotState(s: AgentStatus): string {
-  switch (s.kind) {
-    case "starting":
-    case "thinking":
-    case "tool":
-      return "busy";
-    case "reconnecting":
-      return "pending";
-    case "done":
-      return "done";
-    case "failed":
-      return "failed";
-    case "stopped":
-      return "stopped";
-    default:
-      return "idle";
-  }
-}
+export const phaseDot: Record<AgentPhase, string> = { working: "busy", waiting: "done", running: "running", stopped: "stopped", unknown: "idle" };
 
 export const Dot = (p: { status: MachineStatus }) => <span class="dot" data-state={dotState(p.status)} />;
-export const AgentDot = (p: { status: AgentStatus }) => <span class="dot" data-state={agentDotState(p.status)} />;
+/** The agent as its box last showed it. */
+export const AgentDot = (p: { agent: AgentMeta }) => {
+  const phase = () => agentPhase(state.live[p.agent.id]);
+  return <span class="dot" data-state={phaseDot[phase()]} title={agentPhaseLabel[phase()]} />;
+};
 
 /** The app mark: one cube, one stroke. */
 export const BrandMark = (p: { size?: number }) => (

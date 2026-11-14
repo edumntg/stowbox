@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use stowbox_core::agent::detached::{self, FollowEnd, FollowItem, TurnCursor};
-use stowbox_core::agent::{self, AgentEvent, AgentMeta, AgentStatus, Block, Harness, QueuedMessage, TurnSpec};
+use stowbox_core::agent::{self, session, AgentMeta, Harness};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::cost;
 use stowbox_core::git::{self, GitReview, PrOutcome};
@@ -20,7 +19,6 @@ use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::ports;
 use stowbox_core::provider::Provider;
 use stowbox_core::provision::{self, Preset, Prepared, ProvisionRun, RunEvent, Variable};
-use stowbox_core::search::{SearchLimits, SearchResults};
 use stowbox_core::ssh;
 use stowbox_core::store::Store;
 use stowbox_core::types::*;
@@ -34,6 +32,8 @@ use tokio::task::AbortHandle;
 
 struct RunHandle {
     machine: String,
+    /// The terminal shows an agent.
+    agent: bool,
     input: mpsc::Sender<ExecInput>,
     abort: AbortHandle,
 }
@@ -44,8 +44,12 @@ struct AppState {
     secret_backend: RwLock<Option<secrets::Backend>>,
     store: Store,
     agents: RwLock<Vec<AgentMeta>>,
-    /// Live followers of detached agent turns, by agent id.
-    runs: Mutex<HashMap<String, AbortHandle>>,
+    /// What each agent's box last showed, by agent id.
+    live: std::sync::Mutex<HashMap<String, session::AgentLive>>,
+    /// The last snapshot per box, for a UI that loads after it came.
+    live_pushes: std::sync::Mutex<HashMap<String, LivePush>>,
+    /// Running state watches, by machine id.
+    watches: Mutex<HashMap<String, AbortHandle>>,
     terminals: Mutex<HashMap<String, RunHandle>>,
     rates: RwLock<Option<(String, Rates)>>,
     presets: RwLock<Vec<Preset>>,
@@ -112,10 +116,17 @@ impl AppState {
         let now = now_ms();
         let mut signals = Vec::new();
         let mut agents_busy = 0;
-        for a in self.agents.read().await.iter().filter(|a| a.machine_id == m.id) {
-            signals.push(a.updated_at);
-            if guard::agent_holds_box(a) {
-                agents_busy += 1;
+        let ids: Vec<(String, i64)> = self.agents.read().await.iter().filter(|a| a.machine_id == m.id).map(|a| (a.id.clone(), a.updated_at)).collect();
+        {
+            let live = self.live.lock().unwrap();
+            for (id, updated_at) in ids {
+                signals.push(updated_at);
+                if let Some(l) = live.get(&id) {
+                    signals.push(l.since * 1000);
+                    if guard::agent_holds_box(l) {
+                        agents_busy += 1;
+                    }
+                }
             }
         }
         let mut setup_active = false;
@@ -158,16 +169,6 @@ struct ProviderStatus {
 }
 
 #[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct AgentPush {
-    agent_id: String,
-    event: Option<AgentEvent>,
-    meta: AgentMeta,
-    /// Set when this change is an outcome worth a desktop notification.
-    notice: Option<Notice>,
-}
-
-#[derive(Serialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TermEvent {
     Data { b64: String },
@@ -187,7 +188,7 @@ struct NewAgent {
     #[serde(default = "yes")]
     skip_permissions: bool,
     /// Give the agent its own worktree on a new branch, made from the
-    /// repository that contains `cwd` before the first turn.
+    /// repository that contains `cwd`, before it first opens.
     #[serde(default)]
     own_branch: bool,
     /// Text to name the branch after (the first task), when there is no title.
@@ -303,21 +304,17 @@ async fn machine_power(state: State<'_, AppState>, id: String, action: PowerActi
         }
         state.setup_runs.write().await.retain(|r| r.machine_id != id);
         state.persist_setup_runs().await?;
-        // Agents that lived there are kept as history, but marked stopped.
-        let mut agents = state.agents.write().await;
-        let mut runs = state.runs.lock().await;
-        for a in agents.iter_mut().filter(|a| a.machine_id == id) {
-            if is_busy(&a.status) {
-                a.status = AgentStatus::Stopped;
-            }
-            a.turn = None;
-            if let Some(h) = runs.remove(&a.id) {
-                h.abort();
-            }
+        // Agents that lived there are kept as history; their sessions went
+        // with the box.
+        if let Some(h) = state.watches.lock().await.remove(&id) {
+            h.abort();
         }
-        drop(runs);
-        drop(agents);
-        state.persist_agents().await?;
+        state.live_pushes.lock().unwrap().remove(&id);
+        let ids: Vec<String> = state.agents.read().await.iter().filter(|a| a.machine_id == id).map(|a| a.id.clone()).collect();
+        let mut live = state.live.lock().unwrap();
+        for a in ids {
+            live.remove(&a);
+        }
     }
     Ok(())
 }
@@ -638,40 +635,16 @@ async fn create_agent(state: State<'_, AppState>, spec: NewAgent) -> CmdResult<A
         machine_name: spec.machine_name,
         cwd,
         model: spec.model.filter(|m| !m.trim().is_empty()),
-        session_id: None,
-        status: AgentStatus::Idle,
+        // Claude Code takes the id up front, so every open resumes this session.
+        session_id: (spec.harness == Harness::ClaudeCode).then(|| uuid::Uuid::new_v4().to_string()),
         skip_permissions: spec.skip_permissions,
         created_at: now,
         updated_at: now,
-        total_cost_usd: 0.0,
-        turns: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        turn: None,
         worktree: own,
-        queue: Vec::new(),
-        queue_paused: false,
     };
     state.agents.write().await.push(meta.clone());
     state.persist_agents().await?;
     Ok(meta)
-}
-
-#[tauri::command]
-async fn agent_events(state: State<'_, AppState>, id: String) -> CmdResult<Vec<AgentEvent>> {
-    state.store.read_events(&id).await.map_err(err)
-}
-
-/// Full-text search over every agent's transcript, newest agent first.
-#[tauri::command]
-async fn search_transcripts(state: State<'_, AppState>, query: String, limit: Option<usize>) -> CmdResult<SearchResults> {
-    let ids: Vec<String> = {
-        let mut agents = state.agents.read().await.clone();
-        agents.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        agents.into_iter().map(|a| a.id).collect()
-    };
-    let limits = SearchLimits { max_hits: limit.unwrap_or(50).clamp(1, 200), ..SearchLimits::default() };
-    state.store.search_transcripts(ids, query, limits).await.map_err(err)
 }
 
 #[tauri::command]
@@ -687,291 +660,61 @@ async fn rename_agent(state: State<'_, AppState>, id: String, title: String) -> 
     Ok(meta)
 }
 
-/// `remove_worktree` also removes the agent's worktree in the box (its
-/// branch stays) before anything else; if git refuses, for example over
-/// uncommitted files without `force`, the agent is kept and the error
-/// carries git's words.
+/// Ends the agent's harness in the box and forgets the agent.
+/// `remove_worktree` also removes its worktree (its branch stays) first; if
+/// git refuses, for example over uncommitted files without `force`, the
+/// agent is kept and the error carries git's words.
 #[tauri::command]
 async fn delete_agent(state: State<'_, AppState>, id: String, remove_worktree: Option<bool>, force: Option<bool>) -> CmdResult<()> {
     let gone = state.agents.read().await.iter().find(|a| a.id == id).cloned();
     if let (true, Some(a)) = (remove_worktree.unwrap_or(false), gone.as_ref()) {
         if let Some(wt) = &a.worktree {
-            if is_busy(&a.status) {
-                return Err("stop the agent's turn before removing its worktree".into());
-            }
             let p = state.provider().await?;
+            session::stop(p.as_ref(), &a.machine_id, &a.id, false).await.map_err(err)?;
             worktree::remove(p.as_ref(), &a.machine_id, wt, force.unwrap_or(false)).await.map_err(err)?;
         }
     }
-    if let Some(h) = state.runs.lock().await.remove(&id) {
-        h.abort();
-    }
-    // A turn still running in the box is killed on the way out, best effort.
+    // The harness may still run in its tmux session; end it on the way out,
+    // best effort, unless the box is gone.
     if let (Some(a), Ok(p)) = (gone, state.provider().await) {
-        if let Some(turn) = a.turn {
-            tauri::async_runtime::spawn(async move {
-                let _ = detached::stop(p.as_ref(), &a.machine_id, &a.id, &turn.id).await;
-            });
-        }
+        tauri::async_runtime::spawn(async move {
+            let _ = session::stop(p.as_ref(), &a.machine_id, &a.id, true).await;
+        });
     }
     state.agents.write().await.retain(|a| a.id != id);
+    state.live.lock().unwrap().remove(&id);
     state.notifier.lock().unwrap_or_else(|e| e.into_inner()).forget_agent(&id);
-    state.persist_agents().await?;
-    state.store.delete_transcript(&id).await.map_err(err)
+    state.persist_agents().await
 }
 
+/// Ends the agent's harness in the box. The agent stays; opening it again
+/// resumes its session.
 #[tauri::command]
-async fn agent_stop(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let follower = state.runs.lock().await.remove(&id);
-    if let Some(h) = &follower {
-        h.abort();
-    }
-    let meta = state.agents.read().await.iter().find(|a| a.id == id).cloned().ok_or("agent not found")?;
-    let Some(turn) = meta.turn.clone() else {
-        if follower.is_none() {
-            return Ok(());
-        }
-        let meta = update_meta(&state, &id, |m| {
-            m.status = AgentStatus::Stopped;
-            m.queue_paused = !m.queue.is_empty();
-        })
-        .await?;
-        push(&app, &state, &id, Some(AgentEvent::Exit { code: -1 }), meta).await;
-        return Ok(());
-    };
-    // The turn runs on its own in the box, so stopping it means killing it there.
-    let killed = match state.provider().await {
-        Ok(p) => detached::stop(p.as_ref(), &meta.machine_id, &id, &turn.id).await.map_err(err),
-        Err(e) => Err(e),
-    };
-    // Queued messages stay, paused: after a Stop the person decides.
-    let meta = update_meta(&state, &id, |m| {
-        m.status = AgentStatus::Stopped;
-        m.turn = None;
-        m.queue_paused = !m.queue.is_empty();
-    })
-    .await?;
-    push(&app, &state, &id, Some(AgentEvent::Exit { code: -1 }), meta).await;
-    killed.map_err(|e| format!("marked stopped, but the turn may still be running in the box: {e}"))
-}
-
-fn is_busy(s: &AgentStatus) -> bool {
-    matches!(s, AgentStatus::Starting | AgentStatus::Thinking | AgentStatus::Tool { .. } | AgentStatus::Reconnecting { .. })
-}
-
-async fn update_meta(state: &AppState, id: &str, f: impl FnOnce(&mut AgentMeta)) -> CmdResult<AgentMeta> {
-    let meta = {
-        let mut agents = state.agents.write().await;
-        let a = agents.iter_mut().find(|a| a.id == id).ok_or("agent not found")?;
-        f(a);
-        a.updated_at = now_ms();
-        a.clone()
-    };
-    state.persist_agents().await?;
-    Ok(meta)
-}
-
-/// Appends to the transcript (except live deltas) and tells the UI.
-async fn push(app: &AppHandle, state: &AppState, id: &str, event: Option<AgentEvent>, meta: AgentMeta) {
-    if let Some(ev) = &event {
-        if !matches!(ev, AgentEvent::TextDelta { .. }) {
-            let _ = state.store.append_event(id, ev).await;
-        }
-    }
-    let notice = state.notifier.lock().unwrap_or_else(|e| e.into_inner()).agent(&meta, now_ms());
-    let _ = app.emit("agent-event", AgentPush { agent_id: id.to_string(), event, meta, notice });
-}
-
-/// Marks the agent as starting a turn, unless one is running or still on
-/// record. Done under the agents lock, so two senders (a click and the
-/// queue) cannot both start one. Returns the new turn's id.
-fn claim_turn(a: &mut AgentMeta, text: &str, attachments: &[Attachment]) -> CmdResult<String> {
-    if a.turn.is_some() || is_busy(&a.status) {
-        return Err("this agent is still working on the previous message".into());
-    }
-    if a.title.is_empty() {
-        a.title = title_from(if text.trim().is_empty() { attachments.first().map(|f| f.name.as_str()).unwrap_or("") } else { text });
-    }
-    let turn_id = detached::new_turn_id(now_ms());
-    a.status = AgentStatus::Starting;
-    a.turn = Some(TurnCursor::new(turn_id.clone()));
-    a.updated_at = now_ms();
-    Ok(turn_id)
-}
-
-/// Launches a claimed turn: records the message, starts the harness
-/// detached in the box and follows it. A launch failure marks the agent
-/// failed and is returned.
-async fn start_turn(app: &AppHandle, state: &AppState, p: Arc<dyn Provider>, meta: AgentMeta, turn_id: String, text: String, attachments: Vec<Attachment>) -> CmdResult<()> {
-    let id = meta.id.clone();
-    state.persist_agents().await?;
-    push(app, state, &id, Some(AgentEvent::UserMessage { text: text.clone(), attachments: attachments.clone() }), meta.clone()).await;
-
-    let spec = TurnSpec {
-        harness: Some(meta.harness),
-        cwd: meta.cwd.clone(),
-        model: meta.model.clone(),
-        resume_session: meta.session_id.clone(),
-        skip_permissions: meta.skip_permissions,
-        max_turns: None,
-        max_budget_usd: None,
-    };
-    let command = agent::turn_command(meta.harness, &spec);
-
-    // The turn runs detached in the box and writes to files there; a second
-    // exec follows those files, so a dropped stream or a closed app does
-    // not end the turn.
-    let env = vec![("TERM".into(), "dumb".into()), ("NO_COLOR".into(), "1".into())];
-    let prompt = format!("{}\n", upload::prompt_with(&text, &attachments));
-    if let Err(e) = detached::launch(p.as_ref(), &meta.machine_id, &id, &turn_id, &command, &prompt, env).await {
-        let msg = e.to_string();
-        let meta = update_meta(state, &id, |m| {
-            m.status = AgentStatus::Failed { message: msg.clone() };
-            m.turn = None;
-        })
-        .await?;
-        push(app, state, &id, Some(AgentEvent::Stderr { text: msg.clone() }), meta).await;
-        return Err(msg);
-    }
-    spawn_follower(app, state, id).await;
-    Ok(())
-}
-
-#[tauri::command]
-async fn agent_send(app: AppHandle, state: State<'_, AppState>, id: String, text: String, attachments: Option<Vec<Attachment>>) -> CmdResult<()> {
-    let text = text.trim_end().to_string();
-    let attachments = attachments.unwrap_or_default();
-    if text.trim().is_empty() && attachments.is_empty() {
-        return Err("write something for the agent first".into());
-    }
-    let following = state.runs.lock().await.contains_key(&id);
+async fn agent_stop(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    let a = state.agents.read().await.iter().find(|a| a.id == id).cloned().ok_or("agent not found")?;
     let p = state.provider().await?;
-    let claimed = {
-        let mut agents = state.agents.write().await;
-        let a = agents.iter_mut().find(|a| a.id == id).ok_or("agent not found")?;
-        if following { None } else { claim_turn(a, &text, &attachments).ok().map(|turn_id| (a.clone(), turn_id)) }
-    };
-    match claimed {
-        Some((meta, turn_id)) => start_turn(&app, &state, p, meta, turn_id, text, attachments).await,
-        // The previous turn has not ended yet (its result can arrive before
-        // its exit): the message waits in the queue instead of being lost.
-        None => queue_message(&app, &state, &id, text, attachments).await.map(|_| ()),
-    }
+    state.touch(&a.machine_id);
+    session::stop(p.as_ref(), &a.machine_id, &id, false).await.map_err(err)
 }
 
-/// Sends the next queued message if it is due (see
-/// `AgentMeta::queue_ready`), or with `resume`, whenever no turn runs (the
-/// person asked for it after a Stop). A message that cannot be sent goes
-/// back to the front and the queue pauses, so it does not retry in a loop.
-/// Boxed: it starts a follower, which calls it again when that turn ends.
-fn drain_queue(app: AppHandle, id: String, resume: bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-    Box::pin(async move {
-        let st = app.state::<AppState>();
-        if st.runs.lock().await.contains_key(&id) {
-            return;
-        }
-        let Ok(p) = st.provider().await else { return };
-        let claimed = {
-            let mut agents = st.agents.write().await;
-            let Some(a) = agents.iter_mut().find(|a| a.id == id) else { return };
-            let due = if resume { a.turn.is_none() && !is_busy(&a.status) } else { a.queue_ready() };
-            if !due {
-                return;
-            }
-            let Some(msg) = a.take_queued() else { return };
-            match claim_turn(a, &msg.text, &msg.attachments) {
-                Ok(turn_id) => (a.clone(), turn_id, msg),
-                Err(_) => {
-                    a.queue.insert(0, msg);
-                    return;
-                }
-            }
-        };
-        let (meta, turn_id, msg) = claimed;
-        if start_turn(&app, &st, p, meta, turn_id, msg.text.clone(), msg.attachments.clone()).await.is_err() {
-            if let Ok(meta) = update_meta(&st, &id, |m| m.requeue_front(msg)).await {
-                push(&app, &st, &id, None, meta).await;
-            }
-        }
-    })
-}
-
-/// Applies a change to the agent's queue, saves it and tells the UI.
-async fn change_queue(app: &AppHandle, state: &AppState, id: &str, f: impl FnOnce(&mut AgentMeta) -> stowbox_core::Result<()>) -> CmdResult<AgentMeta> {
-    let meta = {
-        let mut agents = state.agents.write().await;
-        let a = agents.iter_mut().find(|a| a.id == id).ok_or("agent not found")?;
-        f(a).map_err(err)?;
-        a.updated_at = now_ms();
-        a.clone()
-    };
-    state.persist_agents().await?;
-    push(app, state, id, None, meta.clone()).await;
-    Ok(meta)
-}
-
-/// Queues a message to send once the running turn ends. With no turn
-/// running (it ended meanwhile) it goes out now, unless the queue is paused.
-#[tauri::command]
-async fn agent_queue_add(app: AppHandle, state: State<'_, AppState>, id: String, text: String, attachments: Option<Vec<Attachment>>) -> CmdResult<AgentMeta> {
-    queue_message(&app, &state, &id, text, attachments.unwrap_or_default()).await
-}
-
-async fn queue_message(app: &AppHandle, state: &AppState, id: &str, text: String, attachments: Vec<Attachment>) -> CmdResult<AgentMeta> {
-    let msg = QueuedMessage { id: uuid::Uuid::new_v4().to_string(), text: text.trim_end().to_string(), attachments, queued_at: now_ms() };
-    let meta = change_queue(app, state, id, |a| a.enqueue(msg)).await?;
-    if meta.queue_ready() {
-        drain_queue(app.clone(), id.to_string(), false).await;
-        return state.agents.read().await.iter().find(|a| a.id == id).cloned().ok_or_else(|| "agent not found".to_string());
-    }
-    Ok(meta)
+/// What the watches last saw: per box whether it has tmux, per agent its state.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LivePush {
+    machine_id: String,
+    tmux: bool,
+    agents: Vec<session::AgentLive>,
+    /// Agents that just went from working to waiting.
+    notices: Vec<Notice>,
 }
 
 #[tauri::command]
-async fn agent_queue_edit(app: AppHandle, state: State<'_, AppState>, id: String, message_id: String, text: String) -> CmdResult<AgentMeta> {
-    change_queue(&app, &state, &id, |a| a.edit_queued(&message_id, &text)).await
+async fn agents_live(state: State<'_, AppState>) -> CmdResult<Vec<LivePush>> {
+    Ok(state.live_pushes.lock().unwrap().values().cloned().collect())
 }
 
-#[tauri::command]
-async fn agent_queue_remove(app: AppHandle, state: State<'_, AppState>, id: String, message_id: String) -> CmdResult<AgentMeta> {
-    change_queue(&app, &state, &id, |a| {
-        a.remove_queued(&message_id);
-        Ok(())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn agent_queue_clear(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<AgentMeta> {
-    change_queue(&app, &state, &id, |a| {
-        a.queue.clear();
-        a.queue_paused = false;
-        Ok(())
-    })
-    .await
-}
-
-/// Resumes a paused queue: its first message goes out now (once no turn
-/// runs) and the rest follow turn by turn.
-#[tauri::command]
-async fn agent_queue_resume(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let meta = change_queue(&app, &state, &id, |a| {
-        a.queue_paused = false;
-        Ok(())
-    })
-    .await?;
-    if meta.turn.is_none() && !is_busy(&meta.status) && !meta.queue.is_empty() {
-        drain_queue(app.clone(), id.clone(), true).await;
-        let paused = state.agents.read().await.iter().find(|a| a.id == id).is_some_and(|a| a.queue_paused);
-        if paused {
-            return Err("the message could not be sent; it is back at the front of the queue".into());
-        }
-    }
-    Ok(())
-}
-
-/// Copies a file into the box for the agent's next message. `data` is
-/// base64. Errors carry the provider's message.
+/// Copies a file into the box for the agent; the UI types its path at the
+/// prompt. `data` is base64. Errors carry the provider's message.
 #[tauri::command]
 async fn agent_upload(state: State<'_, AppState>, id: String, name: String, data: String) -> CmdResult<Attachment> {
     let machine_id = state.agents.read().await.iter().find(|a| a.id == id).map(|a| a.machine_id.clone()).ok_or("agent not found")?;
@@ -982,206 +725,76 @@ async fn agent_upload(state: State<'_, AppState>, id: String, name: String, data
     upload::upload(p.as_ref(), &machine_id, &id, &name, bytes).await.map_err(err)
 }
 
-/// Starts following the agent's turn in the background.
-async fn spawn_follower(app: &AppHandle, state: &AppState, id: String) {
-    // The lock is held across the spawn so the task's own removal at the end
-    // cannot run before this insert.
-    let mut runs = state.runs.lock().await;
-    let task = tauri::async_runtime::spawn(follow_turn(app.clone(), id.clone()));
-    if let Some(old) = runs.insert(id, task.inner().abort_handle()) {
-        old.abort();
+/// Whether the box's watch should go on: an agent terminal is open there,
+/// or an agent was last seen working, so its end is worth catching.
+async fn keep_watching(state: &AppState, machine_id: &str) -> bool {
+    let terminals = state.terminals.lock().await.values().any(|t| t.machine == machine_id && t.agent && !t.abort.is_finished());
+    if terminals {
+        return true;
     }
+    let ids: Vec<String> = state.agents.read().await.iter().filter(|a| a.machine_id == machine_id).map(|a| a.id.clone()).collect();
+    let live = state.live.lock().unwrap();
+    ids.iter().any(|id| live.get(id).is_some_and(guard::agent_holds_box))
 }
 
-/// Shows that the turn is not attached, unless a result already came in.
-async fn set_reconnecting(app: &AppHandle, state: &AppState, id: &str, message: String) {
-    let still_running = state.agents.read().await.iter().any(|a| a.id == id && is_busy(&a.status));
-    if !still_running {
+/// Starts reading the box's agent states, unless that already runs.
+async fn ensure_watch(app: &AppHandle, state: &AppState, machine_id: &str) {
+    let mut watches = state.watches.lock().await;
+    if watches.get(machine_id).is_some_and(|h| !h.is_finished()) {
         return;
     }
-    if let Ok(meta) = update_meta(state, id, |m| m.status = AgentStatus::Reconnecting { message }).await {
-        push(app, state, id, None, meta).await;
-    }
+    let task = tauri::async_runtime::spawn(watch_box(app.clone(), machine_id.to_string()));
+    watches.insert(machine_id.to_string(), task.inner().abort_handle());
 }
 
-/// Ends a turn that will produce nothing more. Without an exit code the
-/// failure itself goes into the transcript.
-async fn end_turn(app: &AppHandle, state: &AppState, id: &str, code: Option<i32>, failure: Option<String>) {
-    let meta = update_meta(state, id, |m| {
-        if let Some(msg) = &failure {
-            if !matches!(m.status, AgentStatus::Done | AgentStatus::Failed { .. } | AgentStatus::Stopped) {
-                m.status = AgentStatus::Failed { message: msg.clone() };
-            }
-        }
-        m.turn = None;
-    })
-    .await;
-    let event = match (code, failure) {
-        (Some(code), _) => Some(AgentEvent::Exit { code }),
-        (None, Some(text)) => Some(AgentEvent::Stderr { text }),
-        (None, None) => None,
-    };
-    if let Ok(meta) = meta {
-        push(app, state, id, event, meta).await;
-    }
-}
-
-/// Follows the agent's detached turn until it ends, following again from
-/// the saved offsets whenever the stream drops or the box is not running.
-async fn follow_turn(app: AppHandle, id: String) {
-    let st = app.state::<AppState>();
-    let Some(harness) = st.agents.read().await.iter().find(|a| a.id == id).map(|a| a.harness) else { return };
-    let mut parser = agent::parser_for(harness);
-    let mut saw_result = false;
+async fn watch_box(app: AppHandle, machine_id: String) {
+    let state = app.state::<AppState>();
     let mut attempt = 0u32;
-    // What to show again once the stream is back.
-    let mut resume: Option<AgentStatus> = None;
     loop {
-        let Some(meta) = st.agents.read().await.iter().find(|a| a.id == id).cloned() else { break };
-        let Some(cursor) = meta.turn.clone() else { break };
-        if !matches!(meta.status, AgentStatus::Reconnecting { .. }) {
-            resume = Some(meta.status.clone());
+        let Ok(p) = state.provider().await else { break };
+        if let Ok(mut w) = session::watch(p.as_ref(), &machine_id).await {
+            while let Some(snap) = w.next().await {
+                attempt = 0;
+                apply_live(&app, &state, &machine_id, snap).await;
+                if !keep_watching(&state, &machine_id).await {
+                    state.watches.lock().await.remove(&machine_id);
+                    return;
+                }
+            }
         }
-        let wait = match st.provider().await {
-            Err(e) => Some((e, detached::backoff_secs(attempt))),
-            Ok(p) => match p.get_machine(&meta.machine_id).await {
-                Err(e) => Some((format!("cannot reach the box: {e}"), detached::backoff_secs(attempt))),
-                Ok(m) => match m.status {
-                    MachineStatus::Running => match detached::follow(p.as_ref(), &meta.machine_id, &id, &cursor).await {
-                        Err(e) => Some((format!("cannot follow the turn: {e}"), detached::backoff_secs(attempt))),
-                        Ok(mut stream) => {
-                            if matches!(meta.status, AgentStatus::Reconnecting { .. }) {
-                                let back = resume.clone().unwrap_or(AgentStatus::Thinking);
-                                if let Ok(meta) = update_meta(&st, &id, |m| {
-                                    if matches!(m.status, AgentStatus::Reconnecting { .. }) {
-                                        m.status = back;
-                                    }
-                                })
-                                .await
-                                {
-                                    push(&app, &st, &id, None, meta).await;
-                                }
-                            }
-                            let end = loop {
-                                let item = stream.next().await;
-                                let cursor = match &item {
-                                    FollowItem::End(end) => break end.clone(),
-                                    FollowItem::Out { cursor, .. } | FollowItem::Err { cursor, .. } => cursor.clone(),
-                                };
-                                attempt = 0;
-                                let events = detached::line_events(parser.as_mut(), &item);
-                                let last = events.len().saturating_sub(1);
-                                for (i, ev) in events.into_iter().enumerate() {
-                                    saw_result |= matches!(ev, AgentEvent::Result { .. });
-                                    // The cursor moves with the line's last event, in the same write.
-                                    apply_event(&app, &st, &id, ev, (i == last).then_some(&cursor)).await;
-                                }
-                            };
-                            match end {
-                                FollowEnd::Exited(code) => {
-                                    let failure = (!saw_result).then(|| format!("the agent process exited with code {code} before reporting a result"));
-                                    end_turn(&app, &st, &id, Some(code), failure).await;
-                                    break;
-                                }
-                                FollowEnd::Lost => {
-                                    let msg = "the turn's process ended without an exit code; the box may have restarted".to_string();
-                                    end_turn(&app, &st, &id, None, Some(msg)).await;
-                                    break;
-                                }
-                                FollowEnd::Missing => {
-                                    end_turn(&app, &st, &id, None, Some("the turn's files are no longer in the box".into())).await;
-                                    break;
-                                }
-                                FollowEnd::Dropped(e) => Some((format!("the stream dropped ({e})"), detached::backoff_secs(attempt))),
-                            }
-                        }
-                    },
-                    // The turn is frozen with the box; exec would wake it, so wait instead.
-                    MachineStatus::Suspended | MachineStatus::Hibernated => {
-                        Some((format!("the box is {}; the turn continues when it runs again", if m.status == MachineStatus::Suspended { "in standby" } else { "hibernated" }), 5))
-                    }
-                    MachineStatus::Stopped | MachineStatus::Failed => {
-                        end_turn(&app, &st, &id, None, Some("the box stopped while the turn was running".into())).await;
-                        break;
-                    }
-                    _ => Some(("waiting for the box to start".to_string(), 3)),
-                },
-            },
-        };
-        if let Some((why, secs)) = wait {
-            set_reconnecting(&app, &st, &id, why).await;
-            attempt += 1;
-            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+        // The stream dropped. Only come back while there is a reason to;
+        // a box in standby is not woken for it.
+        attempt += 1;
+        let running = p.get_machine(&machine_id).await.map(|m| m.status == MachineStatus::Running).unwrap_or(false);
+        if !running || attempt > 5 || !keep_watching(&state, &machine_id).await {
+            break;
         }
+        tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
     }
-    st.runs.lock().await.remove(&id);
-    // The turn really ended (or was stopped, which pauses the queue): the
-    // next queued message, if any, goes out now.
-    drain_queue(app.clone(), id, false).await;
+    state.watches.lock().await.remove(&machine_id);
 }
 
-fn title_from(prompt: &str) -> String {
-    let first = prompt.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-    let mut t: String = first.chars().take(64).collect();
-    if first.chars().count() > 64 {
-        t.push('…');
+/// Records a box's snapshot and tells the UI, with a notice for each agent
+/// that just finished working.
+async fn apply_live(app: &AppHandle, state: &AppState, machine_id: &str, snap: session::BoxAgents) {
+    let agents: Vec<AgentMeta> = state.agents.read().await.iter().filter(|a| a.machine_id == machine_id).cloned().collect();
+    let mut notices = Vec::new();
+    let mut seen = Vec::new();
+    {
+        let mut live = state.live.lock().unwrap();
+        let mut notifier = state.notifier.lock().unwrap_or_else(|e| e.into_inner());
+        for a in &agents {
+            let l = snap.agents.iter().find(|l| l.id == a.id).cloned().unwrap_or(session::AgentLive { id: a.id.clone(), state: None, since: 0, running: false });
+            if let Some(n) = notifier.agent(a, &l) {
+                notices.push(n);
+            }
+            live.insert(a.id.clone(), l.clone());
+            seen.push(l);
+        }
     }
-    t
-}
-
-/// Folds one parsed event into the agent's metadata, then pushes it.
-async fn apply_event(app: &AppHandle, state: &AppState, id: &str, ev: AgentEvent, cursor: Option<&TurnCursor>) {
-    let Ok(meta) = update_meta(state, id, |m| {
-        if let Some(c) = cursor.filter(|c| m.turn.as_ref().is_some_and(|t| t.id == c.id)) {
-            m.turn = Some(c.clone());
-        }
-        match &ev {
-            AgentEvent::Init { session_id, model, .. } => {
-                if !session_id.is_empty() {
-                    m.session_id = Some(session_id.clone());
-                }
-                if m.model.is_none() {
-                    m.model = model.clone();
-                }
-                m.status = AgentStatus::Thinking;
-            }
-            AgentEvent::Assistant { blocks } => {
-                if let Some(Block::ToolUse { name, .. }) = blocks.iter().find(|b| matches!(b, Block::ToolUse { .. })) {
-                    m.status = AgentStatus::Tool { name: name.clone() };
-                } else {
-                    m.status = AgentStatus::Thinking;
-                }
-            }
-            AgentEvent::ToolResult { .. } => m.status = AgentStatus::Thinking,
-            AgentEvent::TextDelta { .. } => {
-                if matches!(m.status, AgentStatus::Starting | AgentStatus::Reconnecting { .. }) {
-                    m.status = AgentStatus::Thinking;
-                }
-            }
-            AgentEvent::Result { ok, subtype, message, cost_usd, turns, session_id, input_tokens, output_tokens, .. } => {
-                if let Some(c) = cost_usd {
-                    m.total_cost_usd += c;
-                }
-                m.turns += turns.unwrap_or(1);
-                m.input_tokens += input_tokens.unwrap_or(0);
-                m.output_tokens += output_tokens.unwrap_or(0);
-                if let Some(s) = session_id.as_ref().filter(|s| !s.is_empty()) {
-                    m.session_id = Some(s.clone());
-                }
-                m.status = if *ok {
-                    AgentStatus::Done
-                } else {
-                    AgentStatus::Failed { message: message.clone().unwrap_or_else(|| subtype.replace('_', " ")) }
-                };
-            }
-            AgentEvent::UserMessage { .. } | AgentEvent::Stderr { .. } | AgentEvent::Exit { .. } => {}
-        }
-    })
-    .await
-    else {
-        return;
-    };
-    push(app, state, id, Some(ev), meta).await;
+    let push = LivePush { machine_id: machine_id.to_string(), tmux: snap.tmux, agents: seen, notices };
+    state.live_pushes.lock().unwrap().insert(machine_id.to_string(), LivePush { notices: Vec::new(), ..push.clone() });
+    let _ = app.emit("agents-live", push);
 }
 
 // ---------------------------------------------------------------- setup presets
@@ -1438,8 +1051,9 @@ async fn setup_runs(state: State<'_, AppState>) -> CmdResult<Vec<ProvisionRun>> 
 
 // ---------------------------------------------------------------- terminals
 
-/// What a terminal runs: a login shell, the agent's harness in its own
-/// interactive UI on the agent's session, or Claude Code's sign-in.
+/// What a terminal runs: a login shell, an agent (its harness on its own
+/// session, in its tmux session when the box has tmux), or Claude Code's
+/// sign-in.
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum TermTarget {
@@ -1463,6 +1077,7 @@ async fn set_claude_account(state: State<'_, AppState>, machine: String, own: bo
 
 #[tauri::command]
 async fn terminal_open(
+    app: AppHandle,
     state: State<'_, AppState>,
     machine: String,
     cols: u16,
@@ -1470,27 +1085,23 @@ async fn terminal_open(
     target: Option<TermTarget>,
     on_data: Channel<TermEvent>,
 ) -> CmdResult<String> {
-    let script = match target.unwrap_or(TermTarget::Shell) {
+    let target = target.unwrap_or(TermTarget::Shell);
+    let is_agent = matches!(target, TermTarget::Agent { .. });
+    let script = match target {
         TermTarget::Shell => "exec \"${SHELL:-bash}\" -l".to_string(),
         TermTarget::ClaudeLogin => agent::account::login_command(),
         TermTarget::Agent { id, input } => {
-            let a = state.agents.read().await.iter().find(|a| a.id == id).cloned().ok_or("no such agent")?;
+            let a = {
+                let mut agents = state.agents.write().await;
+                let a = agents.iter_mut().find(|a| a.id == id).ok_or("no such agent")?;
+                a.updated_at = now_ms();
+                a.clone()
+            };
             if a.machine_id != machine {
                 return Err("the agent lives in another box".into());
             }
-            if is_busy(&a.status) {
-                return Err("a turn is running in the chat; wait for it to end or stop it first".into());
-            }
-            let spec = TurnSpec {
-                harness: Some(a.harness),
-                cwd: a.cwd.clone(),
-                model: a.model.clone(),
-                resume_session: a.session_id.clone(),
-                skip_permissions: a.skip_permissions,
-                max_turns: None,
-                max_budget_usd: None,
-            };
-            agent::interactive_command(a.harness, &spec, input.as_deref())
+            state.persist_agents().await?;
+            session::open_script(&a, input.as_deref())
         }
     };
     let p = state.provider().await?;
@@ -1529,7 +1140,10 @@ async fn terminal_open(
         }
     });
     state.touch(&machine);
-    state.terminals.lock().await.insert(id.clone(), RunHandle { machine, input, abort: pump.abort_handle() });
+    state.terminals.lock().await.insert(id.clone(), RunHandle { machine: machine.clone(), agent: is_agent, input, abort: pump.abort_handle() });
+    if is_agent {
+        ensure_watch(&app, &state, &machine).await;
+    }
     Ok(id)
 }
 
@@ -1590,25 +1204,6 @@ pub fn run() {
                 eprintln!("stowbox: could not read agents.json: {e}");
                 Vec::new()
             });
-            // Turns run detached in the box, so one that was running when the
-            // app closed may still be; follow it again from the saved offsets.
-            // A busy agent without a turn record cannot be found again.
-            let agents: Vec<AgentMeta> = agents
-                .into_iter()
-                .map(|mut a| {
-                    if is_busy(&a.status) && a.turn.is_none() {
-                        a.status = AgentStatus::Stopped;
-                        a.queue_paused = !a.queue.is_empty();
-                    }
-                    a
-                })
-                .collect();
-            let notifier = Notifier::new(&agents, now_ms());
-            let reattach: Vec<String> = agents.iter().filter(|a| a.turn.is_some()).map(|a| a.id.clone()).collect();
-            // A queue whose turn ended while the app was closed (or that the
-            // app closed in the middle of) goes on from where it was.
-            let due: Vec<String> = agents.iter().filter(|a| a.queue_ready()).map(|a| a.id.clone()).collect();
-
             let presets = tauri::async_runtime::block_on(store.load_presets()).unwrap_or_else(|e| {
                 eprintln!("stowbox: could not read presets.json: {e}");
                 Vec::new()
@@ -1631,27 +1226,19 @@ pub fn run() {
                 secret_backend: RwLock::new(backend),
                 store,
                 agents: RwLock::new(agents),
-                runs: Mutex::new(HashMap::new()),
+                live: std::sync::Mutex::new(HashMap::new()),
+                live_pushes: std::sync::Mutex::new(HashMap::new()),
+                watches: Mutex::new(HashMap::new()),
                 terminals: Mutex::new(HashMap::new()),
                 rates: RwLock::new(None),
                 presets: RwLock::new(presets),
                 preset_secrets,
                 setup_runs: RwLock::new(setup_runs),
                 setups: Mutex::new(HashMap::new()),
-                notifier: std::sync::Mutex::new(notifier),
+                notifier: std::sync::Mutex::new(Notifier::default()),
                 idle: std::sync::Mutex::new(IdleWatch::new()),
                 data_dir: data.clone(),
                 home,
-            });
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let st = handle.state::<AppState>();
-                for id in reattach {
-                    spawn_follower(&handle, &st, id).await;
-                }
-                for id in due {
-                    drain_queue(handle.clone(), id, false).await;
-                }
             });
             Ok(())
         })
@@ -1675,17 +1262,10 @@ pub fn run() {
             spend_today,
             list_agents,
             create_agent,
-            agent_events,
-            search_transcripts,
             rename_agent,
             delete_agent,
             agent_stop,
-            agent_send,
-            agent_queue_add,
-            agent_queue_edit,
-            agent_queue_remove,
-            agent_queue_clear,
-            agent_queue_resume,
+            agents_live,
             agent_upload,
             list_presets,
             save_preset,

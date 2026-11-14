@@ -9,7 +9,7 @@
 
 use std::future::Future;
 use std::time::{Duration, Instant};
-use stowbox_core::agent::{self, AgentEvent, Harness, LineBuffer, TurnSpec};
+use stowbox_core::agent::{session, AgentMeta, Harness};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::cost;
 use stowbox_core::provider::Provider;
@@ -303,16 +303,14 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
     let probe = run(
         p,
         id,
-        "echo user=$(whoami) shell=$SHELL; command -v claude codex opencode | tr '\\n' ' '; echo; claude --version 2>&1 | head -1; test -n \"$ANTHROPIC_API_KEY\" && echo cred=ANTHROPIC_API_KEY; test -n \"$CLAUDE_CODE_OAUTH_TOKEN\" && echo cred=CLAUDE_CODE_OAUTH_TOKEN; test -s ~/.claude/.credentials.json && echo cred=claude-login-file; true",
+        "echo user=$(whoami) shell=$SHELL; command -v claude codex opencode tmux | tr '\\n' ' '; echo; claude --version 2>&1 | head -1; test -n \"$ANTHROPIC_API_KEY\" && echo cred=ANTHROPIC_API_KEY; test -n \"$CLAUDE_CODE_OAUTH_TOKEN\" && echo cred=CLAUDE_CODE_OAUTH_TOKEN; test -s ~/.claude/.credentials.json && echo cred=claude-login-file; true",
         Duration::from_secs(60),
     )
     .await;
     let mut has_claude = false;
-    let mut has_cred = false;
     match probe {
         Ok(o) => {
             has_claude = o.stdout.contains("claude");
-            has_cred = o.stdout.contains("cred=");
             r.pass("probe_tools", short(&o.stdout, 200), t.elapsed());
         }
         Err(e) => r.fail("probe_tools", e.to_string(), t.elapsed()),
@@ -452,116 +450,70 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
         Err(e) => r.fail("fork_and_destroy_fork", e.to_string(), t.elapsed()),
     }
 
-    // A real agent turn, when the box can authenticate.
+    // An agent session: the harness starts in its own tmux session and the
+    // watch sees it running; stopping it ends it. Claude Code's first-run
+    // dialogs (folder trust, permissions) need a person, so the turn itself
+    // is not driven here.
     if !has_claude {
-        r.skip("agent_turn", "claude is not installed in the box");
-    } else if !has_cred {
-        r.skip("agent_turn", "no Anthropic credential visible in the box (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN or a stored login)");
+        r.skip("agent_session", "claude is not installed in the box");
     } else {
-        let session = agent_turn(p, id, r, "Reply with exactly the word OK and nothing else.", None).await;
-        if let Some(sid) = session {
-            agent_turn(p, id, r, "What single word did you reply with just before? Answer with that word only.", Some(sid)).await;
-        }
+        agent_session(p, id, r).await;
     }
     Ok(())
 }
 
-async fn agent_turn(p: &dyn Provider, id: &str, r: &mut Report, prompt: &str, resume: Option<String>) -> Option<String> {
-    let label = if resume.is_some() { "agent_turn_resume" } else { "agent_turn" };
+async fn agent_session(p: &dyn Provider, id: &str, r: &mut Report) {
     let t = Instant::now();
-    let spec = TurnSpec { resume_session: resume, max_turns: Some(2), max_budget_usd: Some(0.05), ..Default::default() };
-    let script = agent::turn_command(Harness::ClaudeCode, &spec);
-    let mut h = match p
-        .exec(id, ExecSpec { script, tty: false, cols: 0, rows: 0, env: vec![("TERM".into(), "dumb".into()), ("NO_COLOR".into(), "1".into())] })
-        .await
-    {
-        Ok(h) => h,
-        Err(e) => {
-            r.fail(label, e.to_string(), t.elapsed());
-            return None;
-        }
+    let agent = AgentMeta {
+        id: format!("smoke-{}", uuid::Uuid::new_v4().simple()),
+        title: "smoke".into(),
+        harness: Harness::ClaudeCode,
+        machine_id: id.into(),
+        machine_name: String::new(),
+        cwd: None,
+        model: None,
+        session_id: Some(uuid::Uuid::new_v4().to_string()),
+        skip_permissions: false,
+        created_at: 0,
+        updated_at: 0,
+        worktree: None,
     };
-    let _ = h.input.send(ExecInput::Data(format!("{prompt}\n").into_bytes())).await;
-    let _ = h.input.send(ExecInput::Close).await;
-    let mut parser = agent::parser_for(Harness::ClaudeCode);
-    let mut lb = LineBuffer::default();
-    let mut stderr = String::new();
-    let mut events: Vec<AgentEvent> = Vec::new();
-    let mut exit = None;
-    let end = Instant::now() + Duration::from_secs(150);
-    while let Ok(Some(o)) = tokio::time::timeout(end.saturating_duration_since(Instant::now()), h.output.recv()).await {
-        match o {
-            ExecOutput::Stdout(b) => {
-                for line in lb.push(&b) {
-                    events.extend(parser.parse_line(&line));
-                }
-            }
-            ExecOutput::Stderr(b) => stderr.push_str(&String::from_utf8_lossy(&b)),
-            ExecOutput::Exit(c) => {
-                exit = Some(c);
-                break;
-            }
-            ExecOutput::Error(e) => {
-                stderr.push_str(&format!(" <error {e}>"));
-                break;
-            }
+    let env = vec![("TERM".into(), "xterm-256color".into())];
+    let term = match p.exec(id, ExecSpec { script: session::open_script(&agent, None), tty: true, cols: 120, rows: 40, env }).await {
+        Ok(h) => h,
+        Err(e) => return r.fail("agent_session", e.to_string(), t.elapsed()),
+    };
+    let mut watch = match session::watch(p, id).await {
+        Ok(w) => w,
+        Err(e) => return r.fail("agent_session", e.to_string(), t.elapsed()),
+    };
+    let mut seen = None;
+    let end = Instant::now() + Duration::from_secs(60);
+    while let Ok(Some(snap)) = tokio::time::timeout(end.saturating_duration_since(Instant::now()), watch.next()).await {
+        let running = snap.agents.iter().any(|a| a.id == agent.id && a.running);
+        seen = Some((snap.tmux, running));
+        if !snap.tmux || running {
+            break;
         }
     }
-    if let Some(tail) = lb.flush() {
-        events.extend(parser.parse_line(&tail));
+    drop(term);
+    match seen {
+        Some((false, _)) => r.skip("agent_session", "the box has no tmux: agents end with their terminal"),
+        Some((true, true)) => {
+            // Detached, not ended: the session outlives the terminal.
+            drop(watch);
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let still = match session::watch(p, id).await {
+                Ok(mut w) => tokio::time::timeout(Duration::from_secs(10), w.next()).await.ok().flatten(),
+                Err(_) => None,
+            };
+            let _ = session::stop(p, id, &agent.id, true).await;
+            let detail = format!("running in tmux; after the terminal closed: {:?}", still.map(|s| s.agents.iter().any(|a| a.id == agent.id && a.running)));
+            r.pass("agent_session", detail, t.elapsed())
+        }
+        _ => {
+            let _ = session::stop(p, id, &agent.id, true).await;
+            r.fail("agent_session", "the session never showed up as running", t.elapsed())
+        }
     }
-    let init = events.iter().find_map(|e| match e {
-        AgentEvent::Init { session_id, model, .. } => Some((session_id.clone(), model.clone())),
-        _ => None,
-    });
-    let text: String = events
-        .iter()
-        .filter_map(|e| match e {
-            AgentEvent::Assistant { blocks } => Some(
-                blocks
-                    .iter()
-                    .filter_map(|b| match b {
-                        agent::Block::Text { text } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let deltas = events.iter().filter(|e| matches!(e, AgentEvent::TextDelta { .. })).count();
-    let result = events.iter().find_map(|e| match e {
-        AgentEvent::Result { ok, subtype, message, cost_usd, turns, session_id, .. } => Some((*ok, subtype.clone(), message.clone(), *cost_usd, *turns, session_id.clone())),
-        _ => None,
-    });
-    let unparsed: Vec<String> = events
-        .iter()
-        .filter_map(|e| match e {
-            AgentEvent::Stderr { text } => Some(text.clone()),
-            _ => None,
-        })
-        .collect();
-    let detail = format!(
-        "exit {exit:?} · init {} · {} events, {deltas} deltas · reply {:?} · result {:?} · stderr {:?} · non-json {:?}",
-        init.as_ref().map(|(s, m)| format!("session {}… model {:?}", &s[..s.len().min(8)], m)).unwrap_or_else(|| "none".into()),
-        events.len(),
-        short(&text, 80),
-        result.as_ref().map(|(ok, st, msg, cost, turns, _)| format!("ok={ok} {st} {:?} cost {:?} turns {:?}", msg.as_deref().map(|m| short(m, 40)), cost, turns)),
-        short(&stderr, 160),
-        unparsed.iter().map(|l| short(l, 60)).take(3).collect::<Vec<_>>()
-    );
-    let ok = matches!(&result, Some((true, ..))) && text.to_uppercase().contains("OK");
-    if ok {
-        r.pass(label, detail, t.elapsed());
-    } else if text.contains("Not logged in") {
-        // The pipeline worked end to end (init, assistant text, result); the
-        // box just has no usable Anthropic credential for this org.
-        r.skip(label, &format!("Claude Code ran but is not logged in on this box. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN as a boxd secret, or `claude login` once in the org. {detail}"));
-        return None;
-    } else {
-        r.fail(label, detail, t.elapsed());
-    }
-    result.and_then(|(_, _, _, _, _, sid)| sid).or_else(|| init.map(|(s, _)| s))
 }

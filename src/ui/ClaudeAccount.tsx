@@ -107,7 +107,7 @@ export default function ClaudeLogin(p: { machine: Machine }) {
               <p class="note">
                 {a().own ? (
                   <>
-                    Kept in <span class="mono">~/.stowbox/claude</span> in this box and used by every agent here, chat and terminal. Other boxes keep their own.
+                    Kept in <span class="mono">~/.stowbox/claude</span> in this box and used by every agent here. Other boxes keep their own.
                   </>
                 ) : (
                   <>

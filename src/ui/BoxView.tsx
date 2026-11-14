@@ -1,10 +1,10 @@
 import { For, Match, Show, Switch, createEffect, createResource, createSignal, lazy, on } from "solid-js";
 import type { Machine, SetupRun, SetupStatus, StepState } from "../bridge/types";
 import { api } from "../bridge/api";
-import { actions, agentsForMachine, setupActive, setupRunFor, state } from "../state/store";
+import { actions, agentsForMachine, phaseOf, setupActive, setupRunFor, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot, PowerActions } from "./common";
-import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, usd } from "./format";
+import { agentPhaseLabel, gib, hours, money, relTime, sizeLabel, statusLabel } from "./format";
 import { boxTerminalKey } from "./termSessions";
 
 const Terminal = lazy(() => import("./Terminal"));
@@ -49,12 +49,11 @@ const AgentsTab = (p: { machine: Machine }) => {
           <For each={agents()}>
             {(a) => (
               <button class="list-row" onClick={() => actions.select({ kind: "agent", id: a.id })}>
-                <AgentDot status={a.status} />
+                <AgentDot agent={a} />
                 <span class="name">{a.title || "New agent"}</span>
                 <span class="cell">{a.harness === "claude-code" ? "Claude Code" : "Codex"}</span>
-                <span class="cell mono">{a.totalCostUsd > 0 ? usd(a.totalCostUsd) : ""}</span>
                 <span class="cell">
-                  {a.status.kind === "done" ? "Ready for you" : agentStatusLabel(a.status)} · {relTime(a.updatedAt)}
+                  {agentPhaseLabel[phaseOf(a)]} · {relTime(a.updatedAt)}
                 </span>
               </button>
             )}

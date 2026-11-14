@@ -1,7 +1,7 @@
-//! Files attached to a message for an agent. Each one is copied into the box
-//! under `~/.stowbox/uploads/<agent>/` and the prompt names it by its path,
+//! Files dropped on an agent's terminal. Each one is copied into the box
+//! under `~/.stowbox/uploads/<agent>/` and its path is typed at the prompt,
 //! so the harness reads it from there (Claude Code opens images from a
-//! path). Nothing is inlined in the prompt.
+//! path).
 
 use crate::boxd::shell_quote;
 use crate::provider::Provider;
@@ -15,13 +15,13 @@ pub const UPLOADS_DIR: &str = ".stowbox/uploads";
 /// Largest file accepted, in bytes.
 pub const MAX_BYTES: u64 = 20 * 1024 * 1024;
 
-/// Most files on one message.
+/// Most files in one drop.
 pub const MAX_FILES: usize = 10;
 
 /// Longest file name kept in the box, in characters.
 const NAME_MAX: usize = 80;
 
-/// A file already in the box, as a message carries it.
+/// A file already in the box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Attachment {
@@ -89,24 +89,6 @@ pub fn new_tag() -> String {
 /// upload can name it (the provider's file API takes no `~`).
 pub fn dir_script(agent_id: &str) -> String {
     format!("d=\"$HOME\"/{}\nmkdir -p \"$d\" && cd \"$d\" && pwd -P\n", shell_quote(&format!("{UPLOADS_DIR}/{agent_id}")))
-}
-
-/// The prompt as the harness gets it: the person's text, then one line per
-/// attached file with its path in the box.
-pub fn prompt_with(text: &str, attachments: &[Attachment]) -> String {
-    if attachments.is_empty() {
-        return text.to_string();
-    }
-    let mut s = text.trim_end().to_string();
-    if !s.is_empty() {
-        s.push_str("\n\n");
-    }
-    s.push_str(if attachments.len() == 1 { "Attached file (read it from this path):" } else { "Attached files (read them from these paths):" });
-    for a in attachments {
-        s.push_str("\n- ");
-        s.push_str(&a.path);
-    }
-    s
 }
 
 /// What the provider confirmed against what was sent. 0 means the server
@@ -185,14 +167,6 @@ mod tests {
         let e = check_size("big.mov", MAX_BYTES + 1).unwrap_err().to_string();
         assert!(e.contains("big.mov") && e.contains("20 MB"), "{e}");
         assert!(check_size("empty.txt", 0).unwrap_err().to_string().contains("empty"));
-    }
-
-    #[test]
-    fn prompt_names_each_path() {
-        assert_eq!(prompt_with("fix it", &[]), "fix it");
-        let a = |p: &str| Attachment { name: "x".into(), path: p.into(), size: 1 };
-        assert_eq!(prompt_with("fix it\n", &[a("/h/a.png")]), "fix it\n\nAttached file (read it from this path):\n- /h/a.png");
-        assert_eq!(prompt_with("", &[a("/h/a.png"), a("/h/b.log")]), "Attached files (read them from these paths):\n- /h/a.png\n- /h/b.log");
     }
 
     #[test]

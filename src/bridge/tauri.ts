@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isPermissionGranted, onAction, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { Api, AgentPush, NotifyPermission, SetupPush, TermEvent } from "./types";
+import type { Api, LivePush, NotifyPermission, SetupPush, TermEvent } from "./types";
 
 function b64(bytes: Uint8Array): string {
   let s = "";
@@ -56,19 +56,12 @@ export const tauriApi: Api = {
   spendToday: (since, limitMicro) => invoke("spend_today", { since, limitMicro }),
   listAgents: () => invoke("list_agents"),
   createAgent: (spec) => invoke("create_agent", { spec }),
-  agentEvents: (id) => invoke("agent_events", { id }),
-  searchTranscripts: (query, limit) => invoke("search_transcripts", { query, limit: limit ?? null }),
-  agentSend: (id, text, attachments) => invoke("agent_send", { id, text, attachments: attachments ?? null }),
-  agentQueueAdd: (id, text, attachments) => invoke("agent_queue_add", { id, text, attachments: attachments ?? null }),
-  agentQueueEdit: (id, messageId, text) => invoke("agent_queue_edit", { id, messageId, text }),
-  agentQueueRemove: (id, messageId) => invoke("agent_queue_remove", { id, messageId }),
-  agentQueueClear: (id) => invoke("agent_queue_clear", { id }),
-  agentQueueResume: (id) => invoke("agent_queue_resume", { id }),
   agentUpload: (id, name, bytes) => invoke("agent_upload", { id, name, data: b64(bytes) }),
   agentStop: (id) => invoke("agent_stop", { id }),
+  agentsLive: () => invoke("agents_live"),
   deleteAgent: (id, removeWorktree, force) => invoke("delete_agent", { id, removeWorktree: removeWorktree ?? false, force: force ?? false }),
   renameAgent: (id, title) => invoke("rename_agent", { id, title }),
-  onAgentEvent: (cb) => listen<AgentPush>("agent-event", (e) => cb(e.payload)),
+  onAgentsLive: (cb) => listen<LivePush>("agents-live", (e) => cb(e.payload)),
   listPresets: () => invoke("list_presets"),
   savePreset: (input) => invoke("save_preset", { input }),
   deletePreset: (id) => invoke("delete_preset", { id }),

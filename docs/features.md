@@ -3,8 +3,8 @@
 Everything the app does today, in full. The README has the short version.
 
 - **Fleet**: the landing view. Four tiles (running boxes, working agents,
-  finished turns waiting for you, estimated cost per hour), alerts derived
-  from the same data (a failed agent, a box billing with nothing to do, a
+  agents waiting for you, estimated cost per hour), alerts derived
+  from the same data (a box billing with nothing to do, a
   box near its memory or disk limit, the daily spend warning, a box the
   idle guard put in standby), and one row per box with its agents
   as state squares, CPU, memory, disk free and age (time since boxd created
@@ -17,32 +17,37 @@ Everything the app does today, in full. The README has the short version.
   wake, stop, start, reboot, delete. Each row shows size and an estimated cost
   per hour for the box's *current* state, computed from boxd's live rate card.
 - **Agents**: a Claude Code or Codex session pinned to a box and a working
-  directory. Each message runs one headless turn inside the box; the session
-  id is kept so the next message continues the same conversation. Text
-  streams as the model types; tool calls and their output fold into cards;
-  cost, turns and tokens accumulate per agent. Transcripts persist on disk.
-  Turns keep running when Stowbox is closed, the laptop sleeps or the
-  network drops: each one runs detached inside the box and writes its
-  output to `~/.stowbox/turns/<agent>/<turn>/` there (the last five turns
-  per agent are kept). Stowbox follows those files from the last line it
-  applied, so after a drop or a restart it reconnects and picks up where it
-  left off, with no line shown twice or skipped. While the box is in
-  standby or hibernated the agent says so and waits instead of waking it;
-  Stop kills the turn's process group in the box. When a box is deleted its
-  agents stay as read-only history: the composer gives way to a "was
-  deleted" line with Remove.
-- **Agent terminal**: an agent's Terminal tab runs the harness's own
-  interactive interface (`claude --resume <session>`, `codex resume`) in
-  the agent's directory, on the same session, for what a headless turn
-  cannot do: `/login`, `/status`, `/config`, `/model` and the like. Typing
-  one of those in the chat runs it there instead (the button turns into
-  *Run in terminal*); for Codex every slash command goes there. The
-  session keeps running while you look at the chat, another agent or a
-  box, and coming back to the agent opens it where it was; it ends when a
-  chat turn starts, so one process at a time works on the session, or
-  when the agent's tab is closed. A turn
-  that answers "isn't available in this environment", or fails because
-  Claude Code is not signed in, offers the way into the terminal.
+  directory, in the harness's own interactive interface. Every agent has
+  its own terminal on its own session, so several run side by side, one
+  tab each, and `/login`, `/status`, `/config`, approvals and the
+  first-run dialogs (trusting the folder, confirming skipped approvals)
+  work as they do locally. Claude Code agents get their session id when
+  they are created and every terminal runs `claude --resume` on it (or
+  `--session-id` the first time); Codex resumes its stored session when it
+  has one. *First prompt* in *New agent* is submitted when the harness
+  starts, and names the agent.
+- **Agents keep running**: in a box with tmux, the harness runs in a tmux
+  session of its own (`agent-<id>` on a private `stowbox` socket, status
+  bar off, mouse on), so it keeps working when its tab closes, the app
+  quits, the laptop sleeps or the network drops; opening the agent again
+  attaches to the same session, scrollback and all. Inside the app, the
+  terminal stays open while you look at other agents, boxes or Fleet, and
+  closing the agent's tab only detaches. *End session* quits the harness
+  in the box; the conversation stays and the next terminal resumes it. A
+  box without tmux runs the harness straight in the terminal, which then
+  ends with it, and the terminal bar says so. When a box is deleted its
+  agents stay in the list with a "was deleted" line and Remove.
+- **Working or waiting**: Claude Code agents start with hooks (passed with
+  `--settings`, nothing written to the box's settings) that record each
+  turn in `~/.stowbox/agents/<id>/state` in the box: working from a
+  prompt to the end of the turn, then waiting. Stowbox watches a box over
+  one exec stream that checks those files and the tmux sessions every
+  second and reports only changes, while an agent terminal is open on the
+  box or one of its agents was last seen working, so a quiet box is never
+  kept awake by it. The sidebar, tabs, Fleet and the box's Agents tab show
+  Working, Waiting for you, Running (Codex, which has no hooks, or Claude
+  Code before its first hook), Not running, or Not checked yet for a box
+  nothing has watched since the app started.
 - **Claude Code login per box**: boxd gives every box in an org the same
   agent login. A box's Agents tab shows which login its Claude Code uses
   (and the account's email when Claude Code recorded one) and can switch
@@ -51,32 +56,21 @@ Everything the app does today, in full. The README has the short version.
   token variables unset, and *Sign in* runs `claude /login` in the box's
   terminal. Sessions stay shared (`projects/` links back to
   `~/.claude/projects`), so agents keep their conversations; going back to
-  the org login deletes the box's own.
-- **Queued messages**: while a turn runs, the composer queues what you
-  write instead of sending it. Queued messages show under the transcript,
-  can be edited or removed until they go out, and are sent one per turn,
-  each only once the previous turn has really ended (finished or failed;
-  a reconnecting turn is still running). The queue is saved with the
-  agent, so it carries on after the window reloads or Stowbox restarts.
-  Stop pauses it: nothing more goes out until you press *Send next* (the
-  rest then follow turn by turn) or clear it; a queued message that cannot
-  be sent goes back to the front and pauses the queue the same way. A turn
-  with more queued after it does not notify; the last one does. A queue
-  that will send on its own keeps the box from idle standby.
-- **Attachments**: attach files with the paperclip, paste images or drop
-  files on the composer. Each one is copied into the box right away, to
+  the org login deletes the box's own. `/login` in any agent's terminal
+  signs in too.
+- **Files**: drop files on an agent's terminal, or use *Add files* above
+  it. Each one is copied into the box, to
   `~/.stowbox/uploads/<agent>/<tag>-<name>` (boxd's `UploadFile`, streamed
-  with `UploadFileStream` over 3 MB), and the prompt lists the paths, so
-  Claude Code or Codex reads the file from there (Claude Code opens images
-  from a path). Up to 10 files of 20 MB each per message; a file over the
-  limit, or an upload boxd refuses, shows the reason on the file and
-  blocks sending until you remove it. Nothing falls back to another route.
+  with `UploadFileStream` over 3 MB), and its path is typed at the prompt,
+  where Claude Code or Codex reads it (Claude Code opens images from a
+  path). Files are limited to 20 MB each; a file over the limit, or an
+  upload boxd refuses, shows the reason above the terminal.
 - **Own branch per agent**: in *New agent*, "Work on its own branch" makes
-  a git worktree for the agent before its first turn, so several agents can
+  a git worktree for the agent before it starts, so several agents can
   work on one repository in the same box without touching each other's
   files. It runs `git worktree add -b stowbox/<slug> <repo>-wt/<slug> HEAD`
   next to the repository (from another agent's worktree it still lands
-  next to the main one), named after the title or first task plus six
+  next to the main one), named after the title or first prompt plus six
   characters of the agent id, and the agent works in the same subdirectory
   of it that it was pointed at. It starts from the commit checked out
   there; uncommitted changes stay where they were. The branch shows in the
@@ -103,7 +97,8 @@ Everything the app does today, in full. The README has the short version.
   call has a deadline. The diff is cut at 512 KB inside the box and the tab
   says so; refusals such as a rejected push show git's message verbatim. A
   box in standby or hibernated is only read when you ask, since that wakes
-  it; the tab reads again when the agent's turn ends.
+  it; the tab reads again when the agent's turn ends (Claude Code's hooks
+  say when).
 - **Ports**: a tab on every box for seeing a dev server in the browser.
   It lists the box's HTTPS links (boxd proxies): the box address
   `https://<box>.<domain>`, which serves the first of 80, 443, 8080, 8000,
@@ -132,10 +127,8 @@ Everything the app does today, in full. The README has the short version.
   usage per box with hours in each power state in the Details tab.
 - **Cost guards** (Settings, both off by default): *Idle standby* puts a
   running box in standby after N minutes (30 by default) in which nothing
-  happened in it: no agent starting, working or reconnecting (a detached
-  turn counts until its exit is read, with or without a client attached)
-  or holding queued messages it will send,
-  no setup run, no terminal open, and no agent update, setup run, terminal
+  happened in it: no agent working (running, with its hooks saying it is
+  on a turn), no setup run, no terminal open, and no agent update, setup run, terminal
   keystroke or Changes action in the window. The idle clock never starts
   before Stowbox first saw the box running, and restarts when a box wakes.
   A 30 s countdown with Undo comes first, and the box is checked again at
@@ -187,35 +180,27 @@ Everything the app does today, in full. The README has the short version.
   extension. The Details tab shows `ssh -p <port> boxd@<box>.boxd.sh` with
   a copy button, and the dialog copies `ssh stowbox-<box>` once the entry
   is there.
-- **Notifications**: when an agent's turn finishes or fails, or a setup run
-  ends, the OS shows a notification, by default only while Stowbox is not
-  the window in front (Settings has both switches). One turn notifies once;
-  reconnecting and a pressed Stop do not notify, and nothing is announced
-  for the first 10 s after launch, when reattached turns that ended while
-  Stowbox was closed replay their last lines. Clicking a notification
-  brings the window back and opens the agent or the box's Setup tab, where
-  the notification server reports clicks. The dock or taskbar badge counts
+- **Notifications**: when a Claude Code agent goes from working to waiting
+  for you, or a setup run ends, the OS shows a notification, by default
+  only while Stowbox is not the window in front (Settings has both
+  switches). Agents notify while their box is watched (see *Working or
+  waiting*); the first state seen after a watch starts is taken as it is,
+  so nothing that ended earlier is announced. Codex has no hooks and does
+  not notify. Clicking a notification brings the window back and opens
+  the agent or the box's Setup tab, where the notification server reports clicks. The dock or taskbar badge counts
   notifications shown since the window was last in front (macOS and Linux
   desktops that support badges; on Windows an overlay on the taskbar
   button, the count on an orange square). On Windows a click is reported
   only while the toast is on screen, not from the Action Center, and the
   toasts carry Stowbox's name only in the installed app: run from
   `target\release` or `pnpm tauri dev` they show as Windows PowerShell.
-- **Command palette and transcript search**: ⌘K on macOS, Ctrl+K
+- **Command palette**: ⌘K on macOS, Ctrl+K
   elsewhere (or the search button in the top bar) opens one list to jump to
   Fleet, a box, an agent, a setup preset or Settings, and to run the common
   actions: new box, new agent, open a box's terminal, Changes, Setup or
   Details, standby, resume and the other power actions, open in VS Code or
   Cursor, theme and panels. Matching is fuzzy (words in any order, letters in
-  order). From two characters on it also searches every agent's transcript
-  on this computer, case-insensitively: messages, replies, reasoning, tool
-  calls and their output, errors. Each match shows the agent, its box, the
-  turn and a snippet with the match marked; Enter opens the agent's chat
-  scrolled to that message, with a folded tool card opened. Transcripts are
-  read line by line and files without the text are skipped without parsing;
-  results stop at 5 per agent (its latest) and 50 in all. Transcript lines
-  carry no time of their own, so the time shown is when the agent last did
-  something. Inside the terminal Ctrl+K stays the shell's (kill to the end
+  order). Inside the terminal Ctrl+K stays the shell's (kill to the end
   of the line); ⌘K types nothing there and works everywhere. On Windows the
   terminal copies a selection with Ctrl+C (with nothing selected Ctrl+C is
   the interrupt, as always) and pastes with Ctrl+V, as Windows Terminal does.

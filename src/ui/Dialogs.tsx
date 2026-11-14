@@ -5,7 +5,7 @@ import { presetVariables } from "../bridge/variables";
 import { GUARD_COUNTDOWN_MS, actions, machineById, state, type Dialog } from "../state/store";
 import * as I from "../icons";
 import { isWindows } from "./common";
-import { currencySymbol, isBusy, money, spendLine } from "./format";
+import { currencySymbol, money, spendLine } from "./format";
 
 const GIB = 1024 ** 3;
 
@@ -208,6 +208,11 @@ const NewBox = () => {
   );
 };
 
+const firstLine = (text: string) => {
+  const line = text.trim().split("\n")[0].trim();
+  return line.length > 64 ? line.slice(0, 63).trimEnd() + "…" : line;
+};
+
 const NewAgent = (p: { machineId?: string }) => {
   const [machineId, setMachineId] = createSignal(p.machineId ?? state.machines[0]?.id ?? "");
   const [harness, setHarness] = createSignal<Harness>("claude-code");
@@ -233,6 +238,8 @@ const NewAgent = (p: { machineId?: string }) => {
           machineId: m.id,
           machineName: m.name,
           harness: harness(),
+          // Named after its first prompt, as the sidebar shows it; renamable.
+          title: firstLine(first()) || null,
           cwd: cwd().trim() || null,
           model: model().trim() || null,
           skipPermissions: skip(),
@@ -262,11 +269,11 @@ const NewAgent = (p: { machineId?: string }) => {
         <div class="choices" style={{ "grid-template-columns": "1fr 1fr" }}>
           <button class="choice" aria-pressed={harness() === "claude-code"} onClick={() => setHarness("claude-code")}>
             <span>Claude Code</span>
-            <span class="faint">claude -p, stream-json</span>
+            <span class="faint">claude, with state from its hooks</span>
           </button>
           <button class="choice" aria-pressed={harness() === "codex"} onClick={() => setHarness("codex")}>
             <span>Codex</span>
-            <span class="faint">codex exec --json</span>
+            <span class="faint">codex, no working/waiting state</span>
           </button>
         </div>
       </div>
@@ -292,17 +299,18 @@ const NewAgent = (p: { machineId?: string }) => {
       <label class="check">
         <input type="checkbox" checked={skip()} onChange={(e) => setSkip(e.currentTarget.checked)} />
         <span>
-          <strong>Run tools without approval prompts.</strong> The box is a disposable VM, so this is the usual setting. Off means any tool that would ask is
-          denied, since nobody can answer a prompt mid-turn.
+          <strong>Run tools without approval prompts.</strong> The box is a disposable VM, so this is the usual setting. Off means the harness asks in its
+          terminal before each tool that needs approval. Claude Code confirms this mode once per box, in the terminal.
         </span>
       </label>
       <div class="field">
-        <label for="na-first">First task (optional)</label>
+        <label for="na-first">First prompt (optional)</label>
         <textarea id="na-first" class="input" placeholder="Add a /health endpoint and a test for it" value={first()} onInput={(e) => setFirst(e.currentTarget.value)} />
       </div>
       <p class="hint">
-        The agent signs in with whatever the box has: an <span class="mono">ANTHROPIC_API_KEY</span> or <span class="mono">CLAUDE_CODE_OAUTH_TOKEN</span> secret
-        set with <span class="mono">boxd env set</span>, or a login stored for your org.
+        The agent opens in its own terminal, in its own session. It signs in with whatever the box has: an{" "}
+        <span class="mono">ANTHROPIC_API_KEY</span> or <span class="mono">CLAUDE_CODE_OAUTH_TOKEN</span> secret set with <span class="mono">boxd env set</span>, a
+        login stored for your org, or the box's own login; <span class="mono">/login</span> works in the terminal.
       </p>
       <Show when={error()}>
         <div class="form-error">{error()}</div>
@@ -312,7 +320,7 @@ const NewAgent = (p: { machineId?: string }) => {
           Cancel
         </button>
         <button class="btn primary" onClick={() => void create()} disabled={busy() || !machineId()}>
-          <I.Chat /> {busy() ? (ownBranch() && cwd().trim() ? "Creating the worktree…" : "Creating…") : first().trim() ? "Create and send" : "Create agent"}
+          <I.Terminal /> {busy() ? (ownBranch() && cwd().trim() ? "Creating the worktree…" : "Creating…") : "Create agent"}
         </button>
       </div>
     </Modal>
@@ -356,7 +364,7 @@ const Settings = () => {
           <label class="check">
             <input type="checkbox" checked={state.notify.enabled} onChange={(e) => void actions.setNotify({ enabled: e.currentTarget.checked })} />
             <span>
-              <strong>Notify when an agent finishes or fails.</strong> Setup runs too. Only while Stowbox is not the window in front.
+              <strong>Notify when a Claude Code agent stops working and waits for you.</strong> Setup runs too. Only while Stowbox is not the window in front.
             </span>
           </label>
           <label class="check">
@@ -457,7 +465,7 @@ const Settings = () => {
         <dt>Version</dt>
         <dd class="mono">0.1.0</dd>
       </dl>
-      <p class="hint">Stowbox talks to boxd directly from this computer. No Stowbox server sees your key, your boxes or your transcripts.</p>
+      <p class="hint">Stowbox talks to boxd directly from this computer. No Stowbox server sees your key, your boxes or your agents.</p>
       <div class="dialog-actions">
         <button class="btn danger" onClick={() => void actions.signOut()}>
           <I.Key /> Forget API key
@@ -508,9 +516,8 @@ const Confirm = (p: { d: Extract<NonNullable<Dialog>, { kind: "confirm" }> }) =>
  * dialog then shows git's words and asks before discarding them. */
 const DeleteAgent = (p: { agentId: string }) => {
   const a = () => state.agents.find((x) => x.id === p.agentId);
-  const working = () => !!a() && isBusy(a()!.status);
   const boxGone = () => !!a() && !machineById(a()!.machineId);
-  const [remove, setRemove] = createSignal(!working() && !boxGone());
+  const [remove, setRemove] = createSignal(!boxGone());
   const [refused, setRefused] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -531,24 +538,17 @@ const DeleteAgent = (p: { agentId: string }) => {
     <Show when={a()}>
       {(ag) => (
         <Modal title={`Remove "${ag().title || "this agent"}"?`} onClose={actions.closeDialog}>
-          <p>The transcript is deleted from this computer.</p>
+          <p>Its session in the box is ended and Stowbox forgets it. The conversation stays in the box's Claude Code history.</p>
           <label class="check">
-            <input type="checkbox" checked={remove()} disabled={working() || boxGone() || busy() || !!refused()} onChange={(e) => setRemove(e.currentTarget.checked)} />
+            <input type="checkbox" checked={remove()} disabled={boxGone() || busy() || !!refused()} onChange={(e) => setRemove(e.currentTarget.checked)} />
             <span>
               <strong>Also remove its worktree</strong> <span class="mono">{ag().worktree!.path}</span>. The branch{" "}
               <span class="mono">{ag().worktree!.branch}</span> stays in the repository, with everything committed on it.
-              <Switch>
-                <Match when={working()}>
-                  <span class="hint" style={{ display: "block" }}>
-                    Stop the agent's turn first to remove its worktree.
-                  </span>
-                </Match>
-                <Match when={boxGone()}>
-                  <span class="hint" style={{ display: "block" }}>
-                    The box is no longer in your boxd account.
-                  </span>
-                </Match>
-              </Switch>
+              <Show when={boxGone()}>
+                <span class="hint" style={{ display: "block" }}>
+                  The box is no longer in your boxd account.
+                </span>
+              </Show>
             </span>
           </label>
           <Show when={refused()}>

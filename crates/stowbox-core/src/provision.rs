@@ -24,7 +24,6 @@
 //! Variable values are not secrets: they are kept in the run record and
 //! show up in the log.
 
-use crate::agent::LineBuffer;
 use crate::provider::Provider;
 use crate::types::*;
 use crate::{Error, Result};
@@ -602,6 +601,34 @@ async fn wait_until_reachable<P: Provider + ?Sized>(p: &P, id: &str) -> Result<(
             ));
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+/// Splits a byte stream into complete lines, keeping a partial tail.
+#[derive(Default)]
+pub struct LineBuffer {
+    buf: Vec<u8>,
+}
+
+impl LineBuffer {
+    pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+        self.buf.extend_from_slice(bytes);
+        let mut lines = Vec::new();
+        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.buf.drain(..=pos).collect();
+            let s = String::from_utf8_lossy(&line[..line.len() - 1]).trim_end_matches('\r').to_string();
+            lines.push(s);
+        }
+        lines
+    }
+
+    pub fn flush(&mut self) -> Option<String> {
+        if self.buf.is_empty() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&self.buf).to_string();
+        self.buf.clear();
+        Some(s)
     }
 }
 

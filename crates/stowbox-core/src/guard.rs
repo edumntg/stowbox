@@ -1,15 +1,14 @@
 //! Cost guards: putting a box in standby once nothing has happened in it for
 //! a while, and checking the day's spend against a limit the person set.
 //!
-//! Idleness is judged from what Stowbox knows about the box: its agents (a
-//! detached turn keeps running with no client attached, so an agent that is
-//! starting, working, reconnecting or has a turn on record holds the box,
-//! and so does one with queued messages it will send on its own),
-//! its setup run, its open terminals and the last time any of those did
-//! something. Client connections are not a signal on their own. Everything
-//! here is pure; the shell feeds it and acts on the verdict.
+//! Idleness is judged from what Stowbox knows about the box: its agents (one
+//! last seen working keeps running in its tmux session with no terminal
+//! attached, so it holds the box), its setup run, its open terminals and the
+//! last time any of those did something. Client connections are not a
+//! signal on their own. Everything here is pure; the shell feeds it and acts
+//! on the verdict.
 
-use crate::agent::{AgentMeta, AgentStatus};
+use crate::agent::session::{AgentLive, AgentState};
 use crate::types::MachineStatus;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -60,12 +59,10 @@ pub enum Verdict {
     Keep { reason: KeepReason },
 }
 
-/// An agent holds its box while a turn may be running there: any busy
-/// status, or a detached turn still on record (it runs with no client
-/// attached until its exit is read). Queued messages that will be sent on
-/// their own hold it too, so the box is not suspended between two turns.
-pub fn agent_holds_box(a: &AgentMeta) -> bool {
-    a.turn.is_some() || a.queue_continues() || matches!(a.status, AgentStatus::Starting | AgentStatus::Thinking | AgentStatus::Tool { .. } | AgentStatus::Reconnecting { .. })
+/// An agent holds its box while it was last seen working in a session that
+/// still runs.
+pub fn agent_holds_box(a: &AgentLive) -> bool {
+    a.running && a.state == Some(AgentState::Working)
 }
 
 /// The guard's decision for one box. Conservative by construction: any
@@ -174,7 +171,6 @@ pub fn check_spend(figure: SpendFigure, limit_micro: i64, currency: &str) -> Spe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{detached::TurnCursor, Harness};
 
     const MIN: i64 = 60_000;
 
@@ -222,40 +218,13 @@ mod tests {
         }
     }
 
-    fn agent(status: AgentStatus, turn: bool) -> AgentMeta {
-        let mut a: AgentMeta = serde_json::from_value(serde_json::json!({
-            "id": "ag", "title": "", "harness": Harness::ClaudeCode, "machineId": "vm_1", "machineName": "b",
-            "cwd": null, "model": null, "sessionId": null, "status": {"kind": "idle"}, "skipPermissions": true,
-            "createdAt": 0, "updatedAt": 0, "totalCostUsd": 0.0, "turns": 0, "inputTokens": 0, "outputTokens": 0
-        }))
-        .unwrap();
-        a.status = status;
-        if turn {
-            a.turn = Some(TurnCursor::new("0000000000001-abcdef12"));
-        }
-        a
-    }
-
     #[test]
-    fn reconnecting_and_detached_turns_hold_the_box() {
-        assert!(agent_holds_box(&agent(AgentStatus::Reconnecting { message: "standby".into() }, false)));
-        assert!(agent_holds_box(&agent(AgentStatus::Starting, false)));
-        assert!(agent_holds_box(&agent(AgentStatus::Thinking, false)));
-        assert!(agent_holds_box(&agent(AgentStatus::Done, true)));
-        assert!(!agent_holds_box(&agent(AgentStatus::Done, false)));
-        assert!(!agent_holds_box(&agent(AgentStatus::Idle, false)));
-    }
-
-    #[test]
-    fn queued_messages_hold_the_box_unless_paused() {
-        let mut a = agent(AgentStatus::Done, false);
-        a.queue.push(crate::agent::QueuedMessage { id: "q1".into(), text: "next".into(), attachments: vec![], queued_at: 0 });
-        assert!(agent_holds_box(&a), "between turns with more to send");
-        a.queue_paused = true;
-        assert!(!agent_holds_box(&a), "a paused queue waits for the person, not the box");
-        a.queue_paused = false;
-        a.status = AgentStatus::Stopped;
-        assert!(!agent_holds_box(&a));
+    fn a_working_agent_holds_the_box_while_its_session_runs() {
+        let live = |state, running| AgentLive { id: "a".into(), state, since: 0, running };
+        assert!(agent_holds_box(&live(Some(AgentState::Working), true)));
+        assert!(!agent_holds_box(&live(Some(AgentState::Working), false)), "the harness exited");
+        assert!(!agent_holds_box(&live(Some(AgentState::Waiting), true)));
+        assert!(!agent_holds_box(&live(None, true)));
     }
 
     #[test]
