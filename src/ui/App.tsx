@@ -11,7 +11,7 @@ import Onboarding from "./Onboarding";
 import Palette, { paletteShortcut } from "./Palette";
 import Sidebar from "./Sidebar";
 import Toasts from "./Toasts";
-import { AgentDot, BrandMark, Dot, isMac } from "./common";
+import { AgentDot, BrandMark, Dot, isMac, isWindows } from "./common";
 import { money } from "./format";
 
 const Tab = (p: { sel: Selection }) => {
@@ -58,10 +58,14 @@ const Topbar = () => (
     <button class="icon-btn" title={state.ui.sidebar ? "Hide sidebar" : "Show sidebar"} aria-label="Toggle sidebar" aria-pressed={state.ui.sidebar} onClick={() => actions.toggleSidebar()}>
       <I.PanelLeft />
     </button>
-    <span class="topbar-title" data-tauri-drag-region>
-      <BrandMark />
-      Stowbox
-    </span>
+    {/* Windows draws its own title bar above this one, with the icon and
+        the name; repeating them here would make two title bars. */}
+    <Show when={!isWindows}>
+      <span class="topbar-title" data-tauri-drag-region>
+        <BrandMark />
+        Stowbox
+      </span>
+    </Show>
     <div class="topbar-right">
       <button class="icon-btn" title={`Search and commands (${paletteShortcut})`} aria-label="Search and commands" aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"} onClick={() => actions.openPalette()}>
         <I.Search />

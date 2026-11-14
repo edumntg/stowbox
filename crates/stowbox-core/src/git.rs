@@ -956,6 +956,7 @@ index 0000000..5555555
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     fn token_helper_answers_for_github_only() {
         if !has_bash() || std::process::Command::new("git").arg("--version").output().is_err() {
             return;
@@ -972,6 +973,7 @@ index 0000000..5555555
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn ssh_default_respects_the_users_choice() {
         if !has_git() {
             return;
@@ -999,6 +1001,7 @@ index 0000000..5555555
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn review_commit_push_end_to_end() {
         if !has_git() {
             return;
@@ -1061,6 +1064,7 @@ index 0000000..5555555
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn review_honest_states_and_caps() {
         if !has_git() {
             return;
@@ -1089,6 +1093,7 @@ index 0000000..5555555
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[cfg(unix)] // box-side script with unix-only test plumbing; see testing.rs
     #[tokio::test(flavor = "multi_thread")]
     async fn pull_request_with_and_without_gh() {
         if !has_git() {

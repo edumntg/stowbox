@@ -1,0 +1,87 @@
+# Builds the real app on Windows, starts it and drives its UI over the
+# DevTools protocol (WebView2's debugging port): with no API key the
+# onboarding renders, a malformed key gets the app's validation message, an
+# invalid one boxd's refusal. Screenshots of the webview and of the whole
+# screen are attached to the run. Windows minutes bill 2x on a private repo,
+# so it runs by hand and on pull requests that change the app itself, never
+# on pushes; see README.md, "Windows".
+name: Windows smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "src/**"
+      - "package.json"
+      - ".github/workflows/windows-smoke.yml"
+      - ".github/scripts/windows-smoke.mjs"
+      - ".github/scripts/screen.ps1"
+
+concurrency:
+  group: windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke
+          cache-on-failure: true
+
+      # A release build without installers: the exe the installers carry (no
+      # console window, no devtools UI), with one change for the smoke: its
+      # WebView2 opens a DevTools port, and accepts the script's WebSocket
+      # on it. The app sets WebView2's browser arguments itself (Tauri's
+      # defaults), and WebView2 then ignores WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+      # so the port goes in through the window config, next to Tauri's
+      # defaults, for this build only.
+      - name: Build the app
+        shell: pwsh
+        run: |
+          node -e "const c=require('./src-tauri/tauri.conf.json'); const w=c.app.windows[0]; w.additionalBrowserArgs='--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --remote-allow-origins=*'; require('fs').writeFileSync('smoke.conf.json', JSON.stringify({app:{windows:[w]}}))"
+          Get-Content smoke.conf.json
+          pnpm tauri build --no-bundle --config smoke.conf.json
+
+      # Undriven first: the exe starts on its own and opens a window,
+      # whatever happens to the driven run after it.
+      - name: Launch the app alone
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          $p = Start-Process -FilePath target\release\stowbox.exe -PassThru
+          Start-Sleep -Seconds 12
+          $info = Get-Process -Id $p.Id -ErrorAction SilentlyContinue | Select-Object Id, MainWindowTitle, Responding
+          $info | Format-List | Out-String | Write-Host
+          & .github\scripts\screen.ps1 (Join-Path (Resolve-Path smoke) '0-launched-screen.png')
+          if (-not $info -or $info.MainWindowTitle -ne 'Stowbox') { Write-Error 'stowbox.exe is not running with a window titled Stowbox' }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          # WebView2's own processes outlive the exe for a moment; a new
+          # start would join them and ignore the DevTools port it asks for.
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+
+      - name: Drive the app
+        run: node .github/scripts/windows-smoke.mjs target/release/stowbox.exe smoke
+
+      - name: Attach screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke
+          path: smoke/
+          if-no-files-found: warn
+          retention-days: 7

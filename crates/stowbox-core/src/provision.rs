@@ -648,6 +648,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     fn script_runs_in_bash() {
         // Only where bash exists; proves quoting and step markers end to end.
         if std::process::Command::new("bash")
@@ -803,6 +804,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     fn substituted_values_reach_bash_verbatim() {
         if std::process::Command::new("bash").arg("-c").arg("true").status().is_err() {
             return;
@@ -924,6 +926,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn run_end_to_end_with_local_bash() {
         if std::process::Command::new("bash").arg("-c").arg("true").status().is_err() {
             return;

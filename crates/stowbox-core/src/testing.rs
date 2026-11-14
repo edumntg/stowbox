@@ -31,6 +31,13 @@ pub fn machine(id: &str, status: MachineStatus) -> Machine {
     }
 }
 
+// Box-side scripts (git, setup presets, uploads, ports, worktrees, agent
+// turns) always run in a Linux box, so their end-to-end tests run them with
+// local bash on Linux and macOS only. On Windows they are marked ignored:
+// `bash` there can be WSL's launcher in System32 (which `Command` finds before
+// `PATH`) or Git Bash, neither is the box's environment, and a pass or a
+// failure there would say nothing about a box. What runs on this computer
+// (ssh config, keys, paths, the store, search) is tested on every OS.
 pub fn has_bash() -> bool {
     std::process::Command::new("bash").arg("-c").arg("true").status().is_ok()
 }

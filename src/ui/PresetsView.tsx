@@ -76,8 +76,8 @@ const Editor = (p: { preset: Preset | null; onSaved: (id: string) => void }) => 
         <span class="label">Secrets</span>
         <p class="hint">
           Written to <span class="mono">~/.config/stowbox/env.sh</span> in the box (readable only by its user) and exported before the first command.{" "}
-          <span class="mono">~/.profile</span> and <span class="mono">~/.bashrc</span> load that file, so terminals and agents see the same variables. Values stay in
-          this computer's keychain and are masked in the setup log.
+          <span class="mono">~/.profile</span> and <span class="mono">~/.bashrc</span> load that file, so terminals and agents see the same variables. Values stay on
+          this computer (the OS keychain, or a file in Stowbox's app data when the keychain refuses them) and are masked in the setup log.
         </p>
         <Show when={secrets().length > 0}>
           <div class="secret-rows">

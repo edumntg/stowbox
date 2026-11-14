@@ -104,3 +104,5 @@ export const PowerActions = (p: { machine: Machine; ghost?: boolean; size?: "sm"
 };
 
 export const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+/** WebView2 reports "Win32" in navigator.platform and "Windows" in the user agent. */
+export const isWindows = typeof navigator !== "undefined" && /Win/i.test(navigator.platform || navigator.userAgent);

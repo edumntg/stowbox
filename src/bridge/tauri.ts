@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Image } from "@tauri-apps/api/image";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isPermissionGranted, onAction, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -12,6 +13,27 @@ function b64(bytes: Uint8Array): string {
     s += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
   }
   return btoa(s);
+}
+
+/** WebView2 reports "Win32" here. */
+const isWindows = /Win/i.test(navigator.platform || navigator.userAgent);
+
+/** Windows has no badge count on the taskbar, only a small overlay icon on
+ * the app's button: the count on an orange square (orange is "waiting for
+ * you" in Stowbox), drawn at 32px for Windows to scale. */
+async function overlayBadge(n: number): Promise<Image> {
+  const size = 32;
+  const c = new OffscreenCanvas(size, size);
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#f97316";
+  g.fillRect(0, 0, size, size);
+  g.fillStyle = "#0a0a0a";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  const label = n > 9 ? "9+" : String(n);
+  g.font = `600 ${label.length > 1 ? 19 : 24}px "Segoe UI", sans-serif`;
+  g.fillText(label, size / 2, size / 2 + 1);
+  return Image.new(g.getImageData(0, 0, size, size).data.buffer, size, size);
 }
 
 export const tauriApi: Api = {
@@ -96,7 +118,16 @@ export const tauriApi: Api = {
     await w.show();
     await w.setFocus();
   },
-  setBadgeCount: (n) => getCurrentWindow().setBadgeCount(n > 0 ? n : undefined),
+  setBadgeCount: async (n) => {
+    const w = getCurrentWindow();
+    if (isWindows) await w.setOverlayIcon(n > 0 ? await overlayBadge(n) : undefined);
+    else await w.setBadgeCount(n > 0 ? n : undefined);
+  },
+  // Only Windows draws the native title bar from this: it follows the
+  // system theme otherwise, a white bar over a dark window.
+  setWindowTheme: async (theme) => {
+    if (isWindows) await getCurrentWindow().setTheme(theme);
+  },
   openUrl: (url) => openUrl(url),
   copyText: (text) => writeText(text),
 };

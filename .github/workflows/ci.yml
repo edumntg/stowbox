@@ -1,4 +1,7 @@
-# The three checks AGENTS.md asks for before a commit, on every PR and push to main.
+# The three checks AGENTS.md asks for before a commit, on every PR and push to
+# main, plus the Rust ones on Windows. Windows minutes bill 2x on a private
+# repo, so that is one job without the frontend build (it is the same bundle
+# on every OS), cached by rust-cache.
 name: CI
 
 on:
@@ -35,5 +38,23 @@ jobs:
         run: pnpm build
       - name: cargo test -p stowbox-core
         run: cargo test -p stowbox-core
+      - name: cargo check --workspace
+        run: cargo check --workspace
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # --show-output: a test that skips for a missing tool says so in the log.
+      - name: cargo test -p stowbox-core
+        run: cargo test -p stowbox-core -- --show-output
+      # The shell embeds ../dist at compile time; an empty page is enough to
+      # type-check it without building the frontend here.
+      - name: Placeholder frontend
+        shell: bash
+        run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
       - name: cargo check --workspace
         run: cargo check --workspace

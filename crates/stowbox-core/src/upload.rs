@@ -203,6 +203,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn uploads_end_to_end_over_exec() {
         if !has_bash() {
             return;
@@ -232,6 +233,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn exec_upload_reports_failure_verbatim() {
         if !has_bash() {
             return;

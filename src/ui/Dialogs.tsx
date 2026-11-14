@@ -4,6 +4,7 @@ import type { Editor, Harness, Preset, VariableValues } from "../bridge/types";
 import { presetVariables } from "../bridge/variables";
 import { GUARD_COUNTDOWN_MS, actions, machineById, state, type Dialog } from "../state/store";
 import * as I from "../icons";
+import { isWindows } from "./common";
 import { currencySymbol, isBusy, money, spendLine } from "./format";
 
 const GIB = 1024 ** 3;
@@ -334,8 +335,11 @@ const Settings = () => {
         </dd>
         <dt>API key</dt>
         <dd>
-          <Show when={backend() === "keyring"} fallback={<span>stored in a file only your user can read, no OS keychain was available</span>}>
-            stored in the OS keychain
+          <Show
+            when={backend() === "keyring"}
+            fallback={<span>{isWindows ? "stored in a file in your user's app data folder" : "stored in a file only your user can read"}, no OS keychain was available</span>}
+          >
+            {isWindows ? "stored in Windows Credential Manager" : "stored in the OS keychain"}
           </Show>
         </dd>
         <dt>Theme</dt>

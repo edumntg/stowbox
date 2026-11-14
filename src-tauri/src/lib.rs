@@ -539,6 +539,9 @@ async fn listening_ports(state: State<'_, AppState>, machine_id: String, wake: O
 // Stowbox key, the managed block in ~/.ssh/config and Stowbox's
 // known_hosts, all in stowbox_core::ssh. `ssh_plan` only reads.
 
+// The home directory comes from the OS (the profile folder on Windows,
+// %USERPROFILE%, never $HOME), which is where Windows' OpenSSH and VS Code's
+// Remote-SSH read `.ssh\config`. The config itself names files as `~/.ssh/...`.
 fn ssh_files(state: &AppState) -> CmdResult<ssh::Files> {
     let home = state.home.as_ref().ok_or("the OS reports no home directory, so there is no ~/.ssh to write")?;
     Ok(ssh::Files::new(home.join(".ssh"), "~/.ssh"))
@@ -557,13 +560,7 @@ fn ssh_device(state: &AppState) -> CmdResult<ssh::Device> {
             id
         }
     };
-    let label = std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| "this computer".into());
-    Ok(ssh::Device { id, label })
+    Ok(ssh::Device { id, label: ssh::computer_name() })
 }
 
 #[tauri::command]
@@ -591,7 +588,7 @@ async fn open_in_editor(app: AppHandle, state: State<'_, AppState>, machine_id: 
     }
     let device = ssh_device(&state)?;
     state.touch(&m.id);
-    let mut applied = ssh::setup(p.as_ref(), &files, &m, &device, "ssh-keygen").await.map_err(err)?;
+    let mut applied = ssh::setup(p.as_ref(), &files, &m, &device, &ssh::keygen_program()).await.map_err(err)?;
     // The editor connects as soon as it opens; wake the box first, as the
     // terminal does, rather than leave the editor waiting on a sleeping one.
     let wake = match m.status {

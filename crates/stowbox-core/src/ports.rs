@@ -378,6 +378,7 @@ ESTAB  0      0          10.0.0.5:22      10.0.0.1:51234
         assert_eq!(suggest_route_name(5173, &["p5173".into(), "p5173-2".into()]), "p5173-3");
     }
 
+    #[cfg(unix)] // box-side script with unix-only test plumbing; see testing.rs
     #[tokio::test]
     async fn the_script_runs_and_parses_on_this_machine() {
         if !crate::testing::has_bash() {
@@ -401,12 +402,14 @@ ESTAB  0      0          10.0.0.5:22      10.0.0.1:51234
         assert_eq!(l.source, "proc");
     }
 
+    #[cfg(unix)]
     fn which(tool: &str) -> std::io::Result<std::path::PathBuf> {
         let out = std::process::Command::new("bash").arg("-c").arg(format!("command -v {tool}")).output()?;
         Ok(std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
     }
 
     #[tokio::test]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     async fn a_sleeping_box_is_left_alone_unless_asked() {
         struct Asleep(crate::testing::LocalBash);
         #[async_trait::async_trait]

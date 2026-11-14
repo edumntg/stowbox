@@ -245,6 +245,7 @@ function saveTabs(tabs: Selection[]) {
 }
 
 document.documentElement.dataset.theme = state.ui.theme;
+void api.setWindowTheme(state.ui.theme).catch(() => undefined);
 
 let toastSeq = 0;
 let unlisten: (() => void) | null = null;
@@ -747,6 +748,7 @@ export const actions = {
   setTheme(theme: Theme) {
     setState("ui", "theme", theme);
     document.documentElement.dataset.theme = theme;
+    void api.setWindowTheme(theme).catch(() => undefined);
     try {
       localStorage.setItem("stowbox.theme", theme);
     } catch {

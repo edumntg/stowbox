@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { api } from "../bridge/api";
+import { isWindows } from "./common";
 
 /** One interactive shell inside a box, streamed over the provider's exec
  * channel. Nothing has to be installed locally: no ssh, no CLI. */
@@ -33,6 +34,25 @@ export default function Terminal(p: { machine: string; key?: string }) {
         selectionBackground: "rgba(255, 255, 255, 0.22)",
       },
     });
+    // Windows terminals copy with Ctrl+C when text is selected (and send
+    // Ctrl+C, the interrupt, when nothing is) and paste with Ctrl+V. xterm
+    // turns both into control characters, so hand them back here: copy the
+    // selection, and let Ctrl+V reach the browser's paste, which xterm reads.
+    if (isWindows) {
+      term.attachCustomKeyEventHandler((e) => {
+        if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return true;
+        const k = e.key.toLowerCase();
+        if (k === "c" && term.hasSelection()) {
+          if (e.type === "keydown") {
+            void api.copyText(term.getSelection()).catch(() => undefined);
+            term.clearSelection();
+          }
+          e.preventDefault();
+          return false;
+        }
+        return k !== "v";
+      });
+    }
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);

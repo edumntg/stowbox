@@ -104,12 +104,19 @@ impl Files {
     }
 }
 
-/// A path as an ssh_config argument: quoted when it holds a space.
+/// A path as an ssh_config argument: quoted when it holds a space. On
+/// Windows backslashes become forward slashes, which Windows' OpenSSH
+/// accepts: inside an ssh_config argument a backslash is an escape for
+/// newer OpenSSH and a plain character for older ones (Windows 10 has 8.1),
+/// so `\\server` or `\"` would read differently between them. Stowbox
+/// itself writes `~/.ssh/...`, which every OpenSSH expands to the profile
+/// folder, so a user name with spaces or accents never reaches the file.
 fn arg(path: &str) -> String {
+    let path = if cfg!(windows) { path.replace('\\', "/") } else { path.to_string() };
     if path.contains(char::is_whitespace) {
         format!("\"{path}\"")
     } else {
-        path.to_string()
+        path
     }
 }
 
@@ -383,18 +390,72 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
+/// The `ssh-keygen` to run. On Windows, the one of the OpenSSH Client
+/// feature in `System32\\OpenSSH` when it is there, the same OpenSSH that
+/// VS Code and Cursor use, so the key's permissions are the ones it checks;
+/// and it is found even when the feature was added after Stowbox started,
+/// with a `PATH` that does not have it yet. Otherwise `ssh-keygen` from
+/// `PATH` (Rust adds `.exe` on Windows).
+pub fn keygen_program() -> PathBuf {
+    if cfg!(windows) {
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            let p = PathBuf::from(root).join("System32").join("OpenSSH").join("ssh-keygen.exe");
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+    PathBuf::from("ssh-keygen")
+}
+
+/// How to get `ssh-keygen` when it is missing, for this OS.
+fn install_hint() -> &'static str {
+    if cfg!(windows) {
+        "Add Windows' OpenSSH Client: Settings > System > Optional features > View features (on Windows 10: Settings > Apps > Optional features > Add a feature), or in PowerShell as administrator: Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0"
+    } else if cfg!(target_os = "macos") {
+        "macOS includes it in /usr/bin; check that PATH has /usr/bin"
+    } else {
+        "Install the OpenSSH client (openssh-client on Debian and Ubuntu, openssh on Fedora and Arch)"
+    }
+}
+
+/// A command for a console program that opens no console window: a GUI
+/// app on Windows otherwise flashes one for every `ssh-keygen` it runs.
+pub fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// The computer's name, for the label of the key linked to the account.
+pub fn computer_name() -> String {
+    let from_env = std::env::var(if cfg!(windows) { "COMPUTERNAME" } else { "HOSTNAME" }).ok();
+    from_env
+        .or_else(|| quiet_command("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()))
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "this computer".into())
+}
+
 /// Stowbox's public key, made with `keygen` (normally `ssh-keygen`) when
 /// there is none. An existing private key is never replaced; a missing
 /// `.pub` next to it is derived from it. Returns the key line and whether
 /// a new key was made.
-pub fn ensure_key(files: &Files, keygen: &str, comment: &str) -> Result<(String, bool)> {
+pub fn ensure_key(files: &Files, keygen: &Path, comment: &str) -> Result<(String, bool)> {
     let key = files.key();
     let pubkey = files.pubkey();
+    let shown = keygen.display();
     let missing = |e: std::io::Error| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            Error::Provider(format!("{keygen} was not found. Install the OpenSSH client (on Windows: Settings > System > Optional features > OpenSSH Client), then try again."))
+            Error::Provider(format!("{shown} was not found, and Stowbox needs it to make its SSH key. {}, then try again.", install_hint()))
         } else {
-            Error::Provider(format!("could not run {keygen}: {e}"))
+            Error::Provider(format!("could not run {shown}: {e}"))
         }
     };
     if key.exists() {
@@ -403,7 +464,7 @@ pub fn ensure_key(files: &Files, keygen: &str, comment: &str) -> Result<(String,
                 return Ok((line.trim().to_string(), false));
             }
         }
-        let out = std::process::Command::new(keygen).arg("-y").arg("-f").arg(&key).output().map_err(missing)?;
+        let out = quiet_command(keygen).arg("-y").arg("-f").arg(&key).output().map_err(missing)?;
         if !out.status.success() {
             return Err(Error::Provider(format!("{} exists but its public key could not be read: {}", files.show("stowbox/id_ed25519"), String::from_utf8_lossy(&out.stderr).trim())));
         }
@@ -418,14 +479,14 @@ pub fn ensure_key(files: &Files, keygen: &str, comment: &str) -> Result<(String,
         // ssh-keygen stop at an overwrite prompt. Set it aside, not delete it.
         std::fs::rename(&pubkey, files.dir.join("stowbox").join("id_ed25519.pub.orphan"))?;
     }
-    let out = std::process::Command::new(keygen)
+    let out = quiet_command(keygen)
         .args(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f"])
         .arg(&key)
         .stdin(std::process::Stdio::null())
         .output()
         .map_err(missing)?;
     if !out.status.success() {
-        return Err(Error::Provider(format!("{keygen} failed: {}", String::from_utf8_lossy(&out.stderr).trim())));
+        return Err(Error::Provider(format!("{shown} failed: {}", String::from_utf8_lossy(&out.stderr).trim())));
     }
     let line = std::fs::read_to_string(&pubkey)?.trim().to_string();
     Ok((line, true))
@@ -450,7 +511,7 @@ pub struct Device {
 /// Makes `m` reachable as `ssh <alias>`: the key (made if missing), linked
 /// to the account, the Host stanza in the managed block and the proxy's
 /// host key. Idempotent; files are only written when their text changes.
-pub async fn setup(provider: &dyn Provider, files: &Files, m: &Machine, device: &Device, keygen: &str) -> Result<Applied> {
+pub async fn setup(provider: &dyn Provider, files: &Files, m: &Machine, device: &Device, keygen: &Path) -> Result<Applied> {
     let target = Target::of(m).map_err(Error::Provider)?;
     let mut changes = Vec::new();
 
@@ -534,6 +595,78 @@ mod tests {
         assert!(stanza(&t, &files(Path::new("/x")), false).ends_with("StrictHostKeyChecking accept-new\n"));
         let spaced = stanza(&t, &Files::new("/x", "C:/Users/Ann Lee/.ssh"), true);
         assert!(spaced.contains("IdentityFile \"C:/Users/Ann Lee/.ssh/stowbox/id_ed25519\"\n"));
+    }
+
+    #[test]
+    fn a_windows_profile_never_reaches_the_config() {
+        // What the shell passes on Windows: the real folder, shown as `~`.
+        let t = Target::of(&box_named("api", 21843)).unwrap();
+        let s = stanza(&t, &Files::new(r"C:\Users\Ana María\.ssh", "~/.ssh"), true);
+        assert!(s.contains("  IdentityFile ~/.ssh/stowbox/id_ed25519\n") && s.contains("  UserKnownHostsFile ~/.ssh/stowbox/known_hosts\n"), "{s}");
+        assert!(!s.contains("Ana") && !s.contains('\\'));
+        let f = Files::new(r"C:\Users\Ana María\.ssh", "~/.ssh");
+        assert!(f.key().ends_with("stowbox/id_ed25519") || f.key().ends_with(r"stowbox\id_ed25519"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_written_with_forward_slashes() {
+        assert_eq!(arg(r"C:\Users\Ana María\.ssh\stowbox\id_ed25519"), "\"C:/Users/Ana María/.ssh/stowbox/id_ed25519\"");
+        assert_eq!(arg(r"C:\Users\ana\.ssh\config"), "C:/Users/ana/.ssh/config");
+        let t = Target::of(&box_named("api", 1)).unwrap();
+        let s = stanza(&t, &Files::new("unused", r"C:\Users\Ana María\.ssh"), true);
+        assert!(s.contains("  IdentityFile \"C:/Users/Ana María/.ssh/stowbox/id_ed25519\"\n"), "{s}");
+        assert!(!s.contains('\\'));
+    }
+
+    #[test]
+    fn keygen_and_computer_name() {
+        let k = keygen_program();
+        let name = k.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name == "ssh-keygen" || name == "ssh-keygen.exe", "{name}");
+        if cfg!(windows) && k.is_absolute() {
+            assert!(k.ends_with(r"System32\OpenSSH\ssh-keygen.exe"), "{}", k.display());
+        }
+        let n = computer_name();
+        assert!(!n.is_empty() && n == n.trim());
+    }
+
+    /// The ssh client this computer has, next to its ssh-keygen.
+    fn ssh_program() -> PathBuf {
+        keygen_program().with_file_name(if cfg!(windows) { "ssh.exe" } else { "ssh" })
+    }
+
+    #[test]
+    fn the_real_ssh_client_reads_the_block() {
+        // `ssh -G` prints the options it resolved for a host and exits; it
+        // parses the file with this computer's OpenSSH (8.1 on Windows 10).
+        if quiet_command(ssh_program()).arg("-V").output().is_err() {
+            eprintln!("skipped: no ssh client");
+            return;
+        }
+        let dir = temp_dir("stowbox-ssh-g");
+        let a = Target::of(&box_named("api", 21843)).unwrap();
+        let b = Target::of(&box_named("web", 22000)).unwrap();
+        let spaced = dir.join("Ann Lee").join(".ssh");
+        let mut config = merge("Host *\n  ServerAliveInterval 30\n", &a.alias, &stanza(&a, &files(&dir), false));
+        config = merge(&config, &b.alias, &stanza(&b, &Files::new(&spaced, spaced.display().to_string()), true));
+        let path = dir.join("config");
+        std::fs::write(&path, &config).unwrap();
+        let resolve = |alias: &str| {
+            let out = quiet_command(ssh_program()).arg("-G").arg("-F").arg(&path).arg(alias).output().unwrap();
+            assert!(out.status.success(), "ssh -G {alias}: {}\n{config}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n")
+        };
+        let ga = resolve("stowbox-api");
+        for want in ["hostname api.boxd.sh\n", "port 21843\n", "user boxd\n", "identitiesonly yes\n", "hostkeyalias stowbox-api\n", "serveraliveinterval 30\n"] {
+            assert!(ga.contains(want), "missing {want:?} in\n{ga}");
+        }
+        assert!(ga.lines().any(|l| l.starts_with("identityfile ") && l.ends_with(".ssh/stowbox/id_ed25519")), "{ga}");
+        let gb = resolve("stowbox-web");
+        assert!(gb.contains("port 22000\n"), "{gb}");
+        // The quoted path with a space comes back whole.
+        let id = gb.lines().find(|l| l.starts_with("identityfile ")).unwrap_or_default().to_string();
+        assert!(id.contains("Ann Lee/.ssh/stowbox/id_ed25519"), "{id}");
     }
 
     const A: &str = "Host stowbox-a\n  HostName a.boxd.sh\n  Port 1\n";
@@ -668,13 +801,13 @@ mod tests {
     }
 
     fn has_keygen() -> bool {
-        std::process::Command::new("ssh-keygen").arg("-?").output().is_ok()
+        quiet_command(keygen_program()).arg("-?").output().is_ok()
     }
 
     #[test]
     fn missing_keygen_names_the_step() {
         let dir = temp_dir("stowbox-ssh");
-        let e = ensure_key(&files(&dir), "stowbox-no-such-keygen", "c").unwrap_err().to_string();
+        let e = ensure_key(&files(&dir), Path::new("stowbox-no-such-keygen"), "c").unwrap_err().to_string();
         assert!(e.contains("was not found") && e.contains("OpenSSH"), "{e}");
         assert!(!files(&dir).key().exists());
     }
@@ -696,7 +829,7 @@ mod tests {
         assert_eq!((plan0.config.as_str(), plan0.key_exists, plan0.blocker.clone()), ("add", false, None));
         assert_eq!(plan0.ssh_command, "ssh -p 21843 boxd@api.boxd.sh");
 
-        let first = setup(&p, &f, &m, &device, "ssh-keygen").await.unwrap();
+        let first = setup(&p, &f, &m, &device, &keygen_program()).await.unwrap();
         assert_eq!(first.alias, "stowbox-api");
         assert_eq!(first.changes.len(), 3, "{:?}", first.changes);
         assert!(first.changes[0].starts_with("Created an SSH key"));
@@ -714,6 +847,18 @@ mod tests {
             assert_eq!(std::fs::metadata(f.config()).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(std::fs::metadata(f.key()).unwrap().permissions().mode() & 0o777, 0o600);
         }
+        #[cfg(windows)]
+        {
+            // Windows' OpenSSH refuses a private key that other users can
+            // read. ssh-keygen sets the key's ACL itself; nothing broad on it.
+            let acl = String::from_utf8_lossy(&quiet_command("icacls").arg(f.key()).output().unwrap().stdout).into_owned();
+            for broad in ["Everyone", "BUILTIN\\Users", "Authenticated Users"] {
+                assert!(!acl.contains(broad), "{broad} on the key:\n{acl}");
+            }
+            // And ssh-keygen reads it back, which checks those permissions.
+            let out = quiet_command(keygen_program()).arg("-y").arg("-f").arg(f.key()).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
         assert_eq!(plan(&f, &m).unwrap().config, "current");
         assert_eq!(plan(&f, &m).unwrap().ssh_command, "ssh stowbox-api");
 
@@ -722,7 +867,7 @@ mod tests {
         let key_before = std::fs::read(f.key()).unwrap();
         let edited = format!("{config}\nHost github.com\n  User git\n");
         std::fs::write(f.config(), &edited).unwrap();
-        let second = setup(&p, &f, &m, &device, "ssh-keygen").await.unwrap();
+        let second = setup(&p, &f, &m, &device, &keygen_program()).await.unwrap();
         assert!(second.changes.is_empty(), "{:?}", second.changes);
         assert_eq!(std::fs::read_to_string(f.config()).unwrap(), edited);
         assert_eq!(std::fs::read(f.key()).unwrap(), key_before);
@@ -732,7 +877,7 @@ mod tests {
         // the file before that change is the backup.
         let moved = box_named("api", 22000);
         assert_eq!(plan(&f, &moved).unwrap().config, "update");
-        let third = setup(&p, &f, &moved, &device, "ssh-keygen").await.unwrap();
+        let third = setup(&p, &f, &moved, &device, &keygen_program()).await.unwrap();
         assert_eq!(third.changes.len(), 1);
         assert!(third.changes[0].starts_with("Updated Host stowbox-api in ~/.ssh/config; the previous file is at ~/.ssh/config.stowbox-backup"));
         assert_eq!(std::fs::read_to_string(f.backup()).unwrap(), edited);
@@ -740,30 +885,45 @@ mod tests {
         assert!(now.contains("Port 22000") && now.ends_with("\nHost github.com\n  User git\n"));
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn setup_writes_through_a_symlinked_config_and_keeps_its_mode() {
         if !has_keygen() {
             return;
         }
-        use std::os::unix::fs::PermissionsExt;
         let root = temp_dir("stowbox-ssh");
         let dir = root.join(".ssh");
         std::fs::create_dir_all(&dir).unwrap();
         let dotfiles = root.join("dotfiles-ssh-config");
         std::fs::write(&dotfiles, "Host old\n  User me\n").unwrap();
-        std::fs::set_permissions(&dotfiles, std::fs::Permissions::from_mode(0o644)).unwrap();
-        std::os::unix::fs::symlink(&dotfiles, dir.join("config")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dotfiles, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::os::unix::fs::symlink(&dotfiles, dir.join("config")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            // Windows lets only administrators and Developer Mode make
+            // symlinks; without that right there is nothing to test.
+            if let Err(e) = std::os::windows::fs::symlink_file(&dotfiles, dir.join("config")) {
+                eprintln!("skipped: cannot create a symlink here: {e}");
+                return;
+            }
+        }
         let f = files(&dir);
         let p = Fake::default();
         let device = Device { id: "d".into(), label: "l".into() };
-        setup(&p, &f, &box_named("api", 1), &device, "ssh-keygen").await.unwrap();
+        setup(&p, &f, &box_named("api", 1), &device, &keygen_program()).await.unwrap();
         assert!(std::fs::symlink_metadata(f.config()).unwrap().file_type().is_symlink());
         let text = std::fs::read_to_string(&dotfiles).unwrap();
         assert!(text.contains("Host stowbox-api") && text.ends_with("Host old\n  User me\n"));
         // No host key known: the first connection records it.
         assert!(text.contains("StrictHostKeyChecking accept-new"));
-        assert_eq!(std::fs::metadata(&dotfiles).unwrap().permissions().mode() & 0o777, 0o644);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&dotfiles).unwrap().permissions().mode() & 0o777, 0o644);
+        }
         assert_eq!(std::fs::read_to_string(f.backup()).unwrap(), "Host old\n  User me\n");
     }
 
@@ -774,12 +934,12 @@ mod tests {
         }
         let dir = temp_dir("stowbox-ssh");
         let f = files(&dir);
-        let (line, created) = ensure_key(&f, "ssh-keygen", "first").unwrap();
+        let (line, created) = ensure_key(&f, &keygen_program(), "first").unwrap();
         assert!(created);
         let private = std::fs::read(f.key()).unwrap();
         // The .pub is lost: it is derived from the private key, not remade.
         std::fs::remove_file(f.pubkey()).unwrap();
-        let (again, created) = ensure_key(&f, "ssh-keygen", "second").unwrap();
+        let (again, created) = ensure_key(&f, &keygen_program(), "second").unwrap();
         assert!(!created);
         assert_eq!(std::fs::read(f.key()).unwrap(), private);
         assert_eq!(again.split_whitespace().nth(1), line.split_whitespace().nth(1));
