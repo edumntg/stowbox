@@ -5,6 +5,7 @@ import { actions, agentsForMachine, setupActive, setupRunFor, state } from "../s
 import * as I from "../icons";
 import { AgentDot, Dot, PowerActions } from "./common";
 import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, usd } from "./format";
+import { boxTerminalKey } from "./termSessions";
 
 const Terminal = lazy(() => import("./Terminal"));
 const ClaudeLogin = lazy(() => import("./ClaudeAccount"));
@@ -439,7 +440,14 @@ export default function BoxView(p: { machine: Machine }) {
                 </div>
               }
             >
-              <Show when={state.ui.boxTerminal?.machineId === m().id ? state.ui.boxTerminal : null} keyed fallback={<Terminal machine={m().id} key={m().id} />}>
+              <Show when={state.ui.boxTerminal?.machineId === m().id ? state.ui.boxTerminal : null} keyed fallback={
+                  <Terminal
+                    machine={m().id}
+                    key={m().id}
+                    persist={boxTerminalKey(m().id)}
+                    hint="Connected. The shell keeps running while you look elsewhere; closing the box's tab ends it."
+                  />
+                }>
                 {(t) => (
                   <div class="term-pane">
                     <div class="term-tools">

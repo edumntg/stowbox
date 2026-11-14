@@ -8,6 +8,7 @@ import { agentStatusLabel, duration, fileSize, isBusy, statusLabel, tokens, usd 
 import { renderMarkdown } from "./markdown";
 import { needsLogin, refusedCommand, runsInTerminal, slashCommand } from "./slash";
 import type { TermInput } from "./Terminal";
+import { agentTerminalKey, closeTerminal, sessions } from "./termSessions";
 import { itemIndexForEvent, toItems, toolSummary, type Item } from "./transcript";
 
 const Changes = lazy(() => import("./Changes"));
@@ -588,12 +589,22 @@ export default function AgentView(p: { agent: AgentMeta }) {
     setTermEnded(false);
     setTerm({ input, key: ++termKey });
   };
+  /** Ends the session in the box, not just the view of it. */
   const closeTerm = () => {
     write = null;
+    closeTerminal(agentTerminalKey(a().id));
     setTerm(null);
   };
   const agentId = createMemo(() => a().id);
-  createEffect(on(agentId, closeTerm, { defer: true }));
+  // The session outlives this view: coming back to the agent shows the one
+  // that kept running, mounted even while the Chat tab is in front.
+  createEffect(
+    on(agentId, (id) => {
+      write = null;
+      setTermEnded(false);
+      setTerm(sessions.has(agentTerminalKey(id)) ? { input: null, key: ++termKey } : null);
+    }),
+  );
   createEffect(on(busy, (b) => b && closeTerm(), { defer: true }));
   createEffect(() => {
     const req = state.ui.agentTerminal;
@@ -796,7 +807,13 @@ export default function AgentView(p: { agent: AgentMeta }) {
                     . What happens here does not show in the chat transcript; the next chat message continues from it.
                   </span>
                   <Show when={termEnded()}>
-                    <button class="btn sm" onClick={() => openTerm(null)}>
+                    <button
+                      class="btn sm"
+                      onClick={() => {
+                        closeTerminal(agentTerminalKey(a().id));
+                        openTerm(null);
+                      }}
+                    >
                       <I.Refresh /> Open again
                     </button>
                   </Show>
@@ -808,7 +825,8 @@ export default function AgentView(p: { agent: AgentMeta }) {
                   <Terminal
                     machine={a().machineId}
                     target={{ kind: "agent", id: a().id, input: t().input }}
-                    hint="Connected. /exit or Back to chat; the session stays open until you send from the chat."
+                    persist={agentTerminalKey(a().id)}
+                    hint="Connected. It keeps running while you look elsewhere; sending from the chat or closing the agent's tab ends it."
                     onInput={(w) => (write = w)}
                     onEnd={() => setTermEnded(true)}
                   />

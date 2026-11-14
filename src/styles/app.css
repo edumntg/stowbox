@@ -3348,3 +3348,7 @@ select.input {
   opacity: 0.45;
   pointer-events: none;
 }
+
+.term-el {
+  height: 100%;
+}

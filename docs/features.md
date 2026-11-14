@@ -37,8 +37,10 @@ Everything the app does today, in full. The README has the short version.
   cannot do: `/login`, `/status`, `/config`, `/model` and the like. Typing
   one of those in the chat runs it there instead (the button turns into
   *Run in terminal*); for Codex every slash command goes there. The
-  terminal stays open while you switch back to the chat and closes before
-  a chat turn starts, so one process at a time works on the session. A turn
+  session keeps running while you look at the chat, another agent or a
+  box, and coming back to the agent opens it where it was; it ends when a
+  chat turn starts, so one process at a time works on the session, or
+  when the agent's tab is closed. A turn
   that answers "isn't available in this environment", or fails because
   Claude Code is not signed in, offers the way into the terminal.
 - **Claude Code login per box**: boxd gives every box in an org the same
@@ -123,6 +125,9 @@ Everything the app does today, in full. The README has the short version.
   *Ports and links of <box>* and *Open <box> in the browser*.
 - **Terminal**: an interactive login shell in the box over boxd's exec
   stream (xterm.js on this side). Standby and hibernated boxes wake on open.
+  The shell keeps running, scrollback and all, while you look at other
+  tabs or boxes, and ends when the box's tab is closed. An open shell or
+  agent terminal counts as activity for idle standby.
 - **Cost**: account balance and not-yet-charged usage in the sidebar, metered
   usage per box with hours in each power state in the Details tab.
 - **Cost guards** (Settings, both off by default): *Idle standby* puts a
