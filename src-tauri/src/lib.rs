@@ -1573,6 +1573,9 @@ pub fn run() {
             let store = Store::new(data.join("state"));
             let preset_secrets = secrets::PresetSecrets::new(data.join("secrets"));
 
+            // `setup` runs on the main thread, outside Tokio; the boxd client
+            // binds its lazy channel to the runtime it is created in.
+            let _runtime = tauri::async_runtime::handle().inner().enter();
             let (provider, backend) = match secrets.load() {
                 Some((key, backend)) => match Boxd::new(key, BoxdConfig::default()) {
                     Ok(p) => (Some(Arc::new(p) as Arc<dyn Provider>), Some(backend)),
