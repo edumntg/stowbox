@@ -10,11 +10,15 @@ use std::path::{Path, PathBuf};
 
 pub struct Store {
     dir: PathBuf,
+    /// One write at a time: each goes through `<name>.tmp`, and two at once
+    /// would rename the same temporary file twice (the second fails with
+    /// "file not found").
+    writing: tokio::sync::Mutex<()>,
 }
 
 impl Store {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self { dir: dir.into(), writing: tokio::sync::Mutex::new(()) }
     }
 
     pub fn dir(&self) -> &Path {
@@ -34,11 +38,7 @@ impl Store {
     }
 
     pub async fn save_agents(&self, agents: &[AgentMeta]) -> Result<()> {
-        tokio::fs::create_dir_all(&self.dir).await?;
-        let tmp = self.dir.join("agents.json.tmp");
-        tokio::fs::write(&tmp, serde_json::to_vec_pretty(agents)?).await?;
-        tokio::fs::rename(&tmp, self.agents_file()).await?;
-        Ok(())
+        self.save_json("agents.json", agents).await
     }
 
     async fn load_json<T: serde::de::DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
@@ -50,6 +50,7 @@ impl Store {
     }
 
     async fn save_json<T: serde::Serialize + ?Sized>(&self, name: &str, value: &T) -> Result<()> {
+        let _one_at_a_time = self.writing.lock().await;
         tokio::fs::create_dir_all(&self.dir).await?;
         let tmp = self.dir.join(format!("{name}.tmp"));
         tokio::fs::write(&tmp, serde_json::to_vec_pretty(value)?).await?;
@@ -94,6 +95,25 @@ mod tests {
         };
         store.save_presets(std::slice::from_ref(&p)).await.unwrap();
         assert_eq!(store.load_presets().await.unwrap(), vec![p]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rename and a terminal opening at the same moment both save the
+    /// agents; neither may fail, and the file stays whole.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_saves_do_not_trip_over_each_other() {
+        let dir = std::env::temp_dir().join(format!("stowbox-store-{}", uuid::Uuid::new_v4().simple()));
+        let store = std::sync::Arc::new(Store::new(&dir));
+        let saves: Vec<_> = (0..32)
+            .map(|_| {
+                let store = store.clone();
+                tokio::spawn(async move { store.save_agents(&[]).await })
+            })
+            .collect();
+        for s in saves {
+            s.await.unwrap().unwrap();
+        }
+        assert!(store.load_agents().await.unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

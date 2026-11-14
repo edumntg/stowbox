@@ -34,7 +34,10 @@ export default function AgentView(p: { agent: AgentMeta }) {
     setDraft(a().title);
     setEditing(true);
   };
+  // Enter commits and removes the input, whose blur then commits again;
+  // only the first one renames.
   const commit = () => {
+    if (!editing()) return;
     const t = draft().trim();
     setEditing(false);
     if (t && t !== a().title) void actions.rename(a().id, t);
