@@ -7,6 +7,7 @@ import { AgentDot, Dot, PowerActions } from "./common";
 import { agentStatusLabel, gib, hours, money, relTime, sizeLabel, statusLabel, usd } from "./format";
 
 const Terminal = lazy(() => import("./Terminal"));
+const ClaudeLogin = lazy(() => import("./ClaudeAccount"));
 const Changes = lazy(() => import("./Changes"));
 const Ports = lazy(() => import("./Ports"));
 
@@ -23,41 +24,44 @@ const boxRepoDir = (id: string) => {
 const AgentsTab = (p: { machine: Machine }) => {
   const agents = () => agentsForMachine(p.machine.id);
   return (
-    <Show
-      when={agents().length > 0}
-      fallback={
-        <div class="empty-state">
-          <span>
-            <strong>No agents in {p.machine.name} yet.</strong> An agent is a Claude Code or Codex session that runs inside this box; its files and shell state
-            stay here between turns.
-          </span>
-          <button class="btn primary" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })}>
-            <I.Plus /> New agent in this box
+    <>
+      <Show
+        when={agents().length > 0}
+        fallback={
+          <div class="empty-state">
+            <span>
+              <strong>No agents in {p.machine.name} yet.</strong> An agent is a Claude Code or Codex session that runs inside this box; its files and shell state
+              stay here between turns.
+            </span>
+            <button class="btn primary" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })}>
+              <I.Plus /> New agent in this box
+            </button>
+          </div>
+        }
+      >
+        <div style={{ "margin-bottom": "8px" }}>
+          <button class="btn sm" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })}>
+            <I.Plus /> New agent
           </button>
         </div>
-      }
-    >
-      <div style={{ "margin-bottom": "8px" }}>
-        <button class="btn sm" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })}>
-          <I.Plus /> New agent
-        </button>
-      </div>
-      <div class="list">
-        <For each={agents()}>
-          {(a) => (
-            <button class="list-row" onClick={() => actions.select({ kind: "agent", id: a.id })}>
-              <AgentDot status={a.status} />
-              <span class="name">{a.title || "New agent"}</span>
-              <span class="cell">{a.harness === "claude-code" ? "Claude Code" : "Codex"}</span>
-              <span class="cell mono">{a.totalCostUsd > 0 ? usd(a.totalCostUsd) : ""}</span>
-              <span class="cell">
-                {a.status.kind === "done" ? "Ready for you" : agentStatusLabel(a.status)} · {relTime(a.updatedAt)}
-              </span>
-            </button>
-          )}
-        </For>
-      </div>
-    </Show>
+        <div class="list">
+          <For each={agents()}>
+            {(a) => (
+              <button class="list-row" onClick={() => actions.select({ kind: "agent", id: a.id })}>
+                <AgentDot status={a.status} />
+                <span class="name">{a.title || "New agent"}</span>
+                <span class="cell">{a.harness === "claude-code" ? "Claude Code" : "Codex"}</span>
+                <span class="cell mono">{a.totalCostUsd > 0 ? usd(a.totalCostUsd) : ""}</span>
+                <span class="cell">
+                  {a.status.kind === "done" ? "Ready for you" : agentStatusLabel(a.status)} · {relTime(a.updatedAt)}
+                </span>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+      <ClaudeLogin machine={p.machine} />
+    </>
   );
 };
 
@@ -435,7 +439,19 @@ export default function BoxView(p: { machine: Machine }) {
                 </div>
               }
             >
-              <Terminal machine={m().id} key={m().id} />
+              <Show when={state.ui.boxTerminal?.machineId === m().id ? state.ui.boxTerminal : null} keyed fallback={<Terminal machine={m().id} key={m().id} />}>
+                {(t) => (
+                  <div class="term-pane">
+                    <div class="term-tools">
+                      <span>Claude Code's sign-in. Open the link it prints, paste the code back here, then type /exit.</span>
+                      <button class="btn sm ghost" onClick={() => actions.openBoxTerminal(m().id, null)}>
+                        Open a shell instead
+                      </button>
+                    </div>
+                    <Terminal machine={m().id} target={t.target} hint="The Agents tab shows which account signed in." />
+                  </div>
+                )}
+              </Show>
             </Show>
           </div>
         </Match>

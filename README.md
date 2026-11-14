@@ -125,7 +125,9 @@ Stowbox handles no Anthropic or OpenAI credentials: the agent signs in with
 what the box already has, an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set as a
 boxd secret (`boxd env set ANTHROPIC_API_KEY sk-ant-… --secret`), a
 `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or the login boxd stores
-for your organization.
+for your organization. A box can also keep a Claude Code login of its own
+(its Agents tab), so two boxes can use two accounts; `/login` and the other
+interactive commands run in the agent's Terminal tab.
 
 ## Install
 

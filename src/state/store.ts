@@ -2,6 +2,7 @@ import { createStore, produce } from "solid-js/store";
 import { api } from "../bridge/api";
 import { presetVariables } from "../bridge/variables";
 import type {
+  TermTarget,
   Account,
   AgentEvent,
   AgentMeta,
@@ -31,7 +32,7 @@ import { isBusy, money, spendLine } from "../ui/format";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
 export type BoxTab = "agents" | "setup" | "changes" | "ports" | "terminal" | "details";
-export type AgentTab = "chat" | "changes";
+export type AgentTab = "chat" | "terminal" | "changes";
 export type Theme = "dark" | "light";
 export type Dialog =
   | null
@@ -133,6 +134,11 @@ interface AppState {
     focusEvent: { agentId: string; event: number; seq: number } | null;
     /** The preset the presets view should show. */
     presetFocus: string | null;
+    /** What the agent's Terminal tab runs first, once: a slash command sent
+     * from the chat. `seq` tells two requests apart. */
+    agentTerminal: { agentId: string; input: string | null; seq: number } | null;
+    /** What the box's Terminal tab runs instead of a shell; `seq` reopens it. */
+    boxTerminal: { machineId: string; target: TermTarget; seq: number } | null;
   };
 }
 
@@ -219,6 +225,8 @@ export const [state, setState] = createStore<AppState>({
     palette: false,
     focusEvent: null,
     presetFocus: null,
+    agentTerminal: null,
+    boxTerminal: null,
   },
 });
 
@@ -347,6 +355,8 @@ function message(e: unknown): string {
 }
 
 export const machineById = (id: string) => state.machines.find((m) => m.id === id);
+/** The agent's box is gone from boxd: the agent is history and nothing can run. */
+export const agentBoxGone = (a: AgentMeta) => state.machinesLoaded && !state.machinesError && !machineById(a.machineId);
 export const agentById = (id: string) => state.agents.find((a) => a.id === id);
 export const agentsForMachine = (id: string) => state.agents.filter((a) => a.machineId === id);
 export const selectedMachine = () => (state.ui.selection.kind === "box" ? machineById(state.ui.selection.id) : undefined);
@@ -759,10 +769,21 @@ export const actions = {
     setState("ui", "inspector", (v) => !v);
   },
   setBoxTab(tab: BoxTab) {
-    setState("ui", "boxTab", tab);
+    setState("ui", { boxTab: tab, boxTerminal: null });
   },
   setAgentTab(tab: AgentTab) {
     setState("ui", "agentTab", tab);
+  },
+  /** Switches the agent to its Terminal tab, the harness's own interface on
+   * the same session, and submits `input` there (a slash command). */
+  openAgentTerminal(agentId: string, input: string | null = null) {
+    actions.select({ kind: "agent", id: agentId });
+    setState("ui", { agentTab: "terminal", agentTerminal: { agentId, input, seq: (state.ui.agentTerminal?.seq ?? 0) + 1 } });
+  },
+  /** Opens the box's Terminal tab on `target`; a shell when null. */
+  openBoxTerminal(machineId: string, target: TermTarget | null) {
+    actions.openBoxTab(machineId, "terminal");
+    setState("ui", "boxTerminal", target ? { machineId, target, seq: (state.ui.boxTerminal?.seq ?? 0) + 1 } : null);
   },
   toggleCollapsed(id: string) {
     setState("ui", "collapsed", id, (v) => !v);
@@ -806,6 +827,8 @@ export const actions = {
         setState("setupRuns", id, undefined!);
         actions.closeTab({ kind: "box", id });
         actions.toast("Box deleted.", "info");
+        // Its agents stay as history, stopped; their tabs say the box is gone.
+        void api.listAgents().then((agents) => setState({ agents })).catch(() => undefined);
       }
       // The provider answers once the transition is underway; read back now
       // and again later for states that take a moment (hibernate, reboot).

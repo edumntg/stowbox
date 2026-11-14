@@ -122,8 +122,8 @@ export function pct(n: number): string {
   return `${Math.round(n)}%`;
 }
 
-/** Uptime the way `uptime` prints it, trimmed to two units. */
-export function uptime(secs: number): string {
+/** A span of time the way `uptime` prints it, trimmed to two units. */
+export function span(secs: number): string {
   if (secs < 60) return "<1m";
   const d = Math.floor(secs / 86_400);
   const h = Math.floor((secs % 86_400) / 3600);

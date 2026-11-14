@@ -25,6 +25,21 @@ pub fn command(spec: &TurnSpec) -> String {
     c
 }
 
+/// The interactive TUI on the same thread, without a prompt.
+pub fn interactive_command(spec: &TurnSpec) -> String {
+    let mut c = String::from("exec codex");
+    if let Some(s) = spec.resume_session.as_deref().filter(|s| !s.trim().is_empty()) {
+        c.push_str(&format!(" resume {}", shell_quote(s)));
+    }
+    if let Some(m) = spec.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        c.push_str(&format!(" --model {}", shell_quote(m)));
+    }
+    if spec.skip_permissions {
+        c.push_str(" --dangerously-bypass-approvals-and-sandbox");
+    }
+    c
+}
+
 #[derive(Default)]
 pub struct Parser {
     started_commands: std::collections::HashMap<String, String>,

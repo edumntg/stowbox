@@ -1438,20 +1438,67 @@ async fn setup_runs(state: State<'_, AppState>) -> CmdResult<Vec<ProvisionRun>> 
 
 // ---------------------------------------------------------------- terminals
 
+/// What a terminal runs: a login shell, the agent's harness in its own
+/// interactive UI on the agent's session, or Claude Code's sign-in.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum TermTarget {
+    Shell,
+    Agent { id: String, input: Option<String> },
+    ClaudeLogin,
+}
+
+#[tauri::command]
+async fn claude_account(state: State<'_, AppState>, machine: String) -> CmdResult<agent::account::ClaudeAccount> {
+    let p = state.provider().await?;
+    agent::account::status(&*p, &machine).await.map_err(err)
+}
+
+#[tauri::command]
+async fn set_claude_account(state: State<'_, AppState>, machine: String, own: bool) -> CmdResult<agent::account::ClaudeAccount> {
+    let p = state.provider().await?;
+    state.touch(&machine);
+    agent::account::set(&*p, &machine, own).await.map_err(err)
+}
+
 #[tauri::command]
 async fn terminal_open(
     state: State<'_, AppState>,
     machine: String,
     cols: u16,
     rows: u16,
+    target: Option<TermTarget>,
     on_data: Channel<TermEvent>,
 ) -> CmdResult<String> {
+    let script = match target.unwrap_or(TermTarget::Shell) {
+        TermTarget::Shell => "exec \"${SHELL:-bash}\" -l".to_string(),
+        TermTarget::ClaudeLogin => agent::account::login_command(),
+        TermTarget::Agent { id, input } => {
+            let a = state.agents.read().await.iter().find(|a| a.id == id).cloned().ok_or("no such agent")?;
+            if a.machine_id != machine {
+                return Err("the agent lives in another box".into());
+            }
+            if is_busy(&a.status) {
+                return Err("a turn is running in the chat; wait for it to end or stop it first".into());
+            }
+            let spec = TurnSpec {
+                harness: Some(a.harness),
+                cwd: a.cwd.clone(),
+                model: a.model.clone(),
+                resume_session: a.session_id.clone(),
+                skip_permissions: a.skip_permissions,
+                max_turns: None,
+                max_budget_usd: None,
+            };
+            agent::interactive_command(a.harness, &spec, input.as_deref())
+        }
+    };
     let p = state.provider().await?;
     let handle = p
         .exec(
             &machine,
             ExecSpec {
-                script: "exec \"${SHELL:-bash}\" -l".into(),
+                script,
                 tty: true,
                 cols: cols.max(20),
                 rows: rows.max(5),
@@ -1658,6 +1705,8 @@ pub fn run() {
             ssh_plan,
             open_in_editor,
             terminal_open,
+            claude_account,
+            set_claude_account,
             terminal_write,
             terminal_resize,
             terminal_close,

@@ -358,6 +358,21 @@ export interface AgentPush {
 
 export type TermEvent = { type: "data"; b64: string } | { type: "exit"; code: number } | { type: "error"; message: string };
 
+/** What a terminal runs: a login shell, the agent's harness in its own
+ * interactive UI on the agent's session (`input` is submitted first), or
+ * Claude Code's sign-in. */
+export type TermTarget = { kind: "shell" } | { kind: "agent"; id: string; input?: string | null } | { kind: "claude-login" };
+
+/** The Claude Code login a box uses. `own` means the box keeps its own login
+ * apart from the one boxd gives every box in the org. */
+export interface ClaudeAccount {
+  own: boolean;
+  /** A token variable's name, or "stored login"; null when none was found. */
+  source: string | null;
+  email: string | null;
+  organization: string | null;
+}
+
 export type Editor = "vscode" | "cursor";
 
 /** What opening a box in an editor would do on this computer; read only. */
@@ -556,10 +571,14 @@ export interface Api {
   sshPlan(machineId: string): Promise<SshPlan>;
   /** Sets up SSH for the box (key, link, ~/.ssh/config block), wakes it, and opens `dir` (null = home) in the editor. */
   openInEditor(machineId: string, editor: Editor, dir: string | null): Promise<EditorOpened>;
-  terminalOpen(machine: string, cols: number, rows: number, onEvent: (ev: TermEvent) => void): Promise<string>;
+  terminalOpen(machine: string, cols: number, rows: number, target: TermTarget, onEvent: (ev: TermEvent) => void): Promise<string>;
   terminalWrite(id: string, bytes: Uint8Array): Promise<void>;
   terminalResize(id: string, cols: number, rows: number): Promise<void>;
   terminalClose(id: string): Promise<void>;
+  /** Reads which Claude Code login the box uses; runs in the box, so it wakes it. */
+  claudeAccount(machine: string): Promise<ClaudeAccount>;
+  /** `own` gives the box its own login (empty until `/login`); false goes back to the org's and deletes the box's own. */
+  setClaudeAccount(machine: string, own: boolean): Promise<ClaudeAccount>;
   notifyPermission(): Promise<NotifyPermission>;
   requestNotifyPermission(): Promise<NotifyPermission>;
   showNotification(n: Notice): Promise<void>;

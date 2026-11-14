@@ -7,7 +7,9 @@ Everything the app does today, in full. The README has the short version.
   from the same data (a failed agent, a box billing with nothing to do, a
   box near its memory or disk limit, the daily spend warning, a box the
   idle guard put in standby), and one row per box with its agents
-  as state squares, CPU, memory, disk free and uptime. The numbers are read
+  as state squares, CPU, memory, disk free and age (time since boxd created
+  the box; the guest's own uptime is not used, because a box restored from
+  an image carries that image's kernel uptime). The numbers are read
   inside each running box over the exec stream, since boxd has no
   telemetry API; boxes in standby or hibernation are not touched, because
   sampling would wake them, and keep their last reading with its age.
@@ -26,7 +28,28 @@ Everything the app does today, in full. The README has the short version.
   applied, so after a drop or a restart it reconnects and picks up where it
   left off, with no line shown twice or skipped. While the box is in
   standby or hibernated the agent says so and waits instead of waking it;
-  Stop kills the turn's process group in the box.
+  Stop kills the turn's process group in the box. When a box is deleted its
+  agents stay as read-only history: the composer gives way to a "was
+  deleted" line with Remove.
+- **Agent terminal**: an agent's Terminal tab runs the harness's own
+  interactive interface (`claude --resume <session>`, `codex resume`) in
+  the agent's directory, on the same session, for what a headless turn
+  cannot do: `/login`, `/status`, `/config`, `/model` and the like. Typing
+  one of those in the chat runs it there instead (the button turns into
+  *Run in terminal*); for Codex every slash command goes there. The
+  terminal stays open while you switch back to the chat and closes before
+  a chat turn starts, so one process at a time works on the session. A turn
+  that answers "isn't available in this environment", or fails because
+  Claude Code is not signed in, offers the way into the terminal.
+- **Claude Code login per box**: boxd gives every box in an org the same
+  agent login. A box's Agents tab shows which login its Claude Code uses
+  (and the account's email when Claude Code recorded one) and can switch
+  that box to a login of its own: `~/.stowbox/claude` in the box becomes
+  `CLAUDE_CONFIG_DIR` for every Claude Code Stowbox starts there, with the
+  token variables unset, and *Sign in* runs `claude /login` in the box's
+  terminal. Sessions stay shared (`projects/` links back to
+  `~/.claude/projects`), so agents keep their conversations; going back to
+  the org login deletes the box's own.
 - **Queued messages**: while a turn runs, the composer queues what you
   write instead of sending it. Queued messages show under the transcript,
   can be edited or removed until they go out, and are sent one per turn,

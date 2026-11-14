@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
-import { actions, agentById, machineById, selectedAgent, selectedMachine, state, type Selection } from "../state/store";
+import { actions, agentBoxGone, agentById, machineById, selectedAgent, selectedMachine, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import AgentView from "./AgentView";
 import BoxView from "./BoxView";
@@ -26,7 +26,11 @@ const Tab = (p: { sel: Selection }) => {
       <button class="tab-label" style={{ display: "flex", "align-items": "center", gap: "7px", "min-width": 0 }} onClick={() => actions.select(p.sel)} title={label()}>
         <Switch>
           <Match when={p.sel.kind === "box" && machineById((p.sel as { id: string }).id)}>{(m) => <Dot status={m().status} />}</Match>
-          <Match when={p.sel.kind === "agent" && agentById((p.sel as { id: string }).id)}>{(a) => <AgentDot status={a().status} />}</Match>
+          <Match when={p.sel.kind === "agent" && agentById((p.sel as { id: string }).id)}>{(a) => (
+            <Show when={!agentBoxGone(a())} fallback={<Dot status="stopped" />}>
+              <AgentDot status={a().status} />
+            </Show>
+          )}</Match>
         </Switch>
         <Show when={p.sel.kind === "agent"} fallback={<I.Box />}>
           <I.Chat />

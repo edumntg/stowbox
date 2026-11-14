@@ -5,6 +5,7 @@
 //! Each turn runs detached in the box and is followed from files, so it
 //! outlives the exec stream that started it (see `detached`).
 
+pub mod account;
 pub mod claude;
 pub mod codex;
 pub mod detached;
@@ -253,12 +254,37 @@ pub fn parser_for(h: Harness) -> Box<dyn LineParser> {
 /// to stdin, so no prompt text ever touches shell quoting.
 pub fn turn_command(h: Harness, spec: &TurnSpec) -> String {
     let mut parts: Vec<String> = Vec::new();
+    if h == Harness::ClaudeCode {
+        parts.push(account::prelude());
+    }
     if let Some(cwd) = spec.cwd.as_deref().filter(|c| !c.trim().is_empty()) {
         parts.push(format!("cd {} &&", crate::boxd::shell_quote(cwd)));
     }
     match h {
         Harness::ClaudeCode => parts.push(claude::command(spec)),
         Harness::Codex => parts.push(codex::command(spec)),
+    }
+    parts.join(" ")
+}
+
+/// Shell line that opens the harness's own interactive UI in a terminal, on
+/// the agent's session, for what a headless turn cannot do (`/login`,
+/// `/status`, `/config`). `input`, when given, is submitted as the first
+/// message.
+pub fn interactive_command(h: Harness, spec: &TurnSpec, input: Option<&str>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if h == Harness::ClaudeCode {
+        parts.push(account::prelude());
+    }
+    if let Some(cwd) = spec.cwd.as_deref().filter(|c| !c.trim().is_empty()) {
+        parts.push(format!("cd {} &&", crate::boxd::shell_quote(cwd)));
+    }
+    parts.push(match h {
+        Harness::ClaudeCode => claude::interactive_command(spec),
+        Harness::Codex => codex::interactive_command(spec),
+    });
+    if let Some(i) = input.map(str::trim).filter(|i| !i.is_empty()) {
+        parts.push(crate::boxd::shell_quote(i));
     }
     parts.join(" ")
 }
@@ -394,10 +420,21 @@ mod tests {
             ..Default::default()
         };
         let c = turn_command(Harness::ClaudeCode, &spec);
-        assert!(c.starts_with("cd '/home/user/my app' && claude -p"));
+        assert!(c.starts_with(&account::prelude()));
+        assert!(c.contains(" cd '/home/user/my app' && claude -p"));
         assert!(c.contains("--resume sess-1"));
         assert!(c.contains("--model opus"));
         assert!(c.contains("--dangerously-skip-permissions"));
         assert!(c.contains("--output-format stream-json"));
+    }
+
+    #[test]
+    fn interactive_command_resumes_the_session_in_a_terminal() {
+        let spec = TurnSpec { cwd: Some("/w".into()), resume_session: Some("s 1".into()), ..Default::default() };
+        let c = interactive_command(Harness::ClaudeCode, &spec, Some("/login"));
+        assert!(c.starts_with(&account::prelude()));
+        assert!(c.ends_with(" cd /w && exec claude --resume 's 1' --dangerously-skip-permissions /login"), "{c}");
+        let spec = TurnSpec { skip_permissions: false, ..Default::default() };
+        assert_eq!(interactive_command(Harness::Codex, &spec, None), "exec codex");
     }
 }
