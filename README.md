@@ -271,10 +271,13 @@ Windows 10 and 11, 64-bit.
   `cargo check --workspace` on `windows-latest`. Tests of the scripts that
   run inside a box are ignored there: boxes are Linux, and `bash` on
   Windows is not the box's. `.github/workflows/windows-smoke.yml` builds
-  the app, starts it and drives it over WebDriver (tauri-driver and
-  msedgedriver against WebView2) through onboarding with an invalid key,
-  with screenshots attached to the run; it runs on pull requests that
-  change `src/`, `src-tauri/` or `package.json`, and by hand.
+  the app with WebView2's DevTools port open, starts it and drives it over
+  the DevTools protocol (`.github/scripts/windows-smoke.mjs`, no driver to
+  install) through onboarding with an invalid key, with screenshots
+  attached to the run; it runs on pull requests that change `src/`,
+  `src-tauri/` or `package.json`, and by hand. The same script runs here
+  against `pnpm dev` and a Chromium started with
+  `--remote-debugging-port=9222 --remote-allow-origins=*` (see its header).
 
 ## Develop
 

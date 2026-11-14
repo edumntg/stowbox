@@ -1,5 +1,5 @@
-# Builds the real app on Windows, starts it and drives its UI over WebDriver
-# (msedgedriver against WebView2): with no API key the
+# Builds the real app on Windows, starts it and drives its UI over the
+# DevTools protocol (WebView2's debugging port): with no API key the
 # onboarding renders, a malformed key gets the app's validation message, an
 # invalid one boxd's refusal. Screenshots of the webview and of the whole
 # screen are attached to the run. Windows minutes bill 2x on a private repo,
@@ -43,36 +43,21 @@ jobs:
           cache-on-failure: true
 
       # A release build without installers: the exe the installers carry (no
-      # console window, no devtools UI), with one change for WebDriver: its
-      # WebView2 opens a DevTools port. The app sets WebView2's browser
-      # arguments itself (Tauri's defaults), and WebView2 then ignores the
-      # WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS that msedgedriver and
-      # tauri-driver rely on, so the port goes in through the window config,
-      # next to Tauri's defaults, for this build only.
+      # console window, no devtools UI), with one change for the smoke: its
+      # WebView2 opens a DevTools port, and accepts the script's WebSocket
+      # on it. The app sets WebView2's browser arguments itself (Tauri's
+      # defaults), and WebView2 then ignores WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+      # so the port goes in through the window config, next to Tauri's
+      # defaults, for this build only.
       - name: Build the app
         shell: pwsh
         run: |
-          node -e "const c=require('./src-tauri/tauri.conf.json'); const w=c.app.windows[0]; w.additionalBrowserArgs='--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222'; require('fs').writeFileSync('smoke.conf.json', JSON.stringify({app:{windows:[w]}}))"
+          node -e "const c=require('./src-tauri/tauri.conf.json'); const w=c.app.windows[0]; w.additionalBrowserArgs='--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --remote-allow-origins=*'; require('fs').writeFileSync('smoke.conf.json', JSON.stringify({app:{windows:[w]}}))"
           Get-Content smoke.conf.json
           pnpm tauri build --no-bundle --config smoke.conf.json
 
-      # msedgedriver has to match the WebView2 runtime's version, which the
-      # runner image updates on its own schedule.
-      - name: msedgedriver for this WebView2
-        shell: pwsh
-        run: |
-          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-          $version = (Get-ItemProperty $key).pv
-          Write-Host "WebView2 runtime $version"
-          $dir = Join-Path $env:RUNNER_TEMP 'msedgedriver'
-          New-Item -ItemType Directory -Force $dir | Out-Null
-          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile "$dir\driver.zip"
-          Expand-Archive "$dir\driver.zip" -DestinationPath $dir -Force
-          & "$dir\msedgedriver.exe" --version
-          "MSEDGEDRIVER=$dir\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      # Without WebDriver first: the exe starts on its own and opens a
-      # window, whatever happens to the driven run after it.
+      # Undriven first: the exe starts on its own and opens a window,
+      # whatever happens to the driven run after it.
       - name: Launch the app alone
         shell: pwsh
         run: |
@@ -90,7 +75,7 @@ jobs:
           Start-Sleep -Seconds 3
 
       - name: Drive the app
-        run: node .github/scripts/windows-smoke.mjs target/release/stowbox.exe "$env:MSEDGEDRIVER" smoke
+        run: node .github/scripts/windows-smoke.mjs target/release/stowbox.exe smoke
 
       - name: Attach screenshots
         if: always()

@@ -825,7 +825,9 @@ export const mockApi: Api = {
     return { configured, provider: "boxd", secretBackend: "file", consoleUrl: "https://app.boxd.sh" };
   },
   async setApiKey(key) {
-    if (!key.startsWith("bxd_")) throw new Error("That does not look like a boxd API key. Keys start with bxd_.");
+    // The same shape check, and message, as the desktop shell's set_api_key.
+    const k = key.trim();
+    if (!k.startsWith("bxd_") || k.length < 20) throw new Error("That does not look like a boxd API key. Keys start with bxd_ and come from app.boxd.sh or `boxd auth keys create`.");
     return account;
   },
   async clearApiKey() {},
