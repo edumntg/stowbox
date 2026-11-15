@@ -1,6 +1,6 @@
 import { For, Show, createSignal } from "solid-js";
 import type { ProviderInfo } from "../bridge/types";
-import { actions, state } from "../state/store";
+import { actions, demo, state } from "../state/store";
 import * as I from "../icons";
 import { BrandMark } from "./common";
 
@@ -112,6 +112,24 @@ export default function Onboarding() {
         <Show when={chosen()} keyed>
           {(p) => <ProviderKeyForm provider={p} />}
         </Show>
+        <div class="onboard-demo">
+          <Show
+            when={!demo}
+            fallback={
+              <>
+                <span>This is the demo, with example data.</span>
+                <button type="button" class="btn sm" onClick={() => actions.exitDemo()}>
+                  Leave the demo
+                </button>
+              </>
+            }
+          >
+            <span>No key yet? Look around first, with example boxes and agents.</span>
+            <button type="button" class="btn sm" onClick={() => actions.startDemo()}>
+              <I.Play /> Try the demo
+            </button>
+          </Show>
+        </div>
       </div>
     </div>
   );

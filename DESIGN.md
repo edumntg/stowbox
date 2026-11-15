@@ -53,10 +53,21 @@ shadows, except the floating shadow under dialogs and toasts.
 - Main column: a tab strip with a pinned Fleet tab first, then open boxes
   and agents, each with its state dot, icon and close control, then the
   view.
-- Fleet view (the landing page, after Aaron Francis's runner dashboard):
-  four stat tiles in one bordered strip, an alerts list, "Working now" and
-  "Waiting for you" side by side, then a bordered table with one row per
-  box. Agents appear as 6x10 squares in the row, one per agent, coloured
+- Fleet view (the landing page, read top down as an inbox): first the
+  composer, a bordered card with a borderless textarea ("What should the
+  agent do?"), then one row: Claude Code and Codex as a segmented control
+  (the pressed one inverts like a primary button), where it runs (the
+  usable boxes, then "New box" per connected provider at its cheapest
+  size with the price), the directory in monospace (the box's latest
+  agent's, until typed), More options (the New agent dialog, prefilled)
+  and Start (⌘/Ctrl+Enter). One muted line under it says where it runs
+  and what it costs; while it works, the button names the step
+  ("Starting boat-new…"). Then four stat tiles in one bordered strip:
+  Needs you, Working, Running, and Cost now (the main currency big, any
+  other currency, today's spend and the count in the line under it).
+  Then NEEDS YOU: the agents waiting for a reply as rows ending in
+  "Reply", then the alerts; then WORKING NOW; then a bordered table with
+  one row per box. Sections sit 24px apart. Agents appear as 6x10 squares in the row, one per agent, coloured
   by state. CPU, memory and disk are a number over a 3px bar; the bar is
   neutral until 70% and turns orange, then red at 90%. Rows for boxes that
   are not running are muted and carry an "as of" age in orange.
@@ -182,6 +193,13 @@ shadows, except the floating shadow under dialogs and toasts.
 - OS notifications: the title names the agent and the outcome
   ("Fix the login bug finished", "Setup failed in api-dev"); the body is
   the box, or the provider's error verbatim, cut at 180 characters.
+
+- Onboarding ends, under a rule, with "No key yet? Look around first"
+  and Try the demo. The demo runs the app on the browser mock's example
+  data. A muted bar under the top bar says so on every screen ("Demo.
+  Example boxes, agents and costs; nothing here is real") with Connect a
+  provider, which leaves the demo. The numbers in it are examples by the
+  person's choice and are never shown outside it.
 
 ## Icons
 
