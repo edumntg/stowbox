@@ -27,6 +27,36 @@ use tonic::{Request, Status};
 
 pub use auth::TokenExchange;
 
+/// What boxd offers, for the UI. Everything Stowbox was first built on.
+pub fn capabilities() -> crate::capabilities::Capabilities {
+    use PowerAction::*;
+    crate::capabilities::Capabilities {
+        label: "boxd".into(),
+        console_url: DEFAULT_CONSOLE_URL.into(),
+        key_hint: "Make one at app.boxd.sh or with `boxd auth keys create stowbox`. Keys are fenced to one organization.".into(),
+        key_prefixes: vec!["bxd_".into()],
+        currency: "eur".into(),
+        power: vec![Start, Stop, Reboot, Pause, Resume, Hibernate, Wake, Destroy],
+        fork: true,
+        isolated: true,
+        auto_suspend: true,
+        auto_hibernate: true,
+        auto_stop: false,
+        custom_size: true,
+        sizes: Vec::new(),
+        https_links: true,
+        https_named: true,
+        https_list: true,
+        https_remove: true,
+        https_default_route: true,
+        port_forwards: true,
+        editor_ssh: true,
+        remote_user: crate::ssh::USER.into(),
+        remote_home: crate::ssh::REMOTE_HOME.into(),
+        metering_note: "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.".into(),
+    }
+}
+
 pub const DEFAULT_ENDPOINT: &str = "https://boxd.sh:9443";
 pub const DEFAULT_AUTH_URL: &str = "https://app.boxd.sh/api/v1/auth/token";
 pub const DEFAULT_CONSOLE_URL: &str = "https://app.boxd.sh";
@@ -100,6 +130,10 @@ impl Boxd {
 impl Provider for Boxd {
     fn id(&self) -> &'static str {
         "boxd"
+    }
+
+    fn capabilities(&self) -> crate::capabilities::Capabilities {
+        capabilities()
     }
 
     async fn whoami(&self) -> Result<Account> {
@@ -425,7 +459,7 @@ impl Provider for Boxd {
         Ok(())
     }
 
-    async fn rates(&self) -> Result<(String, Rates)> {
+    async fn rates(&self) -> Result<crate::cost::RateCard> {
         // The rate card only travels with a usage response. Ask for a window
         // that is cheap to compute: the last hour of the default org.
         let now = std::time::SystemTime::now()
@@ -438,7 +472,7 @@ impl Provider for Boxd {
             .get_org_usage(pb::GetOrgUsageRequest { org: String::new(), since: now - 3600, until: 0 })
             .await?
             .into_inner();
-        Ok((r.currency, convert::rates(r.rates)))
+        Ok(crate::cost::RateCard::resources(&r.currency, convert::rates(r.rates)))
     }
 }
 

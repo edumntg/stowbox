@@ -1303,6 +1303,37 @@ select.input {
   gap: 14px;
 }
 
+/* Name and buttons on one line, the account and key store under them. */
+.provider-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 28px;
+  font-size: var(--text-xs);
+}
+
+.provider-row .provider-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.provider-row .faint {
+  order: 1;
+  flex-basis: 100%;
+  min-width: 0;
+  padding-left: 16px;
+}
+
+.key-form {
+  display: grid;
+  gap: 10px;
+}
+
+.choices.two {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .onboard-card h1 {
   margin: 0;
   font-size: 20px;

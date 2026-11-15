@@ -15,11 +15,12 @@
 
 <p align="center"><b>A desktop cockpit for cloud boxes and the coding agents running in them.</b></p>
 
-Stowbox talks to [boxd](https://boxd.sh) with your own API key, from your computer.
-It shows your boxes with a live cost estimate, runs Claude Code or Codex inside
-them, one terminal and one session per agent, opens a shell in any box, and
-pauses, hibernates, forks or deletes a box from the same window. There is no
-Stowbox server: the key and the boxes never leave your machine and boxd.
+Stowbox talks to [boxd](https://boxd.sh) and [boat](https://boat.dev) with your
+own API keys, from your computer; connect one or both. It shows your boxes with a
+live cost estimate, runs Claude Code or Codex inside them, one terminal and one
+session per agent, opens a shell in any box, and pauses, stops, forks or deletes
+a box from the same window, with whatever each provider supports. There is no
+Stowbox server: the keys and the boxes never leave your machine and the provider.
 
 Built with Tauri 2 (Rust) and SolidJS: it starts in a blink and idles at a few
 tens of megabytes.
@@ -146,10 +147,12 @@ SmartScreen asks once: More info, Run anyway. Windows 10 may need the
 [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/),
 which the installer fetches when it is missing.
 
-On first launch the app asks for a boxd API key (`bxd_…`), created at
-[app.boxd.sh](https://app.boxd.sh) or with `boxd auth keys create stowbox`.
-It goes to the OS keychain (Windows Credential Manager on Windows) and never
-to a Stowbox server.
+On first launch the app asks for an API key: boxd (`bxd_…`, from
+[app.boxd.sh](https://app.boxd.sh) or `boxd auth keys create stowbox`) or boat
+(`boat_…`, from the boat dashboard or `boat api-key create stowbox`, with the
+ssh action). The other one can be added later in Settings. Keys go to the OS
+keychain (Windows Credential Manager on Windows) and never to a Stowbox server.
+What differs between the two providers is in [docs/boat.md](docs/boat.md).
 
 Platform notes for Windows (OpenSSH for the editor integration, where secrets
 live, CI): [docs/windows.md](docs/windows.md).
@@ -180,4 +183,4 @@ No license has been chosen for this repository yet.
 
 Icons are [Phosphor Icons](https://phosphoricons.com) (bold weight), MIT,
 inlined in `src/icons`. Terminal rendering by [xterm.js](https://xtermjs.org).
-Boxes by [boxd](https://boxd.sh).
+Boxes by [boxd](https://boxd.sh) and [boat](https://boat.dev).

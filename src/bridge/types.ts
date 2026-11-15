@@ -7,6 +7,7 @@ export type MachineStatus =
   | "running"
   | "suspended"
   | "hibernated"
+  | "stopping"
   | "stopped"
   | "failed"
   | "migrating"
@@ -14,6 +15,10 @@ export type MachineStatus =
 
 export interface Machine {
   id: string;
+  /** The provider that owns the box: "boxd" or "boat". */
+  provider: string;
+  /** The provider's size name for fixed-size providers ("default"), else "". */
+  size: string;
   name: string;
   status: MachineStatus;
   vcpu: number;
@@ -35,6 +40,8 @@ export interface Machine {
   autoSuspendSecs: number;
   autoHibernateSecs: number;
   autoDestroySecs: number;
+  /** When the provider stops the box on its own, unix seconds; 0 is never or not reported. */
+  autoStopAt: number;
   estHourlyMicro: number;
   currency: string;
 }
@@ -95,6 +102,58 @@ export interface MachineMetrics {
 export interface RateCard {
   currency: string;
   rates: Rates;
+  /** Per running hour, for providers that sell fixed sizes. */
+  sizes: { size: string; hourlyMicro: number }[];
+}
+
+/** One size on a fixed menu. Mirrors core capabilities::SizeOption. */
+export interface SizeOption {
+  id: string;
+  vcpu: number;
+  memoryBytes: number;
+  diskBytes: number;
+  hourlyMicro: number;
+  note: string;
+}
+
+/** What a provider supports. Mirrors core capabilities::Capabilities. */
+export interface Capabilities {
+  label: string;
+  consoleUrl: string;
+  keyHint: string;
+  keyPrefixes: string[];
+  currency: string;
+  power: PowerAction[];
+  fork: boolean;
+  isolated: boolean;
+  autoSuspend: boolean;
+  autoHibernate: boolean;
+  autoStop: boolean;
+  customSize: boolean;
+  sizes: SizeOption[];
+  httpsLinks: boolean;
+  httpsNamed: boolean;
+  httpsList: boolean;
+  httpsRemove: boolean;
+  httpsDefaultRoute: boolean;
+  portForwards: boolean;
+  editorSsh: boolean;
+  remoteUser: string;
+  remoteHome: string;
+  meteringNote: string;
+}
+
+export interface ProviderInfo {
+  id: string;
+  connected: boolean;
+  secretBackend: "keyring" | "file" | null;
+  capabilities: Capabilities;
+}
+
+/** Every listing call answers with the boxes of the providers that answered. */
+export interface MachineList {
+  machines: Machine[];
+  errors: { provider: string; message: string }[];
 }
 
 export interface OrgBilling {
@@ -112,7 +171,13 @@ export interface OrgBilling {
 export type PowerAction = "start" | "stop" | "reboot" | "pause" | "resume" | "hibernate" | "wake" | "destroy";
 
 export interface CreateSpec {
+  /** Which connected provider makes the box. */
+  provider?: string | null;
   name?: string | null;
+  /** A size from the provider's menu, for providers without free sizes. */
+  size?: string | null;
+  /** Auto-stop after this many seconds; 0 is never. Only for providers with autoStop. */
+  autoStopSecs?: number | null;
   vcpu?: number | null;
   memoryBytes?: number | null;
   isolated: boolean;
@@ -366,10 +431,9 @@ export interface EditorOpened {
 }
 
 export interface ProviderStatus {
+  /** At least one provider is connected. */
   configured: boolean;
-  provider: string;
-  secretBackend: "keyring" | "file" | null;
-  consoleUrl: string;
+  providers: ProviderInfo[];
 }
 
 /** Mirrors stowbox_core::guard::IdlePolicy. `idleMinutes` 0 is off. */
@@ -392,6 +456,8 @@ export interface GuardEntry {
 export interface GuardOutcome {
   verdict: GuardVerdict;
   suspended: boolean;
+  /** The provider has no standby, so the box was stopped instead. */
+  stopped: boolean;
   machineName: string;
   hourlyBeforeMicro: number;
   hourlyAfterMicro: number;
@@ -404,7 +470,7 @@ export interface GuardOutcome {
 export type SpendCheck = (
   | { basis: "metered"; totalMicro: number; complete: boolean }
   | { basis: "projected"; hourlyMicro: number; why: string }
-) & { amountMicro: number; limitMicro: number; currency: string; over: boolean };
+) & { amountMicro: number; limitMicro: number; currency: string; over: boolean; excluded: string[] };
 
 /** One HTTPS route into a box (a boxd proxy). Mirrors core ports::HttpsRoute. */
 export interface HttpsRoute {
@@ -446,26 +512,30 @@ export interface Listening {
 
 export interface Api {
   providerStatus(): Promise<ProviderStatus>;
-  setApiKey(key: string): Promise<Account>;
-  clearApiKey(): Promise<void>;
-  whoami(): Promise<Account>;
-  listMachines(): Promise<Machine[]>;
+  /** Checks the key with the provider and keeps it; other providers stay connected. */
+  setApiKey(provider: string, key: string): Promise<Account>;
+  /** Forgets one provider's key, or every key when `provider` is null. */
+  clearApiKey(provider: string | null): Promise<void>;
+  whoami(provider: string): Promise<Account>;
+  listMachines(): Promise<MachineList>;
   getMachine(id: string): Promise<Machine>;
   createMachine(spec: CreateSpec, presetId?: string | null, variables?: VariableValues | null): Promise<Machine>;
   forkMachine(source: string, name: string | null): Promise<Machine>;
   machinePower(id: string, action: PowerAction): Promise<void>;
   machineUsage(id: string): Promise<Usage>;
+  /** Stops the box `secs` from now; 0 turns auto-stop off. */
+  setAutoStop(id: string, secs: number): Promise<Machine>;
   machineMetrics(id: string): Promise<MachineMetrics | null>;
-  orgBilling(org: string): Promise<OrgBilling>;
-  rates(): Promise<RateCard>;
+  orgBilling(provider: string, org: string): Promise<OrgBilling>;
+  rates(provider: string): Promise<RateCard>;
   /** One verdict per box from the idle guard. Nothing is suspended here. */
   guardCheck(policy: IdlePolicy): Promise<GuardEntry[]>;
   /** Decides again from fresh state and suspends only if still idle. */
   guardSuspend(machineId: string, policy: IdlePolicy): Promise<GuardOutcome>;
   /** Restarts the box's idle clock (Undo on the countdown). */
   guardTouch(machineId: string): Promise<void>;
-  /** `since` is local midnight, unix seconds. */
-  spendToday(since: number, limitMicro: number): Promise<SpendCheck>;
+  /** `since` is local midnight, unix seconds; `currency` is the limit's. */
+  spendToday(since: number, limitMicro: number, currency: string | null): Promise<SpendCheck>;
   listAgents(): Promise<AgentMeta[]>;
   createAgent(spec: NewAgent): Promise<AgentMeta>;
   /** Copies a file into the box; the terminal gets its path typed. */

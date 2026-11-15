@@ -755,6 +755,9 @@ mod tests {
         fn id(&self) -> &'static str {
             "boxd"
         }
+        fn capabilities(&self) -> crate::capabilities::Capabilities {
+            crate::boxd::capabilities()
+        }
         async fn whoami(&self) -> Result<crate::types::Account> {
             unimplemented!()
         }
@@ -788,7 +791,7 @@ mod tests {
         async fn org_billing(&self, _: &str) -> Result<crate::types::OrgBilling> {
             unimplemented!()
         }
-        async fn rates(&self) -> Result<(String, crate::types::Rates)> {
+        async fn rates(&self) -> Result<crate::cost::RateCard> {
             unimplemented!()
         }
         async fn link_ssh_key(&self, pubkey: &str, device_id: &str, _: &str) -> Result<()> {

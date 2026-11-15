@@ -1,6 +1,9 @@
-//! The surface the desktop shell programs against. boxd is the first
-//! implementation; boat.dev and Cloudflare Sandboxes can slot in behind it.
+//! The surface the desktop shell programs against: boxd and boat.dev today.
+//! What each one supports is in [`Capabilities`]; a call it does not
+//! support returns an error that says so.
 
+use crate::capabilities::Capabilities;
+use crate::cost::RateCard;
 use crate::ports::{HttpsRoute, PortForward};
 use crate::types::*;
 use crate::Result;
@@ -9,6 +12,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn id(&self) -> &'static str;
+    fn capabilities(&self) -> Capabilities;
 
     async fn whoami(&self) -> Result<Account>;
     async fn list_machines(&self) -> Result<Vec<Machine>>;
@@ -18,6 +22,10 @@ pub trait Provider: Send + Sync {
     async fn power(&self, id: &str, action: PowerAction) -> Result<()>;
     async fn set_auto_hibernate(&self, id: &str, secs: u32) -> Result<()>;
     async fn set_auto_suspend(&self, id: &str, secs: u32) -> Result<()>;
+    /// Stops the box `secs` from now; 0 turns auto-stop off.
+    async fn set_auto_stop(&self, _id: &str, _secs: u32) -> Result<()> {
+        Err(crate::Error::Provider(format!("{} has no auto-stop", self.id())))
+    }
     async fn exec(&self, id: &str, spec: ExecSpec) -> Result<ExecHandle>;
 
     async fn machine_usage(&self, id: &str) -> Result<Usage>;
@@ -28,7 +36,7 @@ pub trait Provider: Send + Sync {
         Err(crate::Error::Provider(format!("{} does not report usage", self.id())))
     }
     /// The live rate card, used for the €/h estimate in the sidebar.
-    async fn rates(&self) -> Result<(String, Rates)>;
+    async fn rates(&self) -> Result<RateCard>;
 
     /// Live CPU, memory, disk and uptime, read inside the box. `None` when
     /// the box is not running: sampling would wake it. Providers with a

@@ -13,6 +13,8 @@ pub enum MachineStatus {
     /// memory kept warm, no vCPU billed.
     Suspended,
     Hibernated,
+    /// Going down: boat saves the disk before it reports `stopped`.
+    Stopping,
     Stopped,
     Failed,
     Migrating,
@@ -27,6 +29,7 @@ impl MachineStatus {
             "running" => Self::Running,
             "suspended" | "standby" => Self::Suspended,
             "hibernated" => Self::Hibernated,
+            "stopping" => Self::Stopping,
             "stopped" => Self::Stopped,
             "failed" => Self::Failed,
             "migrating" => Self::Migrating,
@@ -44,6 +47,13 @@ impl MachineStatus {
 #[serde(rename_all = "camelCase")]
 pub struct Machine {
     pub id: String,
+    /// The provider that owns the box: "boxd" or "boat". Filled by the
+    /// provider, so the shell can route every call about the box.
+    #[serde(default)]
+    pub provider: String,
+    /// The provider's size name for fixed-size providers ("default"), else "".
+    #[serde(default)]
+    pub size: String,
     pub name: String,
     pub status: MachineStatus,
     pub vcpu: u32,
@@ -66,6 +76,10 @@ pub struct Machine {
     pub auto_suspend_secs: u32,
     pub auto_hibernate_secs: u32,
     pub auto_destroy_secs: u32,
+    /// When the provider stops the box on its own, unix seconds; 0 is never
+    /// or not reported.
+    #[serde(default)]
+    pub auto_stop_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,7 +184,17 @@ pub enum PowerAction {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSpec {
+    /// Which connected provider makes the box; None is the only one.
+    #[serde(default)]
+    pub provider: Option<String>,
     pub name: Option<String>,
+    /// A size from the provider's menu, for providers without free sizes.
+    #[serde(default)]
+    pub size: Option<String>,
+    /// Auto-stop after this many seconds; Some(0) is never, None is the
+    /// provider's default. Only for providers with `auto_stop`.
+    #[serde(default)]
+    pub auto_stop_secs: Option<u32>,
     pub vcpu: Option<u32>,
     pub memory_bytes: Option<u64>,
     pub isolated: bool,

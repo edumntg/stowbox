@@ -1,6 +1,8 @@
 //! The desktop shell: owns the provider connection, the on-disk store, the
 //! live terminals and the agent turns, and exposes them to the UI as Tauri
-//! commands. Nothing here knows about boxd specifically; that lives in core.
+//! commands. Nothing here knows about one provider specifically: boxd and
+//! boat live in core, and every call about a box goes to the provider the
+//! registry says owns it.
 
 mod secrets;
 
@@ -10,8 +12,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stowbox_core::agent::{self, session, AgentMeta, Harness};
+use stowbox_core::boat::{Boat, BoatConfig};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
-use stowbox_core::cost;
+use stowbox_core::capabilities::Capabilities;
+use stowbox_core::cost::{self, RateCard};
 use stowbox_core::git::{self, GitReview, PrOutcome};
 use stowbox_core::guard::{self, BoxActivity, IdlePolicy, IdleWatch, SpendCheck, SpendFigure, Verdict};
 use stowbox_core::metrics::MachineMetrics;
@@ -19,6 +23,7 @@ use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::ports;
 use stowbox_core::provider::Provider;
 use stowbox_core::provision::{self, Preset, Prepared, ProvisionRun, RunEvent, Variable};
+use stowbox_core::registry::Registry;
 use stowbox_core::ssh;
 use stowbox_core::store::Store;
 use stowbox_core::types::*;
@@ -38,10 +43,32 @@ struct RunHandle {
     abort: AbortHandle,
 }
 
+/// Every provider Stowbox can drive, in the order the UI lists them.
+const PROVIDERS: &[&str] = &["boxd", "boat"];
+
+fn capabilities_of(id: &str) -> Option<Capabilities> {
+    match id {
+        "boxd" => Some(stowbox_core::boxd::capabilities()),
+        "boat" => Some(stowbox_core::boat::capabilities()),
+        _ => None,
+    }
+}
+
+/// A client for `id` with `key`. Must run inside the Tokio runtime: boxd's
+/// lazy gRPC channel binds to the runtime it is made in.
+fn make_provider(id: &str, key: String, data_dir: &std::path::Path) -> CmdResult<Arc<dyn Provider>> {
+    Ok(match id {
+        "boxd" => Arc::new(Boxd::new(key, BoxdConfig::default()).map_err(err)?),
+        "boat" => Arc::new(Boat::new(key, BoatConfig::new(data_dir.join("ssh").join("boat_ed25519"))).map_err(err)?),
+        other => return Err(format!("Stowbox does not know the provider {other}")),
+    })
+}
+
 struct AppState {
-    provider: RwLock<Option<Arc<dyn Provider>>>,
-    secrets: secrets::Secrets,
-    secret_backend: RwLock<Option<secrets::Backend>>,
+    providers: Registry,
+    /// The API key store of each provider in `PROVIDERS`.
+    secrets: HashMap<&'static str, secrets::Secrets>,
+    secret_backend: RwLock<HashMap<String, secrets::Backend>>,
     store: Store,
     agents: RwLock<Vec<AgentMeta>>,
     /// What each agent's box last showed, by agent id.
@@ -51,7 +78,8 @@ struct AppState {
     /// Running state watches, by machine id.
     watches: Mutex<HashMap<String, AbortHandle>>,
     terminals: Mutex<HashMap<String, RunHandle>>,
-    rates: RwLock<Option<(String, Rates)>>,
+    /// Each provider's rate card, by provider id, once read.
+    rates: RwLock<HashMap<String, RateCard>>,
     presets: RwLock<Vec<Preset>>,
     preset_secrets: secrets::PresetSecrets,
     /// The latest setup run per box, finished or not.
@@ -79,23 +107,41 @@ fn now_ms() -> i64 {
 }
 
 impl AppState {
-    async fn provider(&self) -> CmdResult<Arc<dyn Provider>> {
-        self.provider.read().await.clone().ok_or_else(|| stowbox_core::Error::NotConfigured.to_string())
+    /// The provider that owns the box.
+    async fn owner(&self, machine_id: &str) -> CmdResult<Arc<dyn Provider>> {
+        self.providers.owner(machine_id).await.map_err(err)
     }
 
-    async fn rates(&self, p: &Arc<dyn Provider>) -> (String, Rates) {
-        if let Some(r) = self.rates.read().await.clone() {
+    /// A connected provider by id; `None` or "" is the only one connected.
+    fn named(&self, provider: Option<&str>) -> CmdResult<Arc<dyn Provider>> {
+        match provider.filter(|p| !p.is_empty()) {
+            Some(id) => self.providers.get(id).ok_or_else(|| format!("{id} is not connected")),
+            None => self.providers.for_create(None).map_err(err),
+        }
+    }
+
+    async fn card(&self, p: &Arc<dyn Provider>) -> RateCard {
+        if let Some(r) = self.rates.read().await.get(p.id()).cloned() {
             return r;
         }
-        let fetched = p.rates().await.ok().filter(|(_, r)| r.vcpu_hour_micro > 0);
-        let r = fetched.unwrap_or_else(|| ("eur".to_string(), cost::BOXD_PUBLISHED_EUR));
-        *self.rates.write().await = Some(r.clone());
+        let fetched = p.rates().await.ok().filter(RateCard::is_priced);
+        let r = match fetched {
+            Some(r) => r,
+            // boxd's published card until the live one is readable.
+            None if p.id() == "boxd" => RateCard::resources("eur", cost::BOXD_PUBLISHED_EUR),
+            None => return RateCard { currency: p.capabilities().currency, ..Default::default() },
+        };
+        self.rates.write().await.insert(p.id().to_string(), r.clone());
         r
     }
 
     async fn view(&self, p: &Arc<dyn Provider>, m: Machine) -> MachineView {
-        let (currency, rates) = self.rates(p).await;
-        MachineView { est_hourly_micro: cost::hourly_micro(&m, &rates), currency, machine: m }
+        let card = self.card(p).await;
+        MachineView { est_hourly_micro: card.hourly_micro(&m), currency: card.currency, machine: m }
+    }
+
+    async fn configured(&self) -> bool {
+        !self.providers.is_empty()
     }
 
     /// Something the person did in the box restarts its idle clock.
@@ -161,11 +207,34 @@ struct MachineView {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProviderStatus {
-    configured: bool,
-    provider: &'static str,
+struct ProviderInfo {
+    id: &'static str,
+    connected: bool,
     secret_backend: Option<secrets::Backend>,
-    console_url: String,
+    capabilities: Capabilities,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderStatus {
+    /// At least one provider is connected.
+    configured: bool,
+    providers: Vec<ProviderInfo>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderError {
+    provider: String,
+    message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MachineList {
+    machines: Vec<MachineView>,
+    /// Providers whose listing failed; their boxes are missing from `machines`.
+    errors: Vec<ProviderError>,
 }
 
 #[derive(Serialize, Clone)]
@@ -204,62 +273,91 @@ fn yes() -> bool {
 
 #[tauri::command]
 async fn provider_status(state: State<'_, AppState>) -> CmdResult<ProviderStatus> {
-    Ok(ProviderStatus {
-        configured: state.provider.read().await.is_some(),
-        provider: "boxd",
-        secret_backend: *state.secret_backend.read().await,
-        console_url: BoxdConfig::default().console_url,
-    })
+    let backends = state.secret_backend.read().await.clone();
+    let providers = PROVIDERS
+        .iter()
+        .map(|id| ProviderInfo {
+            id,
+            connected: state.providers.get(id).is_some(),
+            secret_backend: backends.get(*id).copied(),
+            capabilities: capabilities_of(id).expect("every listed provider has capabilities"),
+        })
+        .collect();
+    Ok(ProviderStatus { configured: state.configured().await, providers })
 }
 
+/// Checks the key with the provider, then keeps it. Connecting a second
+/// provider leaves the first one connected.
 #[tauri::command]
-async fn set_api_key(state: State<'_, AppState>, key: String) -> CmdResult<Account> {
+async fn set_api_key(state: State<'_, AppState>, provider: Option<String>, key: String) -> CmdResult<Account> {
+    let id = provider.unwrap_or_else(|| "boxd".into());
+    let caps = capabilities_of(&id).ok_or_else(|| format!("Stowbox does not know the provider {id}"))?;
     let key = key.trim().to_string();
-    if !key.starts_with("bxd_") || key.len() < 20 {
-        return Err("That does not look like a boxd API key. Keys start with bxd_ and come from app.boxd.sh or `boxd auth keys create`.".into());
+    if !caps.key_prefixes.iter().any(|p| key.starts_with(p.as_str())) || key.len() < 20 {
+        return Err(format!("That does not look like a {} API key. Keys start with {}. {}", caps.label, caps.key_prefixes.join(" or "), caps.key_hint));
     }
-    let provider: Arc<dyn Provider> = Arc::new(Boxd::new(key.clone(), BoxdConfig::default()).map_err(err)?);
-    let account = provider.whoami().await.map_err(err)?;
-    let backend = state.secrets.save(&key).map_err(|e| format!("could not store the key: {e}"))?;
-    *state.secret_backend.write().await = Some(backend);
-    *state.provider.write().await = Some(provider);
-    *state.rates.write().await = None;
+    let p = make_provider(&id, key.clone(), &state.data_dir)?;
+    let account = p.whoami().await.map_err(err)?;
+    let store = state.secrets.get(id.as_str()).ok_or("no key store for this provider")?;
+    let backend = store.save(&key).map_err(|e| format!("could not store the key: {e}"))?;
+    state.secret_backend.write().await.insert(id.clone(), backend);
+    state.providers.set(p);
+    state.rates.write().await.remove(&id);
     Ok(account)
 }
 
+/// Forgets one provider's key, or every key when `provider` is None.
 #[tauri::command]
-async fn clear_api_key(state: State<'_, AppState>) -> CmdResult<()> {
-    state.secrets.clear();
-    *state.secret_backend.write().await = None;
-    *state.provider.write().await = None;
-    *state.rates.write().await = None;
+async fn clear_api_key(state: State<'_, AppState>, provider: Option<String>) -> CmdResult<()> {
+    let ids: Vec<String> = match provider {
+        Some(id) => vec![id],
+        None => PROVIDERS.iter().map(|s| s.to_string()).collect(),
+    };
+    for id in ids {
+        if let Some(s) = state.secrets.get(id.as_str()) {
+            s.clear();
+        }
+        state.secret_backend.write().await.remove(&id);
+        state.providers.remove(&id);
+        state.rates.write().await.remove(&id);
+    }
     Ok(())
 }
 
 #[tauri::command]
-async fn whoami(state: State<'_, AppState>) -> CmdResult<Account> {
-    state.provider().await?.whoami().await.map_err(err)
+async fn whoami(state: State<'_, AppState>, provider: Option<String>) -> CmdResult<Account> {
+    state.named(provider.as_deref())?.whoami().await.map_err(err)
 }
 
 // ---------------------------------------------------------------- machines
 
+/// Every connected provider's boxes. A provider that fails is reported in
+/// `errors` and its boxes are left out; only when all of them fail is the
+/// whole call an error.
 #[tauri::command]
-async fn list_machines(state: State<'_, AppState>) -> CmdResult<Vec<MachineView>> {
-    let p = state.provider().await?;
-    let machines = p.list_machines().await.map_err(err)?;
-    state.observe(&machines);
-    let mut out = Vec::with_capacity(machines.len());
-    for m in machines {
+async fn list_machines(state: State<'_, AppState>) -> CmdResult<MachineList> {
+    if !state.configured().await {
+        return Err(stowbox_core::Error::NotConfigured.to_string());
+    }
+    let listing = state.providers.list_machines().await;
+    if listing.machines.is_empty() && !listing.errors.is_empty() && listing.errors.len() == state.providers.all().len() {
+        let msgs: Vec<String> = listing.errors.iter().map(|(id, e)| format!("{id}: {e}")).collect();
+        return Err(msgs.join("; "));
+    }
+    state.observe(&listing.machines);
+    let mut out = Vec::with_capacity(listing.machines.len());
+    for m in listing.machines {
+        let Some(p) = state.providers.get(&m.provider) else { continue };
         out.push(state.view(&p, m).await);
     }
-    out.sort_by(|a, b| a.machine.name.cmp(&b.machine.name));
-    Ok(out)
+    out.sort_by(|a, b| a.machine.name.cmp(&b.machine.name).then_with(|| a.machine.provider.cmp(&b.machine.provider)));
+    let errors = listing.errors.into_iter().map(|(id, e)| ProviderError { provider: id.to_string(), message: e.to_string() }).collect();
+    Ok(MachineList { machines: out, errors })
 }
 
 #[tauri::command]
 async fn get_machine(state: State<'_, AppState>, id: String) -> CmdResult<MachineView> {
-    let p = state.provider().await?;
-    let m = p.get_machine(&id).await.map_err(err)?;
+    let (p, m) = state.providers.get_machine(&id).await.map_err(err)?;
     Ok(state.view(&p, m).await)
 }
 
@@ -275,12 +373,12 @@ async fn create_machine(
     preset_id: Option<String>,
     variables: Option<HashMap<String, String>>,
 ) -> CmdResult<MachineView> {
-    let p = state.provider().await?;
+    let p = state.providers.for_create(spec.provider.as_deref()).map_err(err)?;
     let setup = match preset_id.filter(|id| !id.is_empty()) {
         Some(id) => Some(prepare_setup(&state, &id, &variables.unwrap_or_default()).await?),
         None => None,
     };
-    let m = p.create_machine(spec).await.map_err(err)?;
+    let m = state.providers.adopt(&p, p.create_machine(spec).await.map_err(err)?);
     if let Some(setup) = setup {
         start_setup(&app, &state, p.clone(), &m, setup).await?;
     }
@@ -289,16 +387,20 @@ async fn create_machine(
 
 #[tauri::command]
 async fn fork_machine(state: State<'_, AppState>, source: String, name: Option<String>) -> CmdResult<MachineView> {
-    let p = state.provider().await?;
-    let m = p.fork_machine(&source, name).await.map_err(err)?;
+    let p = state.owner(&source).await?;
+    let m = state.providers.adopt(&p, p.fork_machine(&source, name).await.map_err(err)?);
     Ok(state.view(&p, m).await)
 }
 
 #[tauri::command]
 async fn machine_power(state: State<'_, AppState>, id: String, action: PowerAction) -> CmdResult<()> {
-    let p = state.provider().await?;
+    let p = state.owner(&id).await?;
+    if !p.capabilities().supports(action) {
+        return Err(format!("{} boxes cannot {}", p.capabilities().label, format!("{action:?}").to_lowercase()));
+    }
     p.power(&id, action).await.map_err(err)?;
     if action == PowerAction::Destroy {
+        state.providers.forget(&id);
         if let Some(h) = state.setups.lock().await.remove(&id) {
             h.abort();
         }
@@ -321,33 +423,34 @@ async fn machine_power(state: State<'_, AppState>, id: String, action: PowerActi
 
 #[tauri::command]
 async fn machine_usage(state: State<'_, AppState>, id: String) -> CmdResult<Usage> {
-    state.provider().await?.machine_usage(&id).await.map_err(err)
+    state.owner(&id).await?.machine_usage(&id).await.map_err(err)
 }
 
 /// One live sample from inside the box, or `None` when the box is not
 /// running and was left alone. Called per box by the fleet view.
 #[tauri::command]
 async fn machine_metrics(state: State<'_, AppState>, id: String) -> CmdResult<Option<MachineMetrics>> {
-    state.provider().await?.metrics(&id).await.map_err(err)
+    state.owner(&id).await?.metrics(&id).await.map_err(err)
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RateCard {
-    currency: String,
-    rates: Rates,
+/// Stops the box `secs` from now, or never with 0, for providers with auto-stop.
+#[tauri::command]
+async fn set_auto_stop(state: State<'_, AppState>, id: String, secs: u32) -> CmdResult<MachineView> {
+    let p = state.owner(&id).await?;
+    p.set_auto_stop(&id, secs).await.map_err(err)?;
+    let m = state.providers.adopt(&p, p.get_machine(&id).await.map_err(err)?);
+    Ok(state.view(&p, m).await)
 }
 
 #[tauri::command]
-async fn rates(state: State<'_, AppState>) -> CmdResult<RateCard> {
-    let p = state.provider().await?;
-    let (currency, rates) = state.rates(&p).await;
-    Ok(RateCard { currency, rates })
+async fn rates(state: State<'_, AppState>, provider: Option<String>) -> CmdResult<RateCard> {
+    let p = state.named(provider.as_deref())?;
+    Ok(state.card(&p).await)
 }
 
 #[tauri::command]
-async fn org_billing(state: State<'_, AppState>, org: String) -> CmdResult<OrgBilling> {
-    state.provider().await?.org_billing(&org).await.map_err(err)
+async fn org_billing(state: State<'_, AppState>, provider: Option<String>, org: String) -> CmdResult<OrgBilling> {
+    state.named(provider.as_deref())?.org_billing(&org).await.map_err(err)
 }
 
 // ---------------------------------------------------------------- cost guards
@@ -366,8 +469,7 @@ struct GuardEntry {
 
 #[tauri::command]
 async fn guard_check(state: State<'_, AppState>, policy: IdlePolicy) -> CmdResult<Vec<GuardEntry>> {
-    let p = state.provider().await?;
-    let machines = p.list_machines().await.map_err(err)?;
+    let machines = state.providers.list_machines().await.machines;
     state.observe(&machines);
     let now = now_ms();
     let mut out = Vec::new();
@@ -385,6 +487,8 @@ struct GuardOutcome {
     /// the box was left running.
     verdict: Verdict,
     suspended: bool,
+    /// The provider has no standby, so the box was stopped instead.
+    stopped: bool,
     machine_name: String,
     /// The estimate before and after, from the rate card.
     hourly_before_micro: i64,
@@ -394,20 +498,21 @@ struct GuardOutcome {
 
 #[tauri::command]
 async fn guard_suspend(state: State<'_, AppState>, machine_id: String, policy: IdlePolicy) -> CmdResult<GuardOutcome> {
-    let p = state.provider().await?;
-    let m = p.get_machine(&machine_id).await.map_err(err)?;
+    let (p, m) = state.providers.get_machine(&machine_id).await.map_err(err)?;
     state.observe(std::slice::from_ref(&m));
     let verdict = guard::decide(&state.activity(&m).await, &policy, now_ms());
-    let (currency, rates) = state.rates(&p).await;
-    let hourly_before_micro = cost::hourly_micro(&m, &rates);
+    let card = state.card(&p).await;
+    let hourly_before_micro = card.hourly_micro(&m);
     let suspended = matches!(verdict, Verdict::Suspend { .. });
+    // Standby where the provider has it; a provider without it (boat) is stopped.
+    let (action, after) = if p.capabilities().supports(PowerAction::Pause) { (PowerAction::Pause, MachineStatus::Suspended) } else { (PowerAction::Stop, MachineStatus::Stopped) };
     let hourly_after_micro = if suspended {
-        p.power(&m.id, PowerAction::Pause).await.map_err(err)?;
-        cost::hourly_micro(&Machine { status: MachineStatus::Suspended, ..m.clone() }, &rates)
+        p.power(&m.id, action).await.map_err(err)?;
+        card.hourly_micro(&Machine { status: after, ..m.clone() })
     } else {
         hourly_before_micro
     };
-    Ok(GuardOutcome { verdict, suspended, machine_name: m.name, hourly_before_micro, hourly_after_micro, currency })
+    Ok(GuardOutcome { verdict, suspended, stopped: suspended && action == PowerAction::Stop, machine_name: m.name, hourly_before_micro, hourly_after_micro, currency: card.currency })
 }
 
 /// Undo on the countdown: the box counts as used just now.
@@ -417,24 +522,41 @@ async fn guard_touch(state: State<'_, AppState>, machine_id: String) -> CmdResul
     Ok(())
 }
 
-/// Today's spend against `limit_micro`. `since` is local midnight in unix
-/// seconds, which only the UI knows. boxd's meter needs an org admin; any
-/// other key gets the current hourly estimate projected over a day.
+/// Today's spend against `limit_micro`, in `currency` (the limit's). `since`
+/// is local midnight in unix seconds, which only the UI knows. A provider's
+/// meter counts when it is readable (boxd's needs an org admin); otherwise
+/// its boxes' current hourly estimate counts, projected over a day.
+/// Providers that bill in another currency are named in `excluded`.
 #[tauri::command]
-async fn spend_today(state: State<'_, AppState>, since: i64, limit_micro: i64) -> CmdResult<SpendCheck> {
-    let p = state.provider().await?;
-    let (rate_currency, rates) = state.rates(&p).await;
-    match p.org_usage("", since, 0).await {
-        Ok(u) => {
-            let currency = if u.currency.is_empty() { rate_currency } else { u.currency };
-            Ok(guard::check_spend(SpendFigure::Metered { total_micro: u.total_cost_micro, complete: u.complete }, limit_micro, &currency))
-        }
-        Err(e) => {
-            let machines = p.list_machines().await.map_err(err)?;
-            let hourly_micro = machines.iter().map(|m| cost::hourly_micro(m, &rates)).sum();
-            Ok(guard::check_spend(SpendFigure::Projected { hourly_micro, why: e.to_string() }, limit_micro, &rate_currency))
-        }
+async fn spend_today(state: State<'_, AppState>, since: i64, limit_micro: i64, currency: Option<String>) -> CmdResult<SpendCheck> {
+    let providers = state.providers.all();
+    if providers.is_empty() {
+        return Err(stowbox_core::Error::NotConfigured.to_string());
     }
+    let mut cards = Vec::new();
+    for p in &providers {
+        cards.push(state.card(p).await);
+    }
+    let currency = currency.filter(|c| !c.is_empty()).unwrap_or_else(|| cards[0].currency.clone());
+    let mut figures = Vec::new();
+    let mut excluded = Vec::new();
+    for (p, card) in providers.iter().zip(&cards) {
+        if !card.currency.eq_ignore_ascii_case(&currency) {
+            excluded.push(p.capabilities().label);
+            continue;
+        }
+        let figure = match p.org_usage("", since, 0).await {
+            Ok(u) => SpendFigure::Metered { total_micro: u.total_cost_micro, complete: u.complete },
+            Err(e) => {
+                let machines = p.list_machines().await.map_err(err)?;
+                SpendFigure::Projected { hourly_micro: machines.iter().map(|m| card.hourly_micro(m)).sum(), why: e.to_string() }
+            }
+        };
+        figures.push(figure);
+    }
+    let mut check = guard::check_spend(guard::combine(figures), limit_micro, &currency);
+    check.excluded = excluded;
+    Ok(check)
 }
 
 // ---------------------------------------------------------------- git review
@@ -445,28 +567,28 @@ async fn spend_today(state: State<'_, AppState>, since: i64, limit_micro: i64) -
 #[tauri::command]
 async fn git_review(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<GitReview> {
     state.touch(&machine_id);
-    let p = state.provider().await?;
+    let p = state.owner(&machine_id).await?;
     git::review(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
 }
 
 #[tauri::command]
 async fn git_commit(state: State<'_, AppState>, machine_id: String, cwd: Option<String>, message: String) -> CmdResult<String> {
     state.touch(&machine_id);
-    let p = state.provider().await?;
+    let p = state.owner(&machine_id).await?;
     git::commit(p.as_ref(), &machine_id, cwd.as_deref(), &message).await.map_err(err)
 }
 
 #[tauri::command]
 async fn git_push(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<String> {
     state.touch(&machine_id);
-    let p = state.provider().await?;
+    let p = state.owner(&machine_id).await?;
     git::push(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
 }
 
 #[tauri::command]
 async fn git_open_pr(state: State<'_, AppState>, machine_id: String, cwd: Option<String>) -> CmdResult<PrOutcome> {
     state.touch(&machine_id);
-    let p = state.provider().await?;
+    let p = state.owner(&machine_id).await?;
     git::open_pr(p.as_ref(), &machine_id, cwd.as_deref()).await.map_err(err)
 }
 
@@ -478,7 +600,7 @@ async fn git_open_pr(state: State<'_, AppState>, machine_id: String, cwd: Option
 
 #[tauri::command]
 async fn https_routes(state: State<'_, AppState>, machine_id: String) -> CmdResult<Vec<ports::HttpsRoute>> {
-    state.provider().await?.https_routes(&machine_id).await.map_err(err)
+    state.owner(&machine_id).await?.https_routes(&machine_id).await.map_err(err)
 }
 
 #[tauri::command]
@@ -486,13 +608,13 @@ async fn add_https_route(state: State<'_, AppState>, machine_id: String, name: S
     let port = ports::validate_port(port).map_err(err)?;
     ports::validate_route_name(&name).map_err(err)?;
     state.touch(&machine_id);
-    state.provider().await?.add_https_route(&machine_id, &name, port).await.map_err(err)
+    state.owner(&machine_id).await?.add_https_route(&machine_id, &name, port).await.map_err(err)
 }
 
 #[tauri::command]
 async fn remove_https_route(state: State<'_, AppState>, machine_id: String, name: String) -> CmdResult<()> {
     state.touch(&machine_id);
-    state.provider().await?.remove_https_route(&machine_id, &name).await.map_err(err)
+    state.owner(&machine_id).await?.remove_https_route(&machine_id, &name).await.map_err(err)
 }
 
 /// `port` None goes back to detecting the port.
@@ -500,12 +622,12 @@ async fn remove_https_route(state: State<'_, AppState>, machine_id: String, name
 async fn set_default_route_port(state: State<'_, AppState>, machine_id: String, port: Option<u32>) -> CmdResult<()> {
     let port = port.map(ports::validate_port).transpose().map_err(err)?;
     state.touch(&machine_id);
-    state.provider().await?.set_default_route_port(&machine_id, port).await.map_err(err)
+    state.owner(&machine_id).await?.set_default_route_port(&machine_id, port).await.map_err(err)
 }
 
 #[tauri::command]
 async fn port_forwards(state: State<'_, AppState>, machine_id: String) -> CmdResult<Vec<ports::PortForward>> {
-    state.provider().await?.port_forwards(&machine_id).await.map_err(err)
+    state.owner(&machine_id).await?.port_forwards(&machine_id).await.map_err(err)
 }
 
 #[tauri::command]
@@ -513,20 +635,20 @@ async fn expose_port(state: State<'_, AppState>, machine_id: String, port: u32, 
     let port = ports::validate_port(port).map_err(err)?;
     ports::validate_protocol(&protocol).map_err(err)?;
     state.touch(&machine_id);
-    state.provider().await?.expose_port(&machine_id, port, &protocol).await.map_err(err)
+    state.owner(&machine_id).await?.expose_port(&machine_id, port, &protocol).await.map_err(err)
 }
 
 #[tauri::command]
 async fn unexpose_port(state: State<'_, AppState>, machine_id: String, port: u32) -> CmdResult<()> {
     let port = ports::validate_port(port).map_err(err)?;
     state.touch(&machine_id);
-    state.provider().await?.unexpose_port(&machine_id, port).await.map_err(err)
+    state.owner(&machine_id).await?.unexpose_port(&machine_id, port).await.map_err(err)
 }
 
 /// `None` when the box is not running and was left alone.
 #[tauri::command]
 async fn listening_ports(state: State<'_, AppState>, machine_id: String, wake: Option<bool>) -> CmdResult<Option<ports::Listening>> {
-    let p = state.provider().await?;
+    let p = state.owner(&machine_id).await?;
     ports::listening(p.as_ref(), &machine_id, wake.unwrap_or(false)).await.map_err(err)
 }
 
@@ -562,8 +684,10 @@ fn ssh_device(state: &AppState) -> CmdResult<ssh::Device> {
 
 #[tauri::command]
 async fn ssh_plan(state: State<'_, AppState>, machine_id: String) -> CmdResult<ssh::Plan> {
-    let p = state.provider().await?;
-    let m = p.get_machine(&machine_id).await.map_err(err)?;
+    let (p, m) = state.providers.get_machine(&machine_id).await.map_err(err)?;
+    if !p.capabilities().editor_ssh {
+        return Err(format!("Opening a {} box in an editor is not supported yet", p.capabilities().label));
+    }
     ssh::plan(&ssh_files(&state)?, &m).map_err(err)
 }
 
@@ -577,8 +701,10 @@ struct EditorOpened {
 
 #[tauri::command]
 async fn open_in_editor(app: AppHandle, state: State<'_, AppState>, machine_id: String, editor: ssh::Editor, dir: Option<String>) -> CmdResult<EditorOpened> {
-    let p = state.provider().await?;
-    let m = p.get_machine(&machine_id).await.map_err(err)?;
+    let (p, m) = state.providers.get_machine(&machine_id).await.map_err(err)?;
+    if !p.capabilities().editor_ssh {
+        return Err(format!("Opening a {} box in an editor is not supported yet", p.capabilities().label));
+    }
     let files = ssh_files(&state)?;
     if let Some(blocker) = ssh::plan(&files, &m).map_err(err)?.blocker {
         return Err(blocker);
@@ -588,12 +714,7 @@ async fn open_in_editor(app: AppHandle, state: State<'_, AppState>, machine_id: 
     let mut applied = ssh::setup(p.as_ref(), &files, &m, &device, &ssh::keygen_program()).await.map_err(err)?;
     // The editor connects as soon as it opens; wake the box first, as the
     // terminal does, rather than leave the editor waiting on a sleeping one.
-    let wake = match m.status {
-        MachineStatus::Suspended => Some(PowerAction::Resume),
-        MachineStatus::Hibernated => Some(PowerAction::Wake),
-        _ => None,
-    };
-    if let Some(action) = wake {
+    if let Some(action) = p.capabilities().wake_action(m.status) {
         p.power(&m.id, action).await.map_err(err)?;
         applied.changes.push(format!("Woke {}", m.name));
     }
@@ -620,7 +741,7 @@ async fn create_agent(state: State<'_, AppState>, spec: NewAgent) -> CmdResult<A
     let mut cwd = spec.cwd.filter(|c| !c.trim().is_empty());
     let mut own = None;
     if spec.own_branch {
-        let p = state.provider().await?;
+        let p = state.owner(&spec.machine_id).await?;
         let hint = if title.is_empty() { spec.branch_hint.unwrap_or_default() } else { title.clone() };
         let added = worktree::add(p.as_ref(), &spec.machine_id, cwd.as_deref(), &worktree::slug(&hint, &id)).await.map_err(err)?;
         cwd = Some(added.cwd);
@@ -669,14 +790,18 @@ async fn delete_agent(state: State<'_, AppState>, id: String, remove_worktree: O
     let gone = state.agents.read().await.iter().find(|a| a.id == id).cloned();
     if let (true, Some(a)) = (remove_worktree.unwrap_or(false), gone.as_ref()) {
         if let Some(wt) = &a.worktree {
-            let p = state.provider().await?;
+            let p = state.owner(&a.machine_id).await?;
             session::stop(p.as_ref(), &a.machine_id, &a.id, false).await.map_err(err)?;
             worktree::remove(p.as_ref(), &a.machine_id, wt, force.unwrap_or(false)).await.map_err(err)?;
         }
     }
     // The harness may still run in its tmux session; end it on the way out,
     // best effort, unless the box is gone.
-    if let (Some(a), Ok(p)) = (gone, state.provider().await) {
+    let owner = match &gone {
+        Some(a) => state.owner(&a.machine_id).await.ok(),
+        None => None,
+    };
+    if let (Some(a), Some(p)) = (gone, owner) {
         tauri::async_runtime::spawn(async move {
             let _ = session::stop(p.as_ref(), &a.machine_id, &a.id, true).await;
         });
@@ -692,7 +817,7 @@ async fn delete_agent(state: State<'_, AppState>, id: String, remove_worktree: O
 #[tauri::command]
 async fn agent_stop(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     let a = state.agents.read().await.iter().find(|a| a.id == id).cloned().ok_or("agent not found")?;
-    let p = state.provider().await?;
+    let p = state.owner(&a.machine_id).await?;
     state.touch(&a.machine_id);
     session::stop(p.as_ref(), &a.machine_id, &id, false).await.map_err(err)
 }
@@ -720,7 +845,7 @@ async fn agent_upload(state: State<'_, AppState>, id: String, name: String, data
     let machine_id = state.agents.read().await.iter().find(|a| a.id == id).map(|a| a.machine_id.clone()).ok_or("agent not found")?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| format!("the file did not arrive intact: {e}"))?;
     upload::check_size(&name, bytes.len() as u64).map_err(err)?;
-    let p = state.provider().await?;
+    let p = state.owner(&machine_id).await?;
     state.touch(&machine_id);
     upload::upload(p.as_ref(), &machine_id, &id, &name, bytes).await.map_err(err)
 }
@@ -751,7 +876,7 @@ async fn watch_box(app: AppHandle, machine_id: String) {
     let state = app.state::<AppState>();
     let mut attempt = 0u32;
     loop {
-        let Ok(p) = state.provider().await else { break };
+        let Ok(p) = state.owner(&machine_id).await else { break };
         if let Ok(mut w) = session::watch(p.as_ref(), &machine_id).await {
             while let Some(snap) = w.next().await {
                 attempt = 0;
@@ -1024,7 +1149,7 @@ async fn setup_start(
     preset_id: String,
     variables: Option<HashMap<String, String>>,
 ) -> CmdResult<ProvisionRun> {
-    let p = state.provider().await?;
+    let p = state.owner(&machine_id).await?;
     let setup = prepare_setup(&state, &preset_id, &variables.unwrap_or_default()).await?;
     let m = p.get_machine(&machine_id).await.map_err(err)?;
     start_setup(&app, &state, p, &m, setup).await
@@ -1064,13 +1189,13 @@ enum TermTarget {
 
 #[tauri::command]
 async fn claude_account(state: State<'_, AppState>, machine: String) -> CmdResult<agent::account::ClaudeAccount> {
-    let p = state.provider().await?;
+    let p = state.owner(&machine).await?;
     agent::account::status(&*p, &machine).await.map_err(err)
 }
 
 #[tauri::command]
 async fn set_claude_account(state: State<'_, AppState>, machine: String, own: bool) -> CmdResult<agent::account::ClaudeAccount> {
-    let p = state.provider().await?;
+    let p = state.owner(&machine).await?;
     state.touch(&machine);
     agent::account::set(&*p, &machine, own).await.map_err(err)
 }
@@ -1104,7 +1229,7 @@ async fn terminal_open(
             session::open_script(&a, input.as_deref())
         }
     };
-    let p = state.provider().await?;
+    let p = state.owner(&machine).await?;
     let handle = p
         .exec(
             &machine,
@@ -1183,23 +1308,23 @@ pub fn run() {
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             let home = app.path().home_dir().ok();
-            let secrets = secrets::Secrets::new(data.join("secrets"));
+            let secrets: HashMap<&'static str, secrets::Secrets> = PROVIDERS.iter().map(|id| (*id, secrets::Secrets::new(data.join("secrets"), id))).collect();
             let store = Store::new(data.join("state"));
             let preset_secrets = secrets::PresetSecrets::new(data.join("secrets"));
 
             // `setup` runs on the main thread, outside Tokio; the boxd client
             // binds its lazy channel to the runtime it is created in.
             let _runtime = tauri::async_runtime::handle().inner().enter();
-            let (provider, backend) = match secrets.load() {
-                Some((key, backend)) => match Boxd::new(key, BoxdConfig::default()) {
-                    Ok(p) => (Some(Arc::new(p) as Arc<dyn Provider>), Some(backend)),
-                    Err(e) => {
-                        eprintln!("stowbox: could not initialise the boxd client: {e}");
-                        (None, Some(backend))
-                    }
-                },
-                None => (None, None),
-            };
+            let providers = Registry::new();
+            let mut backends = HashMap::new();
+            for id in PROVIDERS {
+                let Some((key, backend)) = secrets[id].load() else { continue };
+                backends.insert(id.to_string(), backend);
+                match make_provider(id, key, &data) {
+                    Ok(p) => providers.set(p),
+                    Err(e) => eprintln!("stowbox: could not initialise the {id} client: {e}"),
+                }
+            }
             let agents = tauri::async_runtime::block_on(store.load_agents()).unwrap_or_else(|e| {
                 eprintln!("stowbox: could not read agents.json: {e}");
                 Vec::new()
@@ -1221,16 +1346,16 @@ pub fn run() {
                 .collect();
 
             app.manage(AppState {
-                provider: RwLock::new(provider),
+                providers,
                 secrets,
-                secret_backend: RwLock::new(backend),
+                secret_backend: RwLock::new(backends),
                 store,
                 agents: RwLock::new(agents),
                 live: std::sync::Mutex::new(HashMap::new()),
                 live_pushes: std::sync::Mutex::new(HashMap::new()),
                 watches: Mutex::new(HashMap::new()),
                 terminals: Mutex::new(HashMap::new()),
-                rates: RwLock::new(None),
+                rates: RwLock::new(HashMap::new()),
                 presets: RwLock::new(presets),
                 preset_secrets,
                 setup_runs: RwLock::new(setup_runs),
@@ -1254,6 +1379,7 @@ pub fn run() {
             machine_power,
             machine_usage,
             machine_metrics,
+            set_auto_stop,
             org_billing,
             rates,
             guard_check,

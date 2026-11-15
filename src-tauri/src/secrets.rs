@@ -1,4 +1,4 @@
-//! Where the provider API key lives. OS keychain first; a 0600 file in the
+//! Where the provider API keys live, one entry per provider. OS keychain first; a 0600 file in the
 //! app data dir when no keychain is reachable (headless Linux, some CI), and
 //! the UI says which one is in use.
 //!
@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 const SERVICE: &str = "sh.stowbox.desktop";
-const ACCOUNT: &str = "boxd-api-key";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -23,16 +22,20 @@ pub enum Backend {
 }
 
 pub struct Secrets {
+    account: String,
     file: PathBuf,
 }
 
 impl Secrets {
-    pub fn new(data_dir: PathBuf) -> Self {
-        Self { file: data_dir.join("boxd-api-key") }
+    /// The key of `provider`: keychain account `<provider>-api-key`, file
+    /// of the same name. boxd's entry keeps the name it always had.
+    pub fn new(data_dir: PathBuf, provider: &str) -> Self {
+        let account = format!("{provider}-api-key");
+        Self { file: data_dir.join(&account), account }
     }
 
     pub fn load(&self) -> Option<(String, Backend)> {
-        if let Ok(entry) = keyring::Entry::new(SERVICE, ACCOUNT) {
+        if let Ok(entry) = keyring::Entry::new(SERVICE, &self.account) {
             if let Ok(v) = entry.get_password() {
                 if !v.is_empty() {
                     return Some((v, Backend::Keyring));
@@ -47,7 +50,7 @@ impl Secrets {
     }
 
     pub fn save(&self, value: &str) -> std::io::Result<Backend> {
-        if let Ok(entry) = keyring::Entry::new(SERVICE, ACCOUNT) {
+        if let Ok(entry) = keyring::Entry::new(SERVICE, &self.account) {
             if entry.set_password(value).is_ok() {
                 let _ = std::fs::remove_file(&self.file);
                 return Ok(Backend::Keyring);
@@ -67,7 +70,7 @@ impl Secrets {
     }
 
     pub fn clear(&self) {
-        if let Ok(entry) = keyring::Entry::new(SERVICE, ACCOUNT) {
+        if let Ok(entry) = keyring::Entry::new(SERVICE, &self.account) {
             let _ = entry.delete_credential();
         }
         let _ = std::fs::remove_file(&self.file);

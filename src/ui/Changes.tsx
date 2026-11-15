@@ -345,7 +345,7 @@ export default function Changes(p: { machine: Machine | undefined; cwd: string |
         <Match when={!m()}>
           <div class="empty-state">
             <span>
-              <strong>This box no longer exists in boxd.</strong> Its repository went with it.
+              <strong>This box no longer exists.</strong> Its repository went with it.
             </span>
           </div>
         </Match>

@@ -874,6 +874,9 @@ mod tests {
     fn sample_machine() -> Machine {
         Machine {
             id: "vm1".into(),
+            provider: "boxd".into(),
+            size: String::new(),
+            auto_stop_at: 0,
             name: "box".into(),
             status: MachineStatus::Running,
             vcpu: 2,

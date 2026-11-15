@@ -111,8 +111,8 @@ export default function ClaudeLogin(p: { machine: Machine }) {
                   </>
                 ) : (
                   <>
-                    boxd gives every box in the org the same login. A separate login lets this box use another account, say a personal one next to a work
-                    one; agents keep their sessions.
+                    This login comes from outside the box, shared with other boxes (boxd gives every box in the org the same one). A separate login lets
+                    this box use another account, say a personal one next to a work one; agents keep their sessions.
                   </>
                 )}
               </p>

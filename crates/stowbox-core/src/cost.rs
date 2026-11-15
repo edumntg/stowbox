@@ -3,6 +3,7 @@
 //! current state, and the Details view shows the metered figure.
 
 use crate::types::{Machine, MachineStatus, Rates};
+use serde::{Deserialize, Serialize};
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
@@ -13,6 +14,49 @@ pub const BOXD_PUBLISHED_EUR: Rates = Rates {
     ram_gib_hour_micro: 12_000,
     disk_gib_hour_micro: 80,
 };
+
+/// A provider's prices: per resource (boxd) and, for providers that sell a
+/// fixed menu, per size (boat). `sizes` wins for a machine whose size it
+/// names.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateCard {
+    pub currency: String,
+    pub rates: Rates,
+    #[serde(default)]
+    pub sizes: Vec<SizeRate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SizeRate {
+    pub size: String,
+    /// Per running hour; nothing is billed in any other state.
+    pub hourly_micro: i64,
+}
+
+impl RateCard {
+    pub fn resources(currency: &str, rates: Rates) -> Self {
+        Self { currency: currency.into(), rates, sizes: Vec::new() }
+    }
+
+    /// Whether the card has a price for anything at all.
+    pub fn is_priced(&self) -> bool {
+        self.rates.vcpu_hour_micro > 0 || self.sizes.iter().any(|s| s.hourly_micro > 0)
+    }
+
+    /// The estimate for `m` in its current state, from whichever part of
+    /// the card applies to it.
+    pub fn hourly_micro(&self, m: &Machine) -> i64 {
+        if let Some(s) = self.sizes.iter().find(|s| !m.size.is_empty() && s.size == m.size) {
+            return match m.status {
+                MachineStatus::Running | MachineStatus::Starting | MachineStatus::Migrating => s.hourly_micro,
+                _ => 0,
+            };
+        }
+        hourly_micro(m, &self.rates)
+    }
+}
 
 /// Estimated cost per hour, in micro-units of the rate card's currency,
 /// for the machine's *current* state.
@@ -68,6 +112,9 @@ mod tests {
     fn machine(status: MachineStatus, vcpu: u32, mem_gib: u64) -> Machine {
         Machine {
             id: "vm_1".into(),
+            provider: "boxd".into(),
+            size: String::new(),
+            auto_stop_at: 0,
             name: "t".into(),
             status,
             vcpu,
@@ -107,6 +154,25 @@ mod tests {
         let hib = machine(MachineStatus::Hibernated, 2, 8);
         assert_eq!(hourly_micro(&standby, &BOXD_PUBLISHED_EUR), 8 * 12_000 + 100 * 80);
         assert_eq!(hourly_micro(&hib, &BOXD_PUBLISHED_EUR), 100 * 80);
+    }
+
+    #[test]
+    fn sized_machines_pay_their_size_while_running_and_nothing_after() {
+        let card = RateCard { currency: "usd".into(), rates: Rates::default(), sizes: vec![SizeRate { size: "default".into(), hourly_micro: 36_000 }] };
+        let mut m = machine(MachineStatus::Running, 4, 8);
+        m.size = "default".into();
+        assert_eq!(card.hourly_micro(&m), 36_000);
+        m.status = MachineStatus::Stopped;
+        assert_eq!(card.hourly_micro(&m), 0);
+        // A size the card does not know falls back to the resource rates (none here).
+        m.status = MachineStatus::Running;
+        m.size = "huge".into();
+        assert_eq!(card.hourly_micro(&m), 0);
+        assert!(card.is_priced());
+        assert!(!RateCard::default().is_priced());
+        // A boxd machine on a resource card is unchanged.
+        let boxd = RateCard::resources("eur", BOXD_PUBLISHED_EUR);
+        assert_eq!(boxd.hourly_micro(&machine(MachineStatus::Running, 2, 8)), 2 * 39_000 + 8 * 12_000 + 100 * 80);
     }
 
     #[test]

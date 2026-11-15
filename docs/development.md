@@ -20,8 +20,9 @@ To run the app from this repo:
                          # the Rust side and takes a few minutes
    ```
 
-3. On first launch the app asks for a boxd API key (`bxd_…`), created at
-   [app.boxd.sh](https://app.boxd.sh). It is stored in the OS keychain.
+3. On first launch the app asks for a boxd (`bxd_…`, from
+   [app.boxd.sh](https://app.boxd.sh)) or boat (`boat_…`) API key. Either can
+   be added later in Settings. Keys are stored in the OS keychain.
 
 To install it as a regular app instead of running it from a terminal:
 
@@ -36,16 +37,20 @@ before Gatekeeper lets it open (macOS only).
 ## The browser build and the Rust side
 
 The UI can also run in a plain browser against an in-memory mock, which is how
-it is developed and screenshotted without a boxd account:
+it is developed and screenshotted without a provider account:
 
 ```sh
 pnpm dev              # http://localhost:1420, mock data, nothing real
 ```
 
+The mock connects both providers. `?providers=boxd` or `?providers=boat`
+previews one, and `?onboarding` the first-run screen.
+
 Rust side:
 
 ```sh
 cargo test -p stowbox-core   # parsers, cost math, auth helpers
+cargo test -p stowbox-core boat::ssh -- --ignored   # boat's SSH exec against a local sshd
 cargo check --workspace
 BOXD_API_KEY=bxd_… cargo run -p stowbox-core --example smoke   # against a real account
 ```
@@ -77,15 +82,20 @@ it through onboarding; see [windows.md](windows.md).
 ## Layout
 
 ```
-crates/stowbox-core/   provider trait, boxd gRPC client, agent protocol, cost, store
+crates/stowbox-core/   provider trait, registry, capabilities, agent protocol, cost, store
+  src/boxd/            boxd's gRPC client
+  src/boat/            boat's REST client and SSH exec (russh)
   proto/boxd/api.proto boxd's public API, compiled with tonic at build time
 src-tauri/             the desktop shell: state, commands, agent turn runner, terminals
 src/                   SolidJS UI (bridge/, state/, ui/, icons/, styles/)
 ```
 
 `stowbox-core` has no Tauri dependency, so it builds and tests on a headless
-box. The `Provider` trait is the seam for adding boat.dev or Cloudflare
-Sandboxes later.
+box. Every provider implements the `Provider` trait and describes itself with
+`Capabilities`; the `Registry` holds every connected one and routes each box to
+the provider that owns it. The UI turns features on and off from the
+capabilities, never from the provider's name. How boat is used, and what it
+does not have, is in `docs/boat.md`.
 
 ## How boxd is used
 
@@ -121,4 +131,5 @@ works and nothing is lost. Details in `docs/boxd-resume-after-wake-race.md`.
 
 - Interactive tool approvals mid-turn (Claude Code's stdio control protocol).
 - Snapshots, checkpoints, env and secret editing, port exposure.
-- Other providers behind the `Provider` trait.
+- On boat: opening a box in an editor, raw TCP ports, saved snapshots and
+  environments (see `docs/boat.md`).

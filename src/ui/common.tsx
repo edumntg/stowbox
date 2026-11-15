@@ -1,6 +1,6 @@
 import { For } from "solid-js";
 import type { AgentMeta, Machine, MachineStatus, PowerAction } from "../bridge/types";
-import { actions, state } from "../state/store";
+import { actions, capsFor, state } from "../state/store";
 import * as I from "../icons";
 import { agentPhase, agentPhaseLabel, type AgentPhase } from "./format";
 
@@ -17,6 +17,7 @@ export function dotState(s: MachineStatus): string {
     case "pending":
     case "starting":
     case "migrating":
+    case "stopping":
       return "pending";
     default:
       return "stopped";
@@ -48,13 +49,21 @@ interface PowerButton {
   title: string;
 }
 
+/** What the box's state allows, kept to what its provider accepts. */
 export function powerButtons(m: Machine): PowerButton[] {
+  const allowed = capsFor(m)?.power;
+  const all = statePowerButtons(m);
+  return allowed ? all.filter((b) => allowed.includes(b.action)) : all;
+}
+
+function statePowerButtons(m: Machine): PowerButton[] {
+  const stopTitle = capsFor(m)?.power.includes("pause") ? "Stop the machine; processes are lost, disk stays" : "Stop the machine and stop paying for it; processes are lost, the disk is kept as a snapshot";
   switch (m.status) {
     case "running":
       return [
         { action: "pause", label: "Standby", icon: I.Pause, title: "Keep memory warm, stop paying for vCPU" },
         { action: "hibernate", label: "Hibernate", icon: I.Moon, title: "Write memory to disk, pay for disk only" },
-        { action: "stop", label: "Stop", icon: I.Stop, title: "Stop the machine; processes are lost, disk stays" },
+        { action: "stop", label: "Stop", icon: I.Stop, title: stopTitle },
         { action: "reboot", label: "Reboot", icon: I.Refresh, title: "Cold restart" },
       ];
     case "suspended":
@@ -71,7 +80,10 @@ export function powerButtons(m: Machine): PowerButton[] {
     case "stopped":
       return [{ action: "start", label: "Start", icon: I.Play, title: "Start the machine" }];
     case "failed":
-      return [{ action: "reboot", label: "Reboot", icon: I.Refresh, title: "Try a cold restart" }];
+      return [
+        { action: "reboot", label: "Reboot", icon: I.Refresh, title: "Try a cold restart" },
+        { action: "start", label: "Start", icon: I.Play, title: "Start it again from its last snapshot" },
+      ];
     default:
       return [];
   }
