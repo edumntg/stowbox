@@ -43,6 +43,10 @@ pub struct Capabilities {
     pub auto_hibernate: bool,
     /// An auto-stop deadline that can be set at create and pushed out later.
     pub auto_stop: bool,
+    /// A stop after so long with no activity, set at create and changed
+    /// later (`set_auto_stop` takes it in seconds).
+    #[serde(default)]
+    pub idle_stop: bool,
     /// Free vCPU and memory at create; otherwise `sizes` is the menu.
     pub custom_size: bool,
     pub sizes: Vec<SizeOption>,
@@ -62,6 +66,13 @@ pub struct Capabilities {
     pub remote_home: String,
     /// What the metered usage figure lags by, in plain words, or "".
     pub metering_note: String,
+    /// Billed usage per box can be read; otherwise only the estimate shows.
+    #[serde(default = "yes")]
+    pub metered_usage: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Capabilities {

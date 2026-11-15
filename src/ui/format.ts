@@ -119,3 +119,11 @@ export function fileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** Inactivity stop choices for providers that have one, in seconds; 0 is never. */
+export const IDLE_STOP = [
+  { secs: 15 * 60, label: "15 min" },
+  { secs: 3600, label: "1 h" },
+  { secs: 4 * 3600, label: "4 h" },
+  { secs: 0, label: "Never" },
+];

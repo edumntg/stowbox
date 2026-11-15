@@ -15,7 +15,7 @@ export type MachineStatus =
 
 export interface Machine {
   id: string;
-  /** The provider that owns the box: "boxd" or "boat". */
+  /** The provider that owns the box: "boxd", "boat" or "daytona". */
   provider: string;
   /** The provider's size name for fixed-size providers ("default"), else "". */
   size: string;
@@ -42,6 +42,8 @@ export interface Machine {
   autoDestroySecs: number;
   /** When the provider stops the box on its own, unix seconds; 0 is never or not reported. */
   autoStopAt: number;
+  /** The provider stops the box after this long with no activity; 0 is off. */
+  idleStopSecs: number;
   estHourlyMicro: number;
   currency: string;
 }
@@ -129,6 +131,8 @@ export interface Capabilities {
   autoSuspend: boolean;
   autoHibernate: boolean;
   autoStop: boolean;
+  /** A stop after so long with no activity; setAutoStop takes it in seconds. */
+  idleStop: boolean;
   customSize: boolean;
   sizes: SizeOption[];
   httpsLinks: boolean;
@@ -141,6 +145,8 @@ export interface Capabilities {
   remoteUser: string;
   remoteHome: string;
   meteringNote: string;
+  /** Billed usage per box can be read; otherwise only the estimate shows. */
+  meteredUsage: boolean;
 }
 
 export interface ProviderInfo {
@@ -176,7 +182,7 @@ export interface CreateSpec {
   name?: string | null;
   /** A size from the provider's menu, for providers without free sizes. */
   size?: string | null;
-  /** Auto-stop after this many seconds; 0 is never. Only for providers with autoStop. */
+  /** Auto-stop after this many seconds (running for autoStop, idle for idleStop); 0 is never. */
   autoStopSecs?: number | null;
   vcpu?: number | null;
   memoryBytes?: number | null;

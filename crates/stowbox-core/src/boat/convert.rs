@@ -66,6 +66,7 @@ pub fn machine(s: &Value) -> Machine {
         auto_hibernate_secs: 0,
         auto_destroy_secs: 0,
         auto_stop_at,
+        idle_stop_secs: 0,
     }
 }
 

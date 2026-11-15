@@ -895,7 +895,9 @@ export const actions = {
     try {
       const m = await api.setAutoStop(id, secs);
       setState("machines", (ms) => ms.map((x) => (x.id === id ? m : x)));
-      actions.toast(secs === 0 ? `${m.name} no longer stops on its own.` : `${m.name} stops on its own in ${Math.round(secs / 3600)} h.`, "info");
+      const span = secs % 3600 === 0 ? `${secs / 3600} h` : `${Math.round(secs / 60)} min`;
+      const idle = capsFor(m)?.idleStop;
+      actions.toast(secs === 0 ? `${m.name} no longer stops on its own.` : idle ? `${m.name} stops after ${span} with no activity.` : `${m.name} stops on its own in ${span}.`, "info");
     } catch (e) {
       actions.toast("Could not change the auto-stop: " + message(e));
     } finally {

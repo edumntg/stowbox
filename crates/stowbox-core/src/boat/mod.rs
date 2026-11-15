@@ -2,13 +2,14 @@
 //! SSH because the command API has no stdin or TTY. See `docs/boat.md`.
 
 mod api;
-mod convert;
+pub(crate) mod convert;
 pub mod ssh;
 
 use crate::capabilities::{Capabilities, SizeOption};
 use crate::cost::{RateCard, SizeRate};
 use crate::ports::HttpsRoute;
 use crate::provider::Provider;
+use crate::sshexec;
 use crate::types::*;
 use crate::{Error, Result};
 use api::{seg, Api};
@@ -51,6 +52,7 @@ pub fn capabilities() -> Capabilities {
         isolated: false,
         auto_suspend: false,
         auto_hibernate: false,
+        idle_stop: false,
         auto_stop: true,
         custom_size: false,
         sizes: SIZES
@@ -74,6 +76,7 @@ pub fn capabilities() -> Capabilities {
         remote_user: "user".into(),
         remote_home: "/home/user".into(),
         metering_note: "boat counts by the second at list price; time included in the plan is not taken off here.".into(),
+        metered_usage: true,
     }
 }
 
@@ -92,7 +95,7 @@ impl BoatConfig {
 
 pub struct Boat {
     api: Api,
-    ssh: ssh::Pool,
+    ssh: sshexec::Pool,
     /// Links made from this Stowbox, by sandbox: boat has no call that
     /// lists them.
     links: Mutex<HashMap<String, Vec<HttpsRoute>>>,
@@ -100,8 +103,8 @@ pub struct Boat {
 
 impl Boat {
     pub fn new(api_key: String, config: BoatConfig) -> Result<Self> {
-        let key = ssh::load_or_make_key(&config.ssh_key)?;
-        Ok(Self { api: Api::new(&config.api, api_key)?, ssh: ssh::Pool::new(key)?, links: Default::default() })
+        let key = sshexec::load_or_make_key(&config.ssh_key)?;
+        Ok(Self { api: Api::new(&config.api, api_key)?, ssh: sshexec::Pool::new(key)?, links: Default::default() })
     }
 
     async fn sandbox(&self, id: &str) -> Result<Value> {
