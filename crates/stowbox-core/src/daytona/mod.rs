@@ -39,6 +39,8 @@ pub const DEFAULT_CONSOLE_URL: &str = "https://app.daytona.io/dashboard";
 const RATES: Rates = Rates { vcpu_hour_micro: 50_400, ram_gib_hour_micro: 16_200, disk_gib_hour_micro: 108 };
 /// How often an open exec tells Daytona the sandbox is in use.
 const ACTIVITY_EVERY: Duration = Duration::from_secs(4 * 60);
+/// The auto-stop interval of a sandbox made without one.
+const DEFAULT_IDLE_STOP_SECS: u32 = 3600;
 /// SSH access tokens live this long; Daytona's maximum is a day.
 const TOKEN_MINUTES: u32 = 1440;
 /// Signed preview links last this long.
@@ -179,9 +181,9 @@ impl Provider for Daytona {
             // Whole GiB, rounded up so a request is never smaller than asked.
             body.insert("memory".into(), json!(m.div_ceil(1024 * 1024 * 1024)));
         }
-        if let Some(secs) = spec.auto_stop_secs {
-            body.insert("autoStopInterval".into(), json!(secs.div_ceil(60)));
-        }
+        // Daytona's own default is 15 minutes, short for an agent's turn.
+        let idle = spec.auto_stop_secs.unwrap_or(DEFAULT_IDLE_STOP_SECS);
+        body.insert("autoStopInterval".into(), json!(idle.div_ceil(60)));
         if !spec.env.is_empty() {
             body.insert("env".into(), Value::Object(spec.env.into_iter().map(|(k, v)| (k, json!(v))).collect()));
         }
