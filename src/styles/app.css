@@ -517,6 +517,24 @@ ul {
   color: var(--muted-foreground);
 }
 
+/* New agent in this box: shown on the box's row when it is hovered,
+   selected or reached by keyboard, so the column stays quiet otherwise. */
+.row-right .row-add {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.row:hover .row-add,
+.row.selected .row-add,
+.row-add:focus-visible {
+  opacity: 1;
+}
+
+.row-add svg {
+  width: 13px;
+  height: 13px;
+}
+
 .row-right .caret:hover {
   background: var(--accent);
   color: var(--foreground);

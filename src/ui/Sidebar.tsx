@@ -35,6 +35,9 @@ const BoxRow = (p: { machine: Machine; agents: AgentMeta[] }) => {
           <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
             {money(p.machine.estHourlyMicro, p.machine.currency)}/h
           </span>
+          <button class="caret row-add" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })} title={`New agent in ${p.machine.name}`} aria-label={`New agent in ${p.machine.name}`}>
+            <I.Plus />
+          </button>
           <Show when={p.agents.length > 0}>
             <button
               class="caret"
