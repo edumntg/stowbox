@@ -118,6 +118,15 @@ export interface SizeOption {
   note: string;
 }
 
+/** A newer release than the running app. */
+export interface UpdateInfo {
+  version: string;
+  /** The release's notes, as written on GitHub. */
+  notes: string;
+  /** When it was published, ISO 8601, or "". */
+  date: string;
+}
+
 /** What a provider supports. Mirrors core capabilities::Capabilities. */
 export interface Capabilities {
   label: string;
@@ -603,4 +612,11 @@ export interface Api {
   setWindowTheme(theme: "light" | "dark"): Promise<void>;
   openUrl(url: string): Promise<void>;
   copyText(text: string): Promise<void>;
+  /** The running app's version, from tauri.conf.json. */
+  appVersion(): Promise<string>;
+  /** The newest published GitHub release, when it is newer than this app. */
+  checkUpdate(): Promise<UpdateInfo | null>;
+  /** Downloads and installs the update `checkUpdate` found, then restarts
+   * the app. `total` is null when the server does not say. */
+  installUpdate(onProgress: (done: number, total: number | null) => void): Promise<void>;
 }

@@ -21,7 +21,10 @@
         "center": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 14, "y": 13 }
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        }
       }
     ],
     "security": {
@@ -38,5 +41,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA3QzFGN0U0Q0IyNzgzRjIKUldUeWd5Zkw1UGZCQjNtTzRPTDZPTUY4bm9MUjZJWEh6T2RyMGU3eGErQVN0dG1YMWczVWVPcTcK",
+      "endpoints": [
+        "https://github.com/edumntg/stowbox/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -3066,3 +3066,30 @@ select.input {
   outline: none;
   box-shadow: none;
 }
+
+/* A new release, in the status bar: the one place that is always on screen. */
+.statusbar-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary);
+}
+
+.statusbar-update svg {
+  width: 12px;
+  height: 12px;
+}
+
+button.statusbar-update:hover {
+  text-decoration: underline;
+}
+
+.statusbar-update.busy {
+  color: var(--muted-foreground);
+}
+
+.row-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

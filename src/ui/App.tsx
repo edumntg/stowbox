@@ -155,11 +155,30 @@ const Topbar = () => (
   </header>
 );
 
+/** A newer release, one click from installed. */
+const UpdateNotice = () => (
+  <Show when={state.update.info}>
+    {(u) => (
+      <Show
+        when={state.update.installing}
+        fallback={
+          <button class="statusbar-update" onClick={() => void actions.installUpdate()} title={u().notes || `Stowbox ${u().version} is out`}>
+            <I.Refresh /> Stowbox {u().version} is available. Update and restart
+          </button>
+        }
+      >
+        {(i) => <span class="statusbar-update busy">Updating to {u().version}{i().progress === null ? "…" : ` ${Math.round(i().progress! * 100)}%`}</span>}
+      </Show>
+    )}
+  </Show>
+);
+
 const Statusbar = () => {
   const running = () => state.machines.filter((m) => m.status === "running" || m.status === "suspended");
   const hourly = () => moneyByCurrency(running().map((m) => ({ micro: m.estHourlyMicro, currency: m.currency })), spendCurrency(), "/h");
   return (
     <footer class="statusbar">
+      <UpdateNotice />
       <span class="spacer" />
       <span>
         <span class="dot" data-state={running().length ? "running" : "stopped"} />

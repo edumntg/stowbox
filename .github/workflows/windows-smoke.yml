@@ -2,9 +2,9 @@
 # DevTools protocol (WebView2's debugging port): with no API key the
 # onboarding renders, a malformed key gets the app's validation message, an
 # invalid one boxd's refusal. Screenshots of the webview and of the whole
-# screen are attached to the run. Windows minutes bill 2x on a private repo,
-# so it runs by hand and on pull requests that change the app itself, never
-# on pushes; see docs/windows.md.
+# screen are attached to the run. It takes about a quarter of an hour, so it
+# runs by hand and on pull requests that change the app itself, never on
+# pushes; see docs/windows.md.
 name: Windows smoke
 
 on:

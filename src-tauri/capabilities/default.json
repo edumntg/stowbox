@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core IPC, open URLs in the browser, copy to clipboard, notifications that bring the window back, the taskbar badge and the frame theme, dragging the window by the top bar.",
-  "windows": ["main"],
+  "description": "Main window: core IPC, open URLs in the browser, copy to clipboard, notifications that bring the window back, the taskbar badge and the frame theme, dragging the window by the top bar, and installing updates from GitHub releases then restarting.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "opener:default",
@@ -14,6 +16,8 @@
     "core:window:allow-set-badge-count",
     "core:window:allow-set-overlay-icon",
     "core:window:allow-set-theme",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

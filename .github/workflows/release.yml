@@ -1,7 +1,7 @@
 # Installers for macOS, Linux and Windows. Runs only on a `v*` tag (draft
 # GitHub release with the installers attached) or by hand from the Actions tab
 # (installers attached to the run as artifacts, no release). Never on PRs or
-# pushes: macOS minutes cost 10x and Windows 2x on a private repo.
+# pushes: a full build takes three runners for a quarter of an hour.
 # Signing is optional; see docs/releasing.md for the secrets.
 name: Release
 
@@ -25,19 +25,19 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            args: --target universal-apple-darwin --bundles app,dmg
+            args: --target universal-apple-darwin --bundles app,dmg --config src-tauri/tauri.updater.conf.json
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
             installers: target/universal-apple-darwin/release/bundle/dmg/*.dmg
           # 22.04 rather than 24.04: the AppImage and deb link against the
           # runner's glibc, so the older one runs on more distributions.
           - os: ubuntu-22.04
-            args: --bundles appimage,deb
+            args: --bundles appimage,deb --config src-tauri/tauri.updater.conf.json
             rust-targets: ""
             installers: |
               target/release/bundle/appimage/*.AppImage
               target/release/bundle/deb/*.deb
           - os: windows-2022
-            args: --bundles msi,nsis
+            args: --bundles msi,nsis --config src-tauri/tauri.updater.conf.json
             rust-targets: ""
             installers: |
               target/release/bundle/msi/*.msi
@@ -92,10 +92,14 @@ jobs:
             echo "No APPLE_CERTIFICATE: ad-hoc signing, no notarization"
           fi
 
+      # The updater key signs the update bundles; the app checks each one
+      # against the public key in tauri.conf.json before installing it.
       - name: Build installers
         uses: tauri-apps/tauri-action@action-v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.args }}
           # On a tag, create (or reuse) a draft release and attach the
@@ -105,6 +109,10 @@ jobs:
           releaseBody: Unsigned build unless signing secrets are configured. See README for how to open it.
           releaseDraft: true
           prerelease: false
+          # latest.json: what installed apps read to find this release. The
+          # signed update bundles come from tauri.updater.conf.json, which
+          # only this workflow passes: a build without the key would fail.
+          includeUpdaterJson: true
 
       - name: Attach installers to the run
         if: github.ref_type != 'tag'

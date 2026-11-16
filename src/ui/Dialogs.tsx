@@ -603,7 +603,33 @@ const Settings = () => {
           </p>
         </dd>
         <dt>Version</dt>
-        <dd class="mono">0.1.0</dd>
+        <dd>
+          <div class="row-inline">
+            <span class="mono">{state.version || "…"}</span>
+            <Switch
+              fallback={
+                <button class="btn sm ghost" onClick={() => void actions.checkUpdate(true)} disabled={state.update.checking}>
+                  {state.update.checking ? "Checking…" : "Check for updates"}
+                </button>
+              }
+            >
+              <Match when={state.update.installing}>{(i) => <span class="faint">Updating{i().progress === null ? "…" : ` ${Math.round(i().progress! * 100)}%`}</span>}</Match>
+              <Match when={state.update.info}>
+                {(u) => (
+                  <button class="btn sm primary" onClick={() => void actions.installUpdate()}>
+                    Update to {u().version} and restart
+                  </button>
+                )}
+              </Match>
+            </Switch>
+          </div>
+          <Show when={state.update.error}>
+            <p class="hint danger-text">{state.update.error}</p>
+          </Show>
+          <Show when={!state.update.info && !state.update.error && state.update.checkedAt}>
+            <p class="hint">Up to date. Stowbox looks for a new release on GitHub when it starts and every 6 hours.</p>
+          </Show>
+        </dd>
       </dl>
       <p class="hint">Stowbox talks to {labels() || "the provider"} directly from this computer. No Stowbox server sees your keys, your boxes or your agents.</p>
       <div class="dialog-actions">

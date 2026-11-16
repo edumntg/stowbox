@@ -1,5 +1,5 @@
 import { createStore, produce } from "solid-js/store";
-import { api, isDemo, setDemo } from "../bridge/api";
+import { api, isDemo, setDemo, isTauri } from "../bridge/api";
 import { presetVariables } from "../bridge/variables";
 import type {
   TermTarget,
@@ -28,6 +28,7 @@ import type {
   SetupPush,
   SetupRun,
   SpendCheck,
+  UpdateInfo,
   VariableValues,
 } from "../bridge/types";
 import { agentPhase, firstLine, money, spendLine } from "../ui/format";
@@ -99,6 +100,18 @@ export interface Toast {
 interface AppState {
   phase: "booting" | "needs-key" | "ready" | "error";
   bootError: string;
+  /** The running app's version, "" until read. */
+  version: string;
+  update: {
+    /** A newer release, from the last check. */
+    info: UpdateInfo | null;
+    checking: boolean;
+    /** Set while downloading: the share done, 0 to 1, or null when the size is unknown. */
+    installing: { progress: number | null } | null;
+    error: string;
+    /** When the last check finished, ms; 0 before the first. */
+    checkedAt: number;
+  };
   /** Every provider Stowbox knows, connected or not. */
   providers: ProviderStatus | null;
   /** By provider id, for the connected ones that answered. */
@@ -208,6 +221,8 @@ function initialTheme(): Theme {
 export const [state, setState] = createStore<AppState>({
   phase: "booting",
   bootError: "",
+  version: "",
+  update: { info: null, checking: false, installing: null, error: "", checkedAt: 0 },
   providers: null,
   accounts: {},
   rateCards: {},
@@ -311,6 +326,9 @@ let unlistenNotify: (() => void) | null = null;
 /** Notifications shown since the window was last in front; the badge count. */
 let unseen = 0;
 let pollTimer: number | undefined;
+let updateTimer: number | undefined;
+/** How often a running app looks for a new release. */
+const UPDATE_EVERY_MS = 6 * 3600_000;
 let guardTimer: number | undefined;
 let spendTimer: number | undefined;
 let guardBusy = false;
@@ -519,6 +537,35 @@ export const setupRunFor = (machineId: string): SetupRun | undefined => state.se
 export const setupActive = (r: SetupRun | undefined) => !!r && (r.status === "waiting" || r.status === "running");
 
 export const actions = {
+  /** Looks for a newer GitHub release. A failed check in the background
+   * stays quiet (offline, rate limited); one asked for shows why. */
+  async checkUpdate(asked = false) {
+    if (state.update.checking || state.update.installing) return;
+    setState("update", { checking: true, error: "" });
+    try {
+      const info = await api.checkUpdate();
+      setState("update", { info, checkedAt: Date.now() });
+    } catch (e) {
+      if (asked) setState("update", "error", message(e));
+    } finally {
+      setState("update", "checking", false);
+    }
+  },
+
+  /** Downloads the update, installs it and restarts the app. */
+  async installUpdate() {
+    if (!state.update.info || state.update.installing) return;
+    setState("update", { installing: { progress: null }, error: "" });
+    try {
+      await api.installUpdate((done, total) => setState("update", "installing", { progress: total ? Math.min(1, done / total) : null }));
+    } catch (e) {
+      setState("update", "error", message(e));
+      actions.toast("Could not install the update: " + message(e));
+    } finally {
+      setState("update", "installing", null);
+    }
+  },
+
   toast(text: string, kind: Toast["kind"] = "error", extra: Pick<Toast, "detail" | "action" | "untilMs"> = {}): number {
     const id = ++toastSeq;
     setState("ui", "toasts", (t) => [...t, { id, kind, text, ...extra }]);
@@ -579,6 +626,13 @@ export const actions = {
     actions.pruneTabs();
     if (state.ui.selection.kind === "none") setState("ui", "selection", FLEET);
     void actions.refreshMetrics();
+    void api.appVersion().then((v) => setState("version", v), () => undefined);
+    // `pnpm tauri dev` would offer the latest release over itself; it checks
+    // only when asked. The browser preview checks the mock.
+    if (!(isTauri && import.meta.env.DEV) && !updateTimer) {
+      void actions.checkUpdate();
+      updateTimer = window.setInterval(() => void actions.checkUpdate(), UPDATE_EVERY_MS);
+    }
     window.clearInterval(pollTimer);
     pollTimer = window.setInterval(() => {
       if (document.visibilityState !== "visible" || state.phase !== "ready") return;

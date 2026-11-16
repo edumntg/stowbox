@@ -9,11 +9,9 @@
 | `ubuntu-22.04` | `.AppImage` and `.deb` |
 | `windows-2022` | `.msi` and NSIS `-setup.exe` |
 
-It runs only on a `v*` tag and by hand, never on pull requests or pushes,
-because macOS minutes bill at 10x and Windows at 2x on a private repo. A
-first run with a cold Rust cache took 6 min on macOS, 12 on Linux and 14 on
-Windows, about 100 billed minutes in all (6x10 + 12 + 14x2); the cache makes
-later runs shorter. A newer run on the same ref cancels the older one.
+It runs only on a `v*` tag and by hand, never on pull requests or pushes:
+a first run with a cold Rust cache took 6 min on macOS, 12 on Linux and 14
+on Windows; the cache makes later runs shorter. A newer run on the same ref cancels the older one.
 
 - **Release**: bump `version` in `src-tauri/tauri.conf.json`, `package.json`
   and the workspace `Cargo.toml`, commit, then
@@ -49,22 +47,32 @@ Windows code signing is not wired: it needs a certificate from a CA and a
 `bundle.windows` section in `tauri.conf.json`
 ([tauri.app/distribute/sign/windows](https://tauri.app/distribute/sign/windows/)).
 
-## Auto-update (not wired yet)
+## Auto-update
 
-The Tauri updater is left out on purpose. `tauri-plugin-updater` refuses to
-start without `plugins.updater.pubkey` in `tauri.conf.json`, so it cannot be
-switched on only when a secret exists, and its download URL must be reachable
-without a GitHub login, which release assets of a private repository are not.
-To add it once releases are public (or mirrored somewhere public):
+Installed apps read
+`https://github.com/edumntg/stowbox/releases/latest/download/latest.json`
+when they start and every 6 hours, and offer the release it names in the
+status bar when it is newer than their own version
+(`tauri-plugin-updater`). Each update bundle is signed; the app refuses one
+whose signature does not match the public key in `src-tauri/tauri.conf.json`
+(`plugins.updater.pubkey`).
 
-1. `pnpm tauri signer generate -w ~/.tauri/stowbox.key` and keep the password.
-2. Add the repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the contents of
-   `~/.tauri/stowbox.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and pass
-   both as `env` to the tauri-action step.
-3. Add `tauri-plugin-updater` to `src-tauri/Cargo.toml` and register it in
-   `src-tauri/src/lib.rs`; in `tauri.conf.json` set
-   `bundle.createUpdaterArtifacts: true` and `plugins.updater` with `pubkey`
-   (the contents of `~/.tauri/stowbox.key.pub`) and `endpoints`
-   (`https://github.com/edumntg/stowbox/releases/latest/download/latest.json`).
-   tauri-action then uploads the signed bundles and `latest.json` to the
-   release.
+- **Where the files come from.** `release.yml` passes
+  `--config src-tauri/tauri.updater.conf.json`, which turns on
+  `bundle.createUpdaterArtifacts`, and signs with the repository secrets
+  `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+  tauri-action uploads the signed bundles (`.app.tar.gz` on macOS, the
+  AppImage on Linux, the NSIS and MSI installers on Windows) and
+  `latest.json` to the release. Builds without the overlay, local ones and
+  the smoke test, need no key.
+- **When apps see it.** `releases/latest` skips drafts: installed apps see a
+  release once it is published, not when the workflow makes the draft.
+- **Platforms.** macOS, Windows, and the Linux AppImage. A `.deb` cannot
+  replace itself; its users install the next `.deb`.
+- **The key.** It was made with
+  `pnpm tauri signer generate -w ~/.tauri/stowbox.key -p <password>`. Keep
+  the key and its password somewhere safe besides the secrets: a lost key
+  means a new one, and apps that trust the old public key will not install
+  updates signed with the new one; they need one manual install.
+- **Releases must be public.** The updater downloads without a GitHub login,
+  so the repository (or wherever releases are published) must be public.
