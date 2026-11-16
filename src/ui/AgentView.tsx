@@ -54,23 +54,34 @@ export default function AgentView(p: { agent: AgentMeta }) {
 
   // The view's terminal. It is a view of a session that outlives it: leaving
   // the agent keeps the session, and coming back shows the same one.
-  const [term, setTerm] = createSignal<{ agent: string; input: string | null; key: number } | null>(null);
+  const [term, setTerm] = createSignal<{ agent: string; key: number } | null>(null);
   const [termEnded, setTermEnded] = createSignal(false);
   /** Set by End session: the terminal stays closed until asked for again. */
   const [ended, setEnded] = createSignal(false);
   let termKey = 0;
   let write: TermInput | null = null;
   let handled = 0;
+  /** The first prompt, sent once. The terminal remounts whenever the box
+   * flickers out of "running" and then reattaches to the same session; a
+   * prompt kept on `term()` would be typed again on every remount. */
+  let firstInput: string | null = null;
+  const takeInput = () => {
+    const input = firstInput;
+    firstInput = null;
+    return input;
+  };
   const openTerm = (input: string | null) => {
     write = null;
     setTermEnded(false);
     setEnded(false);
-    setTerm({ agent: a().id, input, key: ++termKey });
+    firstInput = input;
+    setTerm({ agent: a().id, key: ++termKey });
   };
   const agentId = createMemo(() => a().id);
   createEffect(
     on(agentId, () => {
       write = null;
+      firstInput = null;
       setTerm(null);
       setEnded(false);
       setTermEnded(false);
@@ -325,7 +336,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
                 <Show when={t().key} keyed>
                   <Terminal
                     machine={a().machineId}
-                    target={{ kind: "agent", id: a().id, input: t().input }}
+                    target={{ kind: "agent", id: a().id, input: takeInput() }}
                     persist={agentTerminalKey(a().id)}
                     hint="Connected. Drop files here to type their paths. Closing the agent's tab closes this terminal."
                     onInput={(w) => (write = w)}
