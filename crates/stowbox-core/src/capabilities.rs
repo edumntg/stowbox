@@ -61,6 +61,8 @@ pub struct Capabilities {
     pub port_forwards: bool,
     /// Opening a box in VS Code or Cursor over Remote-SSH.
     pub editor_ssh: bool,
+    /// Largest file one upload may carry, in bytes.
+    pub max_upload_bytes: u64,
     /// The Linux user commands run as in the box, and its home.
     pub remote_user: String,
     pub remote_home: String,

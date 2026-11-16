@@ -128,6 +128,12 @@ export const IDLE_STOP = [
   { secs: 0, label: "Never" },
 ];
 
+/** "20 MB", "512 MB", "1 GB" for an upload cap. */
+export function uploadCapText(bytes: number): string {
+  const gib = 1024 * 1024 * 1024;
+  return bytes >= gib && bytes % gib === 0 ? `${bytes / gib} GB` : `${Math.floor(bytes / (1024 * 1024))} MB`;
+}
+
 /** An agent's title from its first prompt: the first line, cut at 64. */
 export const firstLine = (text: string) => {
   const line = text.trim().split("\n")[0].trim();

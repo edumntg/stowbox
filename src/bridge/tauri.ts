@@ -57,7 +57,8 @@ export const tauriApi: Api = {
   spendToday: (since, limitMicro, currency) => invoke("spend_today", { since, limitMicro, currency }),
   listAgents: () => invoke("list_agents"),
   createAgent: (spec) => invoke("create_agent", { spec }),
-  agentUpload: (id, name, bytes) => invoke("agent_upload", { id, name, data: b64(bytes) }),
+  // Raw bytes, not base64 JSON: a large file would not fit in one string.
+  agentUpload: (id, name, bytes) => invoke("agent_upload", bytes, { headers: { "x-agent": id, "x-name": encodeURIComponent(name) } }),
   agentStop: (id) => invoke("agent_stop", { id }),
   agentsLive: () => invoke("agents_live"),
   deleteAgent: (id, removeWorktree, force) => invoke("delete_agent", { id, removeWorktree: removeWorktree ?? false, force: force ?? false }),

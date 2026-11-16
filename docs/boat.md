@@ -16,6 +16,7 @@ box belongs to one of them and every call about a box goes to its owner.
 | Fork | yes | yes, from the newest snapshot |
 | Delete | yes | yes, as a background operation |
 | Auto timers | auto suspend, auto hibernate | auto-stop (TTL), 1 hour by default |
+| Large files | `UploadFileStream`, 20 MB in Stowbox | signed upload URL, 512 MB in Stowbox |
 | Exec with stdin and a TTY | yes, one gRPC stream | no: the command API has neither, so Stowbox execs over SSH |
 | SSH | one key per account, a shared proxy, a fixed host key | one key per sandbox, its own address and host key, both new after every resume or fork |
 | HTTPS links | default route plus named routes, listable | one URL per port, token-gated, not listable, not removable over the API |
@@ -48,6 +49,12 @@ box belongs to one of them and every call about a box goes to its owner.
 - **Costs.** The estimate is the size's hourly price while the sandbox runs
   and zero otherwise. Details shows boat's metered seconds and dollars for
   the sandbox. The sidebar balance is the wallet from `GET /limits`.
+- **Files.** A file dropped on an agent's terminal goes through a signed
+  upload URL: `POST /sandboxes/{id}/files/upload-url` with the path, then a
+  `PUT` of the raw bytes to the URL it returns, without the API key. That
+  skips the 5 MiB cap of the JSON file call and the base64-over-SSH path, so
+  boat takes files up to 512 MB (boxd: 20 MB). The URL is a credential until
+  it expires, so it never appears in an error. The key needs `file.write`.
 - **Links.** `POST /host` makes or returns the URL of a port. boat has no
   call that lists or hides them, so Ports shows the links made from this
   Stowbox session and says so.

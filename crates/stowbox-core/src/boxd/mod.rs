@@ -52,6 +52,7 @@ pub fn capabilities() -> crate::capabilities::Capabilities {
         https_default_route: true,
         port_forwards: true,
         editor_ssh: true,
+        max_upload_bytes: crate::upload::MAX_BYTES,
         remote_user: crate::ssh::USER.into(),
         remote_home: crate::ssh::REMOTE_HOME.into(),
         metering_note: "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.".into(),

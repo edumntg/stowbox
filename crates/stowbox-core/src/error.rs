@@ -44,6 +44,7 @@ impl From<tonic::transport::Error> for Error {
 
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
-        Error::Network(e.to_string())
+        // Without the URL: a signed upload URL is a credential.
+        Error::Network(e.without_url().to_string())
     }
 }

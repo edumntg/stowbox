@@ -72,6 +72,7 @@ pub fn capabilities() -> Capabilities {
         https_default_route: false,
         port_forwards: false,
         editor_ssh: false,
+        max_upload_bytes: crate::upload::MAX_BYTES,
         remote_user: "daytona".into(),
         remote_home: "/home/daytona".into(),
         metering_note: "Daytona's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.".into(),

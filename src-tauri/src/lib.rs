@@ -101,6 +101,27 @@ struct AppState {
 
 type CmdResult<T> = Result<T, String>;
 
+/// Reverses `encodeURIComponent`; a malformed escape is kept as typed.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+        match (b[i], b.get(i + 1).copied().and_then(hex), b.get(i + 2).copied().and_then(hex)) {
+            (b'%', Some(h), Some(l)) => {
+                out.push(h << 4 | l);
+                i += 3;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -842,13 +863,21 @@ async fn agents_live(state: State<'_, AppState>) -> CmdResult<Vec<LivePush>> {
 }
 
 /// Copies a file into the box for the agent; the UI types its path at the
-/// prompt. `data` is base64. Errors carry the provider's message.
+/// prompt. The body is the file's raw bytes, so a large file does not cross
+/// as a base64 string; the agent id and the file name (percent-encoded) come
+/// as `x-agent` and `x-name` headers. Errors carry the provider's message.
 #[tauri::command]
-async fn agent_upload(state: State<'_, AppState>, id: String, name: String, data: String) -> CmdResult<Attachment> {
+async fn agent_upload(state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> CmdResult<Attachment> {
+    let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let id = header("x-agent");
+    let name = percent_decode(&header("x-name"));
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("the file did not arrive as bytes".into());
+    };
     let machine_id = state.agents.read().await.iter().find(|a| a.id == id).map(|a| a.machine_id.clone()).ok_or("agent not found")?;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| format!("the file did not arrive intact: {e}"))?;
-    upload::check_size(&name, bytes.len() as u64).map_err(err)?;
+    let bytes = bytes.clone();
     let p = state.owner(&machine_id).await?;
+    upload::check_size(&name, bytes.len() as u64, p.capabilities().max_upload_bytes).map_err(err)?;
     state.touch(&machine_id);
     upload::upload(p.as_ref(), &machine_id, &id, &name, bytes).await.map_err(err)
 }
