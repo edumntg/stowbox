@@ -77,6 +77,9 @@ function commands(query: boolean): Command[] {
   }
   if (ctxBox && !query) out.push(...boxCommands(ctxBox, false));
   if (query) for (const m of state.machines) out.push(...boxCommands(m, true));
+  if (query || !ctxBox) {
+    out.push({ id: "newtask", kind: "Action", label: "New task", detail: "Describe it; Stowbox finds or makes the box", keywords: "prompt agent start run claude codex", icon: () => <I.Play />, run: () => actions.focusComposer() });
+  }
   if (state.machines.length > 0 && (query || !ctxBox)) {
     out.push({ id: "newagent", kind: "Action", label: "New agent", keywords: "claude codex terminal session", icon: () => <I.Terminal />, run: () => actions.openDialog({ kind: "new-agent" }) });
   }

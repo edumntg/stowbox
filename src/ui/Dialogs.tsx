@@ -6,7 +6,7 @@ import { GUARD_COUNTDOWN_MS, actions, capsFor, capsOf, connectedProviders, machi
 import * as I from "../icons";
 import { isWindows } from "./common";
 import { ProviderKeyForm } from "./Onboarding";
-import { IDLE_STOP, currencySymbol, money, spendLine } from "./format";
+import { IDLE_STOP, currencySymbol, firstLine, money, spendLine } from "./format";
 
 const GIB = 1024 ** 3;
 
@@ -314,19 +314,16 @@ const NewBox = () => {
   );
 };
 
-const firstLine = (text: string) => {
-  const line = text.trim().split("\n")[0].trim();
-  return line.length > 64 ? line.slice(0, 63).trimEnd() + "…" : line;
-};
-
-const NewAgent = (p: { machineId?: string }) => {
+/** Every option of a new agent. The Fleet composer opens it prefilled for
+ * "More options". */
+const NewAgent = (p: { machineId?: string; prompt?: string; cwd?: string; harness?: Harness }) => {
   const [machineId, setMachineId] = createSignal(p.machineId ?? state.machines[0]?.id ?? "");
-  const [harness, setHarness] = createSignal<Harness>("claude-code");
-  const [cwd, setCwd] = createSignal("");
+  const [harness, setHarness] = createSignal<Harness>(p.harness ?? "claude-code");
+  const [cwd, setCwd] = createSignal(p.cwd ?? "");
   const [model, setModel] = createSignal("");
   const [skip, setSkip] = createSignal(true);
   const [ownBranch, setOwnBranch] = createSignal(false);
-  const [first, setFirst] = createSignal("");
+  const [first, setFirst] = createSignal(p.prompt ?? "");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
 
@@ -931,7 +928,7 @@ export default function Dialogs() {
         <RunSetup machineId={(d() as { machineId: string }).machineId} presetId={(d() as { presetId: string }).presetId} />
       </Match>
       <Match when={d()?.kind === "new-agent"}>
-        <NewAgent machineId={(d() as { machineId?: string }).machineId} />
+        <NewAgent {...(d() as Extract<Dialog, { kind: "new-agent" }>)} />
       </Match>
       <Match when={d()?.kind === "settings"}>
         <Settings />

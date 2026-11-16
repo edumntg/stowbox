@@ -3,6 +3,7 @@ import type { AgentMeta, Machine, MachineMetrics } from "../bridge/types";
 import { actions, agentWorking, agentsForMachine, capsFor, connectedProviders, machineById, multiProvider, phaseOf, providerLabel, spendCurrency, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import { Dot, phaseDot } from "./common";
+import Composer from "./Composer";
 import { agentPhaseLabel, gib, money, moneyByCurrency, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
 
 /** Something a person should look at. Derived from state on every render;
@@ -241,13 +242,35 @@ const Row = (p: { machine: Machine; now: number }) => {
   );
 };
 
-const AgentLine = (p: { agent: AgentMeta; now: number }) => (
+const AgentLine = (p: { agent: AgentMeta; now: number; open?: boolean }) => (
   <button class="aline" onClick={() => actions.select({ kind: "agent", id: p.agent.id })}>
     <span class="sq" data-state={phaseDot[phaseOf(p.agent)]} />
     <span class="name">{p.agent.title || "New agent"}</span>
     <span class="faint">{p.agent.machineName}</span>
     <span class="aline-right mono">
       {agentPhaseLabel[phaseOf(p.agent)].toLowerCase()} · {relTime(waitingSince(p.agent), p.now)}
+    </span>
+    <Show when={p.open}>
+      <span class="aline-go">
+        Reply <I.ChevronRight />
+      </span>
+    </Show>
+  </button>
+);
+
+const AlertCard = (p: { alert: Alert; now: number }) => (
+  <button class="alert" data-level={p.alert.level} onClick={() => (p.alert.go === "settings" ? actions.openDialog({ kind: "settings" }) : actions.select(p.alert.go))}>
+    <Show when={p.alert.level === "info"} fallback={<I.Warning />}>
+      <I.Moon />
+    </Show>
+    <span class="alert-body">
+      <span class="alert-title">{p.alert.title}</span>
+      <span>{p.alert.body}</span>
+      <Show when={p.alert.sinceMs > 0}>
+        <span class="faint">
+          {p.alert.sinceLabel ?? "First seen"} {relTime(p.alert.sinceMs, p.now)}
+        </span>
+      </Show>
     </span>
   </button>
 );
@@ -274,7 +297,20 @@ export default function FleetView() {
   const billing = () => state.machines.filter((m) => m.status === "running" || m.status === "suspended");
   const working = () => state.agents.filter(agentWorking);
   const waiting = () => state.agents.filter((a) => phaseOf(a) === "waiting");
-  const hourly = () => moneyByCurrency(billing().map((m) => ({ micro: m.estHourlyMicro, currency: m.currency })), spendCurrency(), "/h");
+  /** The hourly estimate in the main currency, big; any other currency goes in the line under it. */
+  const hourlyIn = (currency: string) => billing().filter((m) => m.currency === currency).reduce((sum, m) => sum + m.estHourlyMicro, 0);
+  const others = () => [...new Set(billing().map((m) => m.currency))].filter((c) => c !== spendCurrency());
+  const costSub = () => {
+    const parts: string[] = [];
+    const rest = others().map((c) => ({ micro: hourlyIn(c), currency: c }));
+    if (rest.length) parts.push(`+ ${moneyByCurrency(rest, spendCurrency(), "/h")}`);
+    const spend = state.guard.spend;
+    if (spend) parts.push(`today ${money(spend.amountMicro, spend.currency)}${spend.basis === "metered" ? "" : " projected"}`);
+    parts.push(`${billing().length} running or standby`);
+    return parts.join(" · ");
+  };
+  /** What needs a person: agents waiting for a reply, then the problems. */
+  const needsCount = () => waiting().length + alerts().filter((a) => a.level !== "info").length;
   const accountNames = () =>
     connectedProviders()
       .map((p) => state.accounts[p.id] && (multiProvider() ? `${p.capabilities.label} ${state.accounts[p.id].displayName}` : state.accounts[p.id].displayName))
@@ -314,76 +350,68 @@ export default function FleetView() {
       </header>
 
       <div class="view-body scroll">
+        <Show when={connectedProviders().length > 0}>
+          <Composer />
+        </Show>
         <Show
           when={state.machinesLoaded && state.machines.length > 0}
           fallback={
-            <div class="empty-state">
-              <Show when={!state.machinesLoaded} fallback={<span>No boxes in this account yet. The fleet view fills in as soon as one exists.</span>}>
-                <span>Reading your boxes…</span>
-              </Show>
-              <Show when={state.machinesLoaded}>
-                <button class="btn primary" onClick={() => actions.openDialog({ kind: "new-box" })}>
-                  <I.Plus /> New box
-                </button>
+            <div class="fleet-empty">
+              <Show when={state.machinesLoaded} fallback={<span>Reading your boxes…</span>}>
+                <span>
+                  No boxes in this account yet. Describe a task above and Stowbox makes one, or{" "}
+                  <button class="link" onClick={() => actions.openDialog({ kind: "new-box" })}>
+                    make a box
+                  </button>{" "}
+                  with every option.
+                </span>
               </Show>
             </div>
           }
         >
           <div class="tiles">
-            <Tile label="Running" value={String(running().length)} sub={`of ${state.machines.length} boxes`} ratio={state.machines.length ? running().length / state.machines.length : 0} dot="running" />
-            <Tile label="Working" value={String(working().length)} sub={`of ${state.agents.length} agents`} dot="busy" />
-            <Tile label="Waiting for you" value={String(waiting().length)} sub="their turn ended" dot="done" />
-            <Tile label="Estimated" value={hourly()} sub={`${billing().length} running or standby`} />
+            <Tile label="Needs you" value={String(needsCount())} sub={needsCount() ? "replies and problems below" : "nothing right now"} dot={needsCount() ? "done" : undefined} />
+            <Tile label="Working" value={String(working().length)} sub={`of ${state.agents.length} agents`} dot={working().length ? "busy" : undefined} />
+            <Tile label="Running" value={String(running().length)} sub={`of ${state.machines.length} boxes`} ratio={state.machines.length ? running().length / state.machines.length : 0} dot={running().length ? "running" : undefined} />
+            <Tile label="Cost now" value={`${money(hourlyIn(spendCurrency()), spendCurrency())}/h`} sub={costSub()} />
           </div>
 
-          <h3 class="fleet-h">
-            Alerts <span class="count">{alerts().length}</span>
-          </h3>
-          <Show when={alerts().length > 0} fallback={<div class="fleet-empty">Nothing needs you. Boxes billing with nothing to do, boxes near their memory or disk limit, your daily spend warning and boxes put in standby while idle show up here.</div>}>
-            <div class="alerts">
-              <For each={alerts()}>
-                {(a) => (
-                  <button class="alert" data-level={a.level} onClick={() => (a.go === "settings" ? actions.openDialog({ kind: "settings" }) : actions.select(a.go))}>
-                    <Show when={a.level === "info"} fallback={<I.Warning />}>
-                      <I.Moon />
-                    </Show>
-                    <span class="alert-body">
-                      <span class="alert-title">{a.title}</span>
-                      <span>{a.body}</span>
-                      <Show when={a.sinceMs > 0}>
-                        <span class="faint">
-                          {a.sinceLabel ?? "First seen"} {relTime(a.sinceMs, now())}
-                        </span>
-                      </Show>
-                    </span>
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
+          <section class="fleet-section">
+            <h3 class="fleet-h">
+              Needs you <span class="count">{needsCount()}</span>
+            </h3>
+            <Show
+              when={waiting().length > 0 || alerts().length > 0}
+              fallback={
+                <div class="fleet-empty">
+                  Nothing needs you. Agents waiting for a reply, boxes billing with nothing to do, boxes near their memory or disk limit and your daily spend
+                  warning show up here.
+                </div>
+              }
+            >
+              <Show when={waiting().length > 0}>
+                <div class="alines">
+                  <For each={waiting()}>{(a) => <AgentLine agent={a} now={now()} open />}</For>
+                </div>
+              </Show>
+              <Show when={alerts().length > 0}>
+                <div class="alerts">
+                  <For each={alerts()}>{(a) => <AlertCard alert={a} now={now()} />}</For>
+                </div>
+              </Show>
+            </Show>
+          </section>
 
-          <div class="fleet-cols">
-            <div>
-              <h3 class="fleet-h">
-                Working now <span class="count">{working().length}</span>
-              </h3>
-              <Show when={working().length > 0} fallback={<div class="fleet-empty">No agent is working right now.</div>}>
-                <div class="alines">
-                  <For each={working()}>{(a) => <AgentLine agent={a} now={now()} />}</For>
-                </div>
-              </Show>
-            </div>
-            <div>
-              <h3 class="fleet-h">
-                Waiting for you <span class="count">{waiting().length}</span>
-              </h3>
-              <Show when={waiting().length > 0} fallback={<div class="fleet-empty">No agent is waiting for you.</div>}>
-                <div class="alines">
-                  <For each={waiting()}>{(a) => <AgentLine agent={a} now={now()} />}</For>
-                </div>
-              </Show>
-            </div>
-          </div>
+          <section class="fleet-section">
+            <h3 class="fleet-h">
+              Working now <span class="count">{working().length}</span>
+            </h3>
+            <Show when={working().length > 0} fallback={<div class="fleet-empty">No agent is working right now.</div>}>
+              <div class="alines">
+                <For each={working()}>{(a) => <AgentLine agent={a} now={now()} />}</For>
+              </div>
+            </Show>
+          </section>
 
           <div class="fleet-table-head">
             <h3 class="fleet-h">

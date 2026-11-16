@@ -127,3 +127,9 @@ export const IDLE_STOP = [
   { secs: 4 * 3600, label: "4 h" },
   { secs: 0, label: "Never" },
 ];
+
+/** An agent's title from its first prompt: the first line, cut at 64. */
+export const firstLine = (text: string) => {
+  const line = text.trim().split("\n")[0].trim();
+  return line.length > 64 ? line.slice(0, 63).trimEnd() + "…" : line;
+};
