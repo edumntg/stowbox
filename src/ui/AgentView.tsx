@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, lazy, on, untrack } from "solid-js";
+import { Show, createEffect, createMemo, createSignal, lazy, untrack } from "solid-js";
 import type { AgentMeta } from "../bridge/types";
 import { actions, agentBoxGone as boxGone, agentWorking, capsFor, machineById, phaseOf, state } from "../state/store";
 import * as I from "../icons";
@@ -76,18 +76,25 @@ export default function AgentView(p: { agent: AgentMeta }) {
     setTerm({ agent: a().id, key: ++termKey });
   };
   const agentId = createMemo(() => a().id);
-  createEffect(
-    on(agentId, () => {
-      write = null;
-      firstInput = null;
-      setTerm(null);
-      setEnded(false);
-      setTermEnded(false);
-    }),
-  );
+  /** The agent whose terminal this view holds. Switching agents and opening
+   * the new one's terminal happen in this one effect, in that order: as two
+   * effects, Solid could run the opener first, which still saw the previous
+   * agent's terminal, and the reset after it left "Opening…" up until
+   * something else changed. The session itself was never closed. */
+  let viewing: string | null = null;
   createEffect(() => {
     const req = state.ui.agentTerminal;
     const id = agentId();
+    if (id !== viewing) {
+      viewing = id;
+      untrack(() => {
+        write = null;
+        firstInput = null;
+        setTerm(null);
+        setEnded(false);
+        setTermEnded(false);
+      });
+    }
     const ready = state.ui.agentTab === "terminal" && !gone() && !halted();
     const fresh = req && req.agentId === id && req.seq !== handled ? req : null;
     if (fresh) handled = fresh.seq;
