@@ -1,5 +1,5 @@
 import { createStore, produce } from "solid-js/store";
-import { api, isDemo, setDemo } from "../bridge/api";
+import { api, isDemo, setDemo, isTauri } from "../bridge/api";
 import { presetVariables } from "../bridge/variables";
 import type {
   TermTarget,
@@ -28,12 +28,21 @@ import type {
   SetupPush,
   SetupRun,
   SpendCheck,
+  UpdateInfo,
   VariableValues,
 } from "../bridge/types";
 import { agentPhase, firstLine, money, spendLine } from "../ui/format";
 import { agentTerminalKey, boxTerminalKey, closeTerminal } from "../ui/termSessions";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
+/** An open box in the top tab row, with its open agents in the row under
+ * it. `last` is the agent shown when the box's tab was left, if any, so
+ * coming back to the box lands where it was. */
+export interface TabGroup {
+  machineId: string;
+  agents: string[];
+  last?: string;
+}
 export type BoxTab = "agents" | "setup" | "changes" | "ports" | "terminal" | "details";
 export type AgentTab = "terminal" | "changes";
 export type Theme = "dark" | "light";
@@ -91,6 +100,18 @@ export interface Toast {
 interface AppState {
   phase: "booting" | "needs-key" | "ready" | "error";
   bootError: string;
+  /** The running app's version, "" until read. */
+  version: string;
+  update: {
+    /** A newer release, from the last check. */
+    info: UpdateInfo | null;
+    checking: boolean;
+    /** Set while downloading: the share done, 0 to 1, or null when the size is unknown. */
+    installing: { progress: number | null } | null;
+    error: string;
+    /** When the last check finished, ms; 0 before the first. */
+    checkedAt: number;
+  };
   /** Every provider Stowbox knows, connected or not. */
   providers: ProviderStatus | null;
   /** By provider id, for the connected ones that answered. */
@@ -130,7 +151,7 @@ interface AppState {
   ui: {
     theme: Theme;
     selection: Selection;
-    tabs: Selection[];
+    tabs: TabGroup[];
     sidebar: boolean;
     inspector: boolean;
     boxTab: BoxTab;
@@ -200,6 +221,8 @@ function initialTheme(): Theme {
 export const [state, setState] = createStore<AppState>({
   phase: "booting",
   bootError: "",
+  version: "",
+  update: { info: null, checking: false, installing: null, error: "", checkedAt: 0 },
   providers: null,
   accounts: {},
   rateCards: {},
@@ -243,22 +266,54 @@ const sameSel = (a: Selection, b: Selection) =>
   a.kind === b.kind && (a.kind === "none" || a.kind === "fleet" || a.kind === "presets" || (a as { id: string }).id === (b as { id: string }).id);
 const FLEET: Selection = { kind: "fleet" };
 
-function loadTabs(): Selection[] {
+/** The saved groups. Earlier builds saved one flat list of boxes and
+ * agents; it is regrouped by box once the agents are known. */
+function loadTabs(): TabGroup[] {
   try {
-    const raw = localStorage.getItem("stowbox.tabs");
-    const parsed = raw ? (JSON.parse(raw) as Selection[]) : [];
-    return Array.isArray(parsed) ? parsed.filter((t) => t && (t.kind === "box" || t.kind === "agent") && typeof (t as { id: unknown }).id === "string") : [];
+    const raw = localStorage.getItem("stowbox.tabs.v2");
+    if (raw) {
+      const parsed = JSON.parse(raw) as TabGroup[];
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((g) => g && typeof g.machineId === "string" && Array.isArray(g.agents))
+        .map((g) => ({ machineId: g.machineId, agents: g.agents.filter((a) => typeof a === "string") }));
+    }
+    const old = JSON.parse(localStorage.getItem("stowbox.tabs") ?? "[]") as Selection[];
+    const groups: TabGroup[] = [];
+    const group = (machineId: string) => {
+      let g = groups.find((x) => x.machineId === machineId);
+      if (!g) groups.push((g = { machineId, agents: [] }));
+      return g;
+    };
+    for (const t of Array.isArray(old) ? old : []) {
+      if (t?.kind === "box" && typeof t.id === "string") group(t.id);
+      if (t?.kind === "agent" && typeof t.id === "string") {
+        const a = state.agents.find((x) => x.id === t.id);
+        if (a) group(a.machineId).agents.push(a.id);
+      }
+    }
+    return groups;
   } catch {
     return [];
   }
 }
 
-function saveTabs(tabs: Selection[]) {
+function saveTabs(tabs: TabGroup[]) {
   try {
-    localStorage.setItem("stowbox.tabs", JSON.stringify(tabs));
+    localStorage.setItem("stowbox.tabs.v2", JSON.stringify(tabs.map(({ machineId, agents }) => ({ machineId, agents }))));
   } catch {
     /* private mode: tabs just do not persist */
   }
+}
+
+/** Moves `from` to where `to` is, in place of a drag-and-drop. */
+function moved<T>(list: T[], from: T, to: T): T[] {
+  const i = list.indexOf(from);
+  const j = list.indexOf(to);
+  if (i < 0 || j < 0 || i === j) return list;
+  const next = list.filter((_, k) => k !== i);
+  next.splice(j, 0, from);
+  return next;
 }
 
 document.documentElement.dataset.theme = state.ui.theme;
@@ -271,6 +326,9 @@ let unlistenNotify: (() => void) | null = null;
 /** Notifications shown since the window was last in front; the badge count. */
 let unseen = 0;
 let pollTimer: number | undefined;
+let updateTimer: number | undefined;
+/** How often a running app looks for a new release. */
+const UPDATE_EVERY_MS = 6 * 3600_000;
 let guardTimer: number | undefined;
 let spendTimer: number | undefined;
 let guardBusy = false;
@@ -479,6 +537,35 @@ export const setupRunFor = (machineId: string): SetupRun | undefined => state.se
 export const setupActive = (r: SetupRun | undefined) => !!r && (r.status === "waiting" || r.status === "running");
 
 export const actions = {
+  /** Looks for a newer GitHub release. A failed check in the background
+   * stays quiet (offline, rate limited); one asked for shows why. */
+  async checkUpdate(asked = false) {
+    if (state.update.checking || state.update.installing) return;
+    setState("update", { checking: true, error: "" });
+    try {
+      const info = await api.checkUpdate();
+      setState("update", { info, checkedAt: Date.now() });
+    } catch (e) {
+      if (asked) setState("update", "error", message(e));
+    } finally {
+      setState("update", "checking", false);
+    }
+  },
+
+  /** Downloads the update, installs it and restarts the app. */
+  async installUpdate() {
+    if (!state.update.info || state.update.installing) return;
+    setState("update", { installing: { progress: null }, error: "" });
+    try {
+      await api.installUpdate((done, total) => setState("update", "installing", { progress: total ? Math.min(1, done / total) : null }));
+    } catch (e) {
+      setState("update", "error", message(e));
+      actions.toast("Could not install the update: " + message(e));
+    } finally {
+      setState("update", "installing", null);
+    }
+  },
+
   toast(text: string, kind: Toast["kind"] = "error", extra: Pick<Toast, "detail" | "action" | "untilMs"> = {}): number {
     const id = ++toastSeq;
     setState("ui", "toasts", (t) => [...t, { id, kind, text, ...extra }]);
@@ -539,6 +626,13 @@ export const actions = {
     actions.pruneTabs();
     if (state.ui.selection.kind === "none") setState("ui", "selection", FLEET);
     void actions.refreshMetrics();
+    void api.appVersion().then((v) => setState("version", v), () => undefined);
+    // `pnpm tauri dev` would offer the latest release over itself; it checks
+    // only when asked. The browser preview checks the mock.
+    if (!(isTauri && import.meta.env.DEV) && !updateTimer) {
+      void actions.checkUpdate();
+      updateTimer = window.setInterval(() => void actions.checkUpdate(), UPDATE_EVERY_MS);
+    }
     window.clearInterval(pollTimer);
     pollTimer = window.setInterval(() => {
       if (document.visibilityState !== "visible" || state.phase !== "ready") return;
@@ -732,11 +826,18 @@ export const actions = {
 
   select(sel: Selection) {
     const prev = state.ui.selection;
-    if (sel.kind === "box" || sel.kind === "agent") {
-      if (!state.ui.tabs.some((t) => sameSel(t, sel))) {
-        setState("ui", "tabs", (tabs) => [...tabs, sel]);
-        saveTabs(state.ui.tabs);
+    // A box opens a tab in the top row; an agent opens its box's tab there
+    // and its own in the row under it.
+    const machineId = sel.kind === "box" ? sel.id : sel.kind === "agent" ? agentById(sel.id)?.machineId : undefined;
+    if (machineId) {
+      const agent = sel.kind === "agent" ? sel.id : undefined;
+      const i = state.ui.tabs.findIndex((g) => g.machineId === machineId);
+      if (i < 0) setState("ui", "tabs", (tabs) => [...tabs, { machineId, agents: agent ? [agent] : [], last: agent }]);
+      else {
+        if (agent && !state.ui.tabs[i].agents.includes(agent)) setState("ui", "tabs", i, "agents", (as) => [...as, agent]);
+        setState("ui", "tabs", i, "last", agent);
       }
+      saveTabs(state.ui.tabs);
     }
     // Another agent opens on its terminal; the Changes tab is per visit. Set
     // before the view shows, so it never mounts on the previous agent's tab.
@@ -746,38 +847,98 @@ export const actions = {
     if (sel.kind === "box" && !(state.ui.selection.kind === "box" && state.ui.selection.id === sel.id)) setState("ui", "boxTab", "agents");
   },
 
-  closeTab(sel: Selection) {
-    // A closed tab ends the terminal session it kept running in the box.
-    if (sel.kind === "agent") closeTerminal(agentTerminalKey(sel.id));
-    if (sel.kind === "box") closeTerminal(boxTerminalKey(sel.id));
+  /** Goes back to a box's tab: the agent last shown there, or the box. */
+  selectGroup(machineId: string): void {
+    const g = state.ui.tabs.find((x) => x.machineId === machineId);
+    const last = g?.last && g.agents.includes(g.last) ? g.last : undefined;
+    if (last) return actions.select({ kind: "agent", id: last });
+    if (machineById(machineId)) return actions.select({ kind: "box", id: machineId });
+    if (g?.agents[0]) return actions.select({ kind: "agent", id: g.agents[0] });
+  },
+
+  /** Closing a box's tab closes its agents' tabs too; closing an agent's
+   * keeps the box open. A closed tab ends the terminal session it kept
+   * running in the box. */
+  closeTab(sel: Selection): void {
     const tabs = state.ui.tabs;
-    const i = tabs.findIndex((t) => sameSel(t, sel));
+    if (sel.kind === "agent") {
+      closeTerminal(agentTerminalKey(sel.id));
+      const i = tabs.findIndex((g) => g.agents.includes(sel.id));
+      if (i < 0) return;
+      const g = tabs[i];
+      const at = g.agents.indexOf(sel.id);
+      const agents = g.agents.filter((a) => a !== sel.id);
+      // A box that is gone has nothing left to show once its last agent closes.
+      if (agents.length === 0 && !machineById(g.machineId)) return actions.closeTab({ kind: "box", id: g.machineId });
+      setState("ui", "tabs", i, { agents, last: g.last === sel.id ? undefined : g.last });
+      saveTabs(state.ui.tabs);
+      if (sameSel(state.ui.selection, sel)) {
+        const neighbour = agents[Math.min(at, agents.length - 1)];
+        actions.select(neighbour ? { kind: "agent", id: neighbour } : { kind: "box", id: g.machineId });
+      }
+      return;
+    }
+    if (sel.kind !== "box") return;
+    const i = tabs.findIndex((g) => g.machineId === sel.id);
     if (i < 0) return;
+    const g = tabs[i];
+    closeTerminal(boxTerminalKey(g.machineId));
+    for (const a of g.agents) closeTerminal(agentTerminalKey(a));
     const next = tabs.filter((_, j) => j !== i);
     setState("ui", "tabs", next);
     saveTabs(next);
-    if (sameSel(state.ui.selection, sel)) {
+    const cur = state.ui.selection;
+    const inGroup = (cur.kind === "box" && cur.id === g.machineId) || (cur.kind === "agent" && g.agents.includes(cur.id));
+    if (inGroup) {
       const neighbour = next[Math.min(i, next.length - 1)];
-      setState("ui", "selection", neighbour ?? FLEET);
+      if (neighbour) actions.selectGroup(neighbour.machineId);
+      else setState("ui", "selection", FLEET);
     }
   },
 
-  /** Drops tabs whose box or agent no longer exists. */
+  /** Drag-and-drop in the top row: box `from` takes box `to`'s place. */
+  moveBoxTab(from: string, to: string) {
+    const ids = moved(
+      state.ui.tabs.map((g) => g.machineId),
+      from,
+      to,
+    );
+    setState("ui", "tabs", (tabs) => ids.map((id) => tabs.find((g) => g.machineId === id)!));
+    saveTabs(state.ui.tabs);
+  },
+
+  /** Drag-and-drop in a box's agent row. */
+  moveAgentTab(machineId: string, from: string, to: string) {
+    const i = state.ui.tabs.findIndex((g) => g.machineId === machineId);
+    if (i < 0) return;
+    setState("ui", "tabs", i, "agents", (as) => moved(as, from, to));
+    saveTabs(state.ui.tabs);
+  },
+
+  /** Drops tabs whose agent no longer exists, and boxes that are gone with
+   * no agent tab left to show. Agents of a deleted box stay, as history. */
   pruneTabs() {
-    const ok = (t: Selection) =>
-      (t.kind === "box" && state.machines.some((m) => m.id === t.id)) || (t.kind === "agent" && state.agents.some((a) => a.id === t.id));
-    const next = state.ui.tabs.filter(ok);
-    for (const t of state.ui.tabs) {
-      if (ok(t)) continue;
-      if (t.kind === "agent") closeTerminal(agentTerminalKey(t.id));
-      if (t.kind === "box") closeTerminal(boxTerminalKey(t.id));
+    const prev = state.ui.tabs;
+    const next = prev
+      .map((g) => ({ ...g, agents: g.agents.filter((id) => state.agents.some((a) => a.id === id)) }))
+      .filter((g) => g.agents.length > 0 || state.machines.some((m) => m.id === g.machineId));
+    for (const g of prev) {
+      const kept = next.find((x) => x.machineId === g.machineId);
+      if (!kept) closeTerminal(boxTerminalKey(g.machineId));
+      for (const a of g.agents) if (!kept?.agents.includes(a)) closeTerminal(agentTerminalKey(a));
     }
-    if (next.length !== state.ui.tabs.length) {
+    if (JSON.stringify(next) !== JSON.stringify(prev)) {
       setState("ui", "tabs", next);
       saveTabs(next);
     }
     const sel = state.ui.selection;
-    if ((sel.kind === "box" || sel.kind === "agent") && !ok(sel)) setState("ui", "selection", next[0] ?? FLEET);
+    const ok =
+      (sel.kind === "box" && state.machines.some((m) => m.id === sel.id)) || (sel.kind === "agent" && next.some((g) => g.agents.includes(sel.id)));
+    if ((sel.kind === "box" || sel.kind === "agent") && !ok) {
+      const g = next.find((x) => sel.kind === "box" && x.machineId === sel.id) ?? next[0];
+      if (g) actions.selectGroup(g.machineId);
+      else setState("ui", "selection", FLEET);
+    }
   },
 
   openBoxTab(id: string, tab: BoxTab) {
@@ -868,7 +1029,8 @@ export const actions = {
       if (action === "destroy") {
         setState("machines", (ms) => ms.filter((m) => m.id !== id));
         setState("setupRuns", id, undefined!);
-        actions.closeTab({ kind: "box", id });
+        // Its agent tabs stay; the box's own tab closes with its last one.
+        actions.pruneTabs();
         actions.toast("Box deleted.", "info");
         // Its agents stay as history, stopped; their tabs say the box is gone.
         setState(

@@ -50,9 +50,13 @@ shadows, except the floating shadow under dialogs and toasts.
   box rows with a 7px state dot, name, and a second line with status and
   size, cost per hour on the right. Agents nest under an AGENTS header with
   their status and relative time.
-- Main column: a tab strip with a pinned Fleet tab first, then open boxes
-  and agents, each with its state dot, icon and close control, then the
-  view.
+- Main column: two tab rows, then the view. The top row has a pinned
+  Fleet tab, then the open boxes, each with its state dot, icon, the count
+  of its open agents and a close control that closes its agents too. Under
+  it, while a box or one of its agents is in view, a lower row on the view's
+  background: a pinned Box tab (the box's own view), then that box's open
+  agents, then a + for a new agent there. The active agent is underlined. A
+  box and an agent never share a row. Both rows reorder by dragging.
 - Fleet view (the landing page, read top down as an inbox): first the
   composer, a bordered card with a borderless textarea ("What should the
   agent do?"), then one row: Claude Code and Codex as a segmented control
@@ -168,8 +172,9 @@ shadows, except the floating shadow under dialogs and toasts.
   agent first, then views, boxes and recent agents; with one, "Best
   matches" across every box. No match is one muted line in the list. A
   footer names the keys.
-- A 24px status bar: account, balance, how many boxes are running and the
-  combined hourly estimate.
+- A 24px status bar: how many boxes are running and the combined hourly
+  estimate. No account or balance: with several providers connected, one
+  provider's account there reads as the whole app's.
 - Settings dialog: a key/value list. Notifications are two checkboxes
   (notify on outcomes; also while in front, disabled when the first is off)
   and, when the OS has not allowed or blocks notifications, one hint line

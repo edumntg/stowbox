@@ -5,6 +5,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isPermissionGranted, onAction, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getVersion } from "@tauri-apps/api/app";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import type { Api, LivePush, NotifyPermission, SetupPush, TermEvent } from "./types";
 
 function b64(bytes: Uint8Array): string {
@@ -127,4 +130,25 @@ export const tauriApi: Api = {
   },
   openUrl: (url) => openUrl(url),
   copyText: (text) => writeText(text),
+  appVersion: () => getVersion(),
+  checkUpdate: async () => {
+    pending = await check();
+    return pending ? { version: pending.version, notes: pending.body ?? "", date: pending.date ?? "" } : null;
+  },
+  installUpdate: async (onProgress) => {
+    if (!pending) throw new Error("no update to install; check again");
+    let done = 0;
+    let total: number | null = null;
+    await pending.downloadAndInstall((ev) => {
+      if (ev.event === "Started") total = ev.data.contentLength ?? null;
+      if (ev.event === "Progress") done += ev.data.chunkLength;
+      onProgress(done, total);
+    });
+    // Windows quits into the installer inside downloadAndInstall; elsewhere
+    // the new version runs from the next start.
+    await relaunch();
+  },
 };
+
+/** The update the last check found, kept for the install. */
+let pending: Update | null = null;

@@ -160,6 +160,40 @@ between the providers is in [docs/boat.md](docs/boat.md) and
 Platform notes for Windows (OpenSSH for the editor integration, where secrets
 live, CI): [docs/windows.md](docs/windows.md).
 
+### Updates
+
+An installed Stowbox looks for a newer release on GitHub when it starts and
+every 6 hours. When there is one, the status bar says so: click it to download
+the update, check its signature, install it and restart. Settings, Version,
+checks by hand. On Linux this works for the AppImage; a `.deb` is updated by
+installing the new `.deb`.
+
+### Install from source
+
+To use Stowbox day to day without `pnpm tauri dev`, build the installer once
+and install it like any other app (prerequisites under
+[Build from source](#build-from-source)):
+
+```sh
+git clone https://github.com/edumntg/stowbox && cd stowbox
+pnpm install
+pnpm tauri build
+```
+
+The first build takes a few minutes. Then install what it made, in
+`target/release/bundle/`:
+
+| Platform | Install |
+| --- | --- |
+| macOS | Open `macos/Stowbox.app`'s folder and drag the app to Applications, or open the `.dmg` in `dmg/` |
+| Windows | Run `nsis/Stowbox_x.y.z_x64-setup.exe` (or the `.msi` in `msi/`) |
+| Debian, Ubuntu | `sudo apt install ./target/release/bundle/deb/Stowbox_x.y.z_amd64.deb` |
+| Other Linux | `pnpm tauri build --bundles appimage`, then run `appimage/Stowbox_x.y.z_amd64.AppImage` (`chmod +x` it first) |
+
+Stowbox then starts from the app menu, the Start menu or Spotlight, with no
+terminal. A build of your own is not signed with the release key, so it does
+not take updates from the status bar; installing a release over it does.
+
 ## Build from source
 
 Rust 1.80+ ([rustup](https://rustup.rs)), Node 22+ with pnpm, and the
@@ -169,7 +203,7 @@ Rust 1.80+ ([rustup](https://rustup.rs)), Node 22+ with pnpm, and the
 git clone https://github.com/edumntg/stowbox && cd stowbox
 pnpm install
 pnpm tauri dev        # the desktop app with hot reload
-pnpm tauri build      # installers in target/release/bundle/
+pnpm tauri build      # installers in target/release/bundle/, see Install from source
 pnpm dev              # the UI alone in a browser, on mock data
 ```
 

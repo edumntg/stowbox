@@ -1444,4 +1444,22 @@ export const mockApi: Api = {
   async copyText(text) {
     await navigator.clipboard.writeText(text);
   },
+  async appVersion() {
+    return "0.1.0";
+  },
+  // No update unless the page asks for one with ?update, so the UI for it
+  // can be seen and screenshotted.
+  async checkUpdate() {
+    await sleep(300);
+    if (!new URLSearchParams(location.search).has("update")) return null;
+    return { version: "0.2.0", notes: "Placeholder release notes.", date: new Date().toISOString() };
+  },
+  async installUpdate(onProgress) {
+    const total = 18_000_000;
+    for (let done = 0; done <= total; done += 1_500_000) {
+      onProgress(done, total);
+      await sleep(120);
+    }
+    throw new Error("the browser preview cannot install updates");
+  },
 };
