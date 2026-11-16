@@ -18,6 +18,8 @@
 //! - `provision`: setup presets (commands and secrets) run in a new box.
 //! - `ssh`: the key, `~/.ssh/config` block and editor links that open a box
 //!   in VS Code or Cursor over Remote-SSH.
+//! - `sshexec`: exec in a box over SSH, for providers whose command API
+//!   lacks stdin or a TTY (boat, Daytona).
 //! - `store`: on-disk persistence of agents, presets and setup runs.
 //! - `upload`: files dropped on an agent's terminal, copied into the box.
 //! - `worktree`: one git worktree and branch per agent, next to the repository.
@@ -27,6 +29,7 @@ pub mod boat;
 pub mod boxd;
 pub mod capabilities;
 pub mod cost;
+pub mod daytona;
 pub mod error;
 pub mod git;
 pub mod guard;
@@ -37,6 +40,7 @@ pub mod provider;
 pub mod provision;
 pub mod registry;
 pub mod ssh;
+pub mod sshexec;
 pub mod store;
 #[cfg(test)]
 pub(crate) mod testing;

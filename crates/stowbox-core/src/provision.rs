@@ -877,6 +877,7 @@ mod tests {
             provider: "boxd".into(),
             size: String::new(),
             auto_stop_at: 0,
+            idle_stop_secs: 0,
             name: "box".into(),
             status: MachineStatus::Running,
             vcpu: 2,

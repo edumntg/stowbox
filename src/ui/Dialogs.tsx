@@ -6,7 +6,7 @@ import { GUARD_COUNTDOWN_MS, actions, capsFor, capsOf, connectedProviders, machi
 import * as I from "../icons";
 import { isWindows } from "./common";
 import { ProviderKeyForm } from "./Onboarding";
-import { currencySymbol, firstLine, money, spendLine } from "./format";
+import { IDLE_STOP, currencySymbol, firstLine, money, spendLine } from "./format";
 
 const GIB = 1024 ** 3;
 
@@ -84,7 +84,25 @@ const AUTO_STOP = [
 const newBoxBlurb: Record<string, string> = {
   boxd: "A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.",
   boat: "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.",
+  daytona:
+    "A Daytona sandbox from the default image, up in about a second. Daytona stops it after a stretch with no activity, even with work running; Stowbox reports activity while a terminal or an agent is open.",
 };
+
+/** Free vCPU and memory choices; Daytona's default ceiling is 4 vCPU and 8 GiB. */
+const FREE_SIZES: Record<string, { vcpu: number; mem: number }[]> = {
+  daytona: [
+    { vcpu: 1, mem: 1 },
+    { vcpu: 2, mem: 4 },
+    { vcpu: 4, mem: 8 },
+  ],
+};
+const DEFAULT_FREE_SIZES = [
+  { vcpu: 1, mem: 4 },
+  { vcpu: 2, mem: 8 },
+  { vcpu: 4, mem: 16 },
+];
+/** The disk a new box gets, in GiB, for the running estimate. */
+const ESTIMATE_DISK: Record<string, number> = { daytona: 3 };
 
 const NewBox = () => {
   const providers = connectedProviders;
@@ -94,15 +112,14 @@ const NewBox = () => {
   const rates = () => state.rateCards[providerId()];
   // boxd: free vCPU and memory, capped by the plan. Fixed menus come from the provider.
   const freeSizes = () =>
-    [
-      { vcpu: 1, mem: 4 },
-      { vcpu: 2, mem: 8 },
-      { vcpu: 4, mem: 16 },
-    ].filter((s) => !billing() || billing()!.ceilingVcpu === 0 || s.vcpu <= billing()!.ceilingVcpu);
+    (FREE_SIZES[providerId()] ?? DEFAULT_FREE_SIZES).filter(
+      (s) => !billing() || ((billing()!.ceilingVcpu === 0 || s.vcpu <= billing()!.ceilingVcpu) && (billing()!.ceilingMemoryBytes === 0 || s.mem * GIB <= billing()!.ceilingMemoryBytes)),
+    );
   const [name, setName] = createSignal("");
   const [vcpu, setVcpu] = createSignal(billing()?.defaultVcpu || 2);
   const [sizeId, setSizeId] = createSignal("default");
   const [autoStop, setAutoStop] = createSignal(4 * 3600);
+  const [idleStop, setIdleStop] = createSignal(3600);
   const [isolated, setIsolated] = createSignal(false);
   const [presetId, setPresetId] = createSignal("");
   const preset = () => state.presets.find((x) => x.id === presetId());
@@ -117,7 +134,7 @@ const NewBox = () => {
   const estimate = (s: { vcpu: number; mem: number }) => {
     const r = rates();
     if (!r || !r.rates.vcpuHourMicro) return "";
-    const micro = s.vcpu * r.rates.vcpuHourMicro + s.mem * r.rates.ramGibHourMicro + 100 * r.rates.diskGibHourMicro;
+    const micro = s.vcpu * r.rates.vcpuHourMicro + s.mem * r.rates.ramGibHourMicro + (ESTIMATE_DISK[providerId()] ?? 100) * r.rates.diskGibHourMicro;
     return money(micro, r.currency) + "/h running";
   };
 
@@ -137,7 +154,7 @@ const NewBox = () => {
           vcpu: c.customSize ? (size?.vcpu ?? null) : null,
           memoryBytes: c.customSize && size ? size.mem * GIB : null,
           size: c.customSize ? null : sizeId(),
-          autoStopSecs: c.autoStop ? autoStop() : null,
+          autoStopSecs: c.autoStop ? autoStop() : c.idleStop ? idleStop() : null,
           isolated: c.isolated && isolated(),
         },
         presetId() || null,
@@ -156,7 +173,7 @@ const NewBox = () => {
       <Show when={providers().length > 1}>
         <div class="field">
           <span class="label">Provider</span>
-          <div class="choices two" role="group" aria-label="Provider">
+          <div class="choices" classList={{ two: providers().length === 2 }} role="group" aria-label="Provider">
             <For each={providers()}>
               {(p) => (
                 <button class="choice" aria-pressed={providerId() === p.id} onClick={() => setProviderId(p.id)}>
@@ -217,6 +234,18 @@ const NewBox = () => {
           <p class="hint">
             The box stops on its own this long after it starts, agents and all; the disk stays. Push it out later from the box's Details. Free-trial accounts
             must pick 2 hours or less.
+          </p>
+        </div>
+      </Show>
+      <Show when={caps()?.idleStop}>
+        <div class="field">
+          <label for="nb-idle">Auto-stop</label>
+          <select id="nb-idle" class="input" value={String(idleStop())} onChange={(e) => setIdleStop(Number(e.currentTarget.value))}>
+            <For each={IDLE_STOP}>{(o) => <option value={String(o.secs)}>{o.secs ? `After ${o.label} with no activity` : o.label}</option>}</For>
+          </select>
+          <p class="hint">
+            {caps()?.label} stops the box after this long with no activity; the disk stays. An open terminal or agent counts as activity. Change it later from
+            the box's Details.
           </p>
         </div>
       </Show>

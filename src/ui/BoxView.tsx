@@ -4,7 +4,7 @@ import { api } from "../bridge/api";
 import { actions, agentsForMachine, capsFor, multiProvider, phaseOf, providerLabel, setupActive, setupRunFor, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot, PowerActions } from "./common";
-import { agentPhaseLabel, gib, hours, money, relTime, sizeLabel, statusLabel } from "./format";
+import { IDLE_STOP, agentPhaseLabel, gib, hours, money, relTime, sizeLabel, statusLabel } from "./format";
 import { boxTerminalKey } from "./termSessions";
 
 const Terminal = lazy(() => import("./Terminal"));
@@ -15,7 +15,7 @@ const Ports = lazy(() => import("./Ports"));
 /** boxd: works with any key linked to the account, and "Open in editor" sets
  * up the `stowbox-<name>` alias. boat: its own CLI links a key on the way. */
 const sshCommand = (m: Machine) =>
-  m.provider === "boat" ? `boat ssh ${m.id}` : m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "";
+  m.provider === "boat" ? `boat ssh ${m.id}` : m.provider === "daytona" ? `daytona ssh ${m.id}` : m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "";
 
 /** "in 3 h 20 min" until a unix time, or "now" once it passed. */
 const until = (at: number) => {
@@ -216,7 +216,8 @@ const SetupTab = (p: { machine: Machine }) => {
 };
 
 const DetailsTab = (p: { machine: Machine }) => {
-  const [usage, { refetch }] = createResource(() => p.machine.id, (id) => api.machineUsage(id));
+  // Providers that cannot report billed usage are not asked.
+  const [usage, { refetch }] = createResource(() => (capsFor(p.machine)?.meteredUsage ?? true) && p.machine.id, (id) => api.machineUsage(id));
   const m = () => p.machine;
   const timeout = (secs: number) => (secs === 0 ? "off" : secs % 3600 === 0 ? `${secs / 3600} h` : `${Math.round(secs / 60)} min`);
   const caps = () => capsFor(m());
@@ -300,6 +301,22 @@ const DetailsTab = (p: { machine: Machine }) => {
               </Show>
             </dd>
           </Show>
+          <Show when={caps()?.idleStop}>
+            <dt>Auto-stop</dt>
+            <dd>
+              <span>{m().idleStopSecs > 0 ? `after ${timeout(m().idleStopSecs)} with no activity` : "off"}</span>
+              <For each={IDLE_STOP.filter((o) => o.secs !== m().idleStopSecs)}>
+                {(o) => (
+                  <>
+                    {" · "}
+                    <button class="link" disabled={!!state.pending[m().id]} onClick={() => void actions.setAutoStop(m().id, o.secs)}>
+                      {o.secs ? o.label : "never"}
+                    </button>
+                  </>
+                )}
+              </For>
+            </dd>
+          </Show>
           <Show when={caps()?.autoSuspend ?? true}>
             <dt>Auto standby</dt>
             <dd>{timeout(m().autoSuspendSecs)}</dd>
@@ -338,7 +355,7 @@ const DetailsTab = (p: { machine: Machine }) => {
           <dt>Created</dt>
           <dd>{m().createdAt ? new Date(m().createdAt * 1000).toLocaleString() : "unknown"}</dd>
           <Show when={m().lastConnectedMs > 0}>
-            <dt>Last connected</dt>
+            <dt>{caps()?.idleStop ? "Last activity" : "Last connected"}</dt>
             <dd>{relTime(m().lastConnectedMs)}</dd>
           </Show>
           <Show when={m().billingOrg || m().org}>
@@ -350,7 +367,7 @@ const DetailsTab = (p: { machine: Machine }) => {
           when={caps()?.editorSsh ?? true}
           fallback={
             <p class="note">
-              The SSH command needs the {label()} CLI, signed in. Stowbox reaches the box over SSH with its own key, so the Terminal tab needs nothing installed.
+              The SSH command needs the {label()} CLI, signed in. Stowbox opens its own SSH connection, so the Terminal tab needs nothing installed.
             </p>
           }
         >
@@ -364,6 +381,14 @@ const DetailsTab = (p: { machine: Machine }) => {
       <section>
         <h3 class="section-title">Usage since creation</h3>
         <Switch>
+          <Match when={!(caps()?.meteredUsage ?? true)}>
+            <p class="note">
+              {caps()?.meteringNote}{" "}
+              <button class="link" onClick={() => void actions.open(caps()!.consoleUrl)}>
+                Open the {label()} dashboard
+              </button>
+            </p>
+          </Match>
           <Match when={usage.loading}>
             <div class="muted">Asking {label()} for the metered usage…</div>
           </Match>

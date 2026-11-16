@@ -47,7 +47,7 @@ impl MachineStatus {
 #[serde(rename_all = "camelCase")]
 pub struct Machine {
     pub id: String,
-    /// The provider that owns the box: "boxd" or "boat". Filled by the
+    /// The provider that owns the box: "boxd", "boat" or "daytona". Filled by the
     /// provider, so the shell can route every call about the box.
     #[serde(default)]
     pub provider: String,
@@ -80,6 +80,10 @@ pub struct Machine {
     /// or not reported.
     #[serde(default)]
     pub auto_stop_at: i64,
+    /// The provider stops the box after this long with no activity; 0 is
+    /// off or not that kind of provider.
+    #[serde(default)]
+    pub idle_stop_secs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,8 +195,9 @@ pub struct CreateSpec {
     /// A size from the provider's menu, for providers without free sizes.
     #[serde(default)]
     pub size: Option<String>,
-    /// Auto-stop after this many seconds; Some(0) is never, None is the
-    /// provider's default. Only for providers with `auto_stop`.
+    /// Auto-stop after this many seconds (of running for `auto_stop`, of
+    /// no activity for `idle_stop`); Some(0) is never, None is the
+    /// provider's default.
     #[serde(default)]
     pub auto_stop_secs: Option<u32>,
     pub vcpu: Option<u32>,

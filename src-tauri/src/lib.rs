@@ -1,7 +1,7 @@
 //! The desktop shell: owns the provider connection, the on-disk store, the
 //! live terminals and the agent turns, and exposes them to the UI as Tauri
-//! commands. Nothing here knows about one provider specifically: boxd and
-//! boat live in core, and every call about a box goes to the provider the
+//! commands. Nothing here knows about one provider specifically: boxd,
+//! boat and Daytona live in core, and every call about a box goes to the provider the
 //! registry says owns it.
 
 mod secrets;
@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stowbox_core::agent::{self, session, AgentMeta, Harness};
 use stowbox_core::boat::{Boat, BoatConfig};
+use stowbox_core::daytona::{Daytona, DaytonaConfig};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::capabilities::Capabilities;
 use stowbox_core::cost::{self, RateCard};
@@ -44,12 +45,13 @@ struct RunHandle {
 }
 
 /// Every provider Stowbox can drive, in the order the UI lists them.
-const PROVIDERS: &[&str] = &["boxd", "boat"];
+const PROVIDERS: &[&str] = &["boxd", "boat", "daytona"];
 
 fn capabilities_of(id: &str) -> Option<Capabilities> {
     match id {
         "boxd" => Some(stowbox_core::boxd::capabilities()),
         "boat" => Some(stowbox_core::boat::capabilities()),
+        "daytona" => Some(stowbox_core::daytona::capabilities()),
         _ => None,
     }
 }
@@ -60,6 +62,7 @@ fn make_provider(id: &str, key: String, data_dir: &std::path::Path) -> CmdResult
     Ok(match id {
         "boxd" => Arc::new(Boxd::new(key, BoxdConfig::default()).map_err(err)?),
         "boat" => Arc::new(Boat::new(key, BoatConfig::new(data_dir.join("ssh").join("boat_ed25519"))).map_err(err)?),
+        "daytona" => Arc::new(Daytona::new(DaytonaConfig::new(data_dir.join("ssh").join("daytona_known_hosts")), key).map_err(err)?),
         other => return Err(format!("Stowbox does not know the provider {other}")),
     })
 }
@@ -504,7 +507,7 @@ async fn guard_suspend(state: State<'_, AppState>, machine_id: String, policy: I
     let card = state.card(&p).await;
     let hourly_before_micro = card.hourly_micro(&m);
     let suspended = matches!(verdict, Verdict::Suspend { .. });
-    // Standby where the provider has it; a provider without it (boat) is stopped.
+    // Standby where the provider has it; a provider without it (boat, Daytona) is stopped.
     let (action, after) = if p.capabilities().supports(PowerAction::Pause) { (PowerAction::Pause, MachineStatus::Suspended) } else { (PowerAction::Stop, MachineStatus::Stopped) };
     let hourly_after_micro = if suspended {
         p.power(&m.id, action).await.map_err(err)?;

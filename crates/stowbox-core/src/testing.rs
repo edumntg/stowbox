@@ -10,6 +10,7 @@ pub fn machine(id: &str, status: MachineStatus) -> Machine {
         provider: "boxd".into(),
         size: String::new(),
         auto_stop_at: 0,
+        idle_stop_secs: 0,
         name: "box".into(),
         status,
         vcpu: 2,

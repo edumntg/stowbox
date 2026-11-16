@@ -17,6 +17,7 @@ pub fn machine(vm: pb::GetVmResponse, desktop_url: &dyn Fn(&str) -> String) -> M
         provider: "boxd".into(),
         size: String::new(),
         auto_stop_at: 0,
+        idle_stop_secs: 0,
         name: vm.name,
         status: MachineStatus::parse(&vm.status),
         vcpu: vm.vcpu,

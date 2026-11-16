@@ -41,6 +41,7 @@ pub fn capabilities() -> crate::capabilities::Capabilities {
         isolated: true,
         auto_suspend: true,
         auto_hibernate: true,
+        idle_stop: false,
         auto_stop: false,
         custom_size: true,
         sizes: Vec::new(),
@@ -54,6 +55,7 @@ pub fn capabilities() -> crate::capabilities::Capabilities {
         remote_user: crate::ssh::USER.into(),
         remote_home: crate::ssh::REMOTE_HOME.into(),
         metering_note: "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.".into(),
+        metered_usage: true,
     }
 }
 

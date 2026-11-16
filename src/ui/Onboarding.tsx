@@ -97,9 +97,9 @@ export default function Onboarding() {
         <h1>Connect a cloud box provider</h1>
         <p>
           Stowbox drives cloud machines from your desktop: spin boxes up, run Claude Code or Codex inside them, watch the cost. The key goes straight from this
-          computer to the provider; nothing passes through a Stowbox server. You can connect the other provider later from Settings and use both.
+          computer to the provider; nothing passes through a Stowbox server. You can connect the others later from Settings and use them side by side.
         </p>
-        <div class="choices two" role="group" aria-label="Provider">
+        <div class="choices" role="group" aria-label="Provider">
           <For each={providers()}>
             {(p) => (
               <button type="button" class="choice" aria-pressed={chosen()?.id === p.id} onClick={() => setPick(p.id)}>
