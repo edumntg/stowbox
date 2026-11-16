@@ -1,9 +1,9 @@
 import { Show, createEffect, createMemo, createSignal, lazy, untrack } from "solid-js";
 import type { AgentMeta } from "../bridge/types";
-import { actions, agentBoxGone as boxGone, agentWorking, capsFor, machineById, phaseOf, state } from "../state/store";
+import { actions, agentBoxGone as boxGone, agentWorking, capsFor, machineById, phaseOf, providerLabel, state } from "../state/store";
 import * as I from "../icons";
-import { AgentDot, Dot } from "./common";
-import { agentPhaseLabel, fileSize, uploadCapText } from "./format";
+import { AgentDot, BoxState, Dot, PowerActions } from "./common";
+import { agentPhaseLabel, fileSize, statusLabel, uploadCapText } from "./format";
 import type { TermInput } from "./Terminal";
 import { agentTerminalKey, closeTerminal } from "./termSessions";
 
@@ -170,7 +170,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
           </Show>
         </div>
         <div class="view-actions">
-          <Show when={!gone() && !ended() && (running() || (term() && !termEnded()))}>
+          <Show when={!gone() && !halted() && !ended() && (running() || (term() && !termEnded()))}>
             <button class="btn ghost danger" onClick={() => void endSession()} title={`Quit ${harnessName()} in the box. The conversation stays; opening the agent again resumes it.`}>
               <I.Stop /> End session
             </button>
@@ -188,6 +188,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
                 {a().machineName}
               </button>
             </Show>
+            <Show when={machine()}>{(m) => <BoxState status={m().status} />}</Show>
           </span>
           <span class="stats mono" style={{ "font-size": "var(--text-2xs)" }}>
             <span>{gone() ? "Box deleted" : agentPhaseLabel[phaseOf(a())]}</span>
@@ -268,8 +269,19 @@ export default function AgentView(p: { agent: AgentMeta }) {
                     }
                   >
                     <span>
-                      <strong>{machine()?.name ?? a().machineName} is not running.</strong> Start it to open {harnessName()} here.
+                      <strong>
+                        {machine()?.name ?? a().machineName} is {machine() ? statusLabel[machine()!.status].toLowerCase() : "not running"}.
+                      </strong>{" "}
+                      Start it to open {harnessName()} here; the conversation is kept.
+                      <Show when={machine() && capsFor(machine()!)?.autoStop}> {providerLabel(machine()!.provider)} stops a box when its auto-stop falls due.</Show>
                     </span>
+                    <Show when={machine()}>
+                      {(m) => (
+                        <div class="empty-actions">
+                          <PowerActions machine={m()} />
+                        </div>
+                      )}
+                    </Show>
                   </Show>
                 </div>
               </div>

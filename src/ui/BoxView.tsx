@@ -4,7 +4,7 @@ import { api } from "../bridge/api";
 import { actions, agentsForMachine, capsFor, multiProvider, phaseOf, providerLabel, setupActive, setupRunFor, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot, PowerActions } from "./common";
-import { IDLE_STOP, agentPhaseLabel, gib, hours, money, relTime, sizeLabel, statusLabel } from "./format";
+import { agentPhaseLabel, gib, hours, IDLE_STOP, money, relTime, sizeLabel, statusLabel, until } from "./format";
 import { boxTerminalKey } from "./termSessions";
 
 const Terminal = lazy(() => import("./Terminal"));
@@ -16,15 +16,6 @@ const Ports = lazy(() => import("./Ports"));
  * up the `stowbox-<name>` alias. boat: its own CLI links a key on the way. */
 const sshCommand = (m: Machine) =>
   m.provider === "boat" ? `boat ssh ${m.id}` : m.provider === "daytona" ? `daytona ssh ${m.id}` : m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "";
-
-/** "in 3 h 20 min" until a unix time, or "now" once it passed. */
-const until = (at: number) => {
-  const secs = at - Math.floor(Date.now() / 1000);
-  if (secs <= 0) return "now";
-  const h = Math.floor(secs / 3600);
-  const min = Math.round((secs % 3600) / 60);
-  return `in ${h ? `${h} h ` : ""}${min} min`;
-};
 
 /** The directories this box's agents work in, most recently active first. */
 const repoDirs = (id: string) => [...new Set(agentsForMachine(id).sort((a, b) => b.updatedAt - a.updatedAt).map((a) => a.cwd ?? "~"))];

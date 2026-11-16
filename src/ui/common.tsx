@@ -1,8 +1,8 @@
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import type { AgentMeta, Machine, MachineStatus, PowerAction } from "../bridge/types";
 import { actions, capsFor, state } from "../state/store";
 import * as I from "../icons";
-import { agentPhase, agentPhaseLabel, type AgentPhase } from "./format";
+import { agentPhase, agentPhaseLabel, statusLabel, type AgentPhase } from "./format";
 
 export function dotState(s: MachineStatus): string {
   switch (s) {
@@ -27,6 +27,15 @@ export function dotState(s: MachineStatus): string {
 export const phaseDot: Record<AgentPhase, string> = { working: "busy", waiting: "done", running: "running", stopped: "stopped", unknown: "idle" };
 
 export const Dot = (p: { status: MachineStatus }) => <span class="dot" data-state={dotState(p.status)} />;
+/** The box's state in words, coloured like its dot. Running says nothing:
+ * it is the state that needs no attention. */
+export const BoxState = (p: { status: MachineStatus; always?: boolean }) => (
+  <Show when={p.always || p.status !== "running"}>
+    <span class="box-state" data-state={dotState(p.status)}>
+      {statusLabel[p.status]}
+    </span>
+  </Show>
+);
 /** The agent as its box last showed it. */
 export const AgentDot = (p: { agent: AgentMeta }) => {
   const phase = () => agentPhase(state.live[p.agent.id]);
@@ -89,12 +98,22 @@ function statePowerButtons(m: Machine): PowerButton[] {
   }
 }
 
+/** What brings a box back up; while it is down, that button is the primary
+ * one wherever power buttons show, so Start or Resume is never hunted for. */
+const WAKES: PowerAction[] = ["start", "resume", "wake"];
+
 export const PowerActions = (p: { machine: Machine; ghost?: boolean; size?: "sm" }) => {
   const busy = () => !!state.pending[p.machine.id];
   return (
     <For each={powerButtons(p.machine)}>
       {(b) => (
-        <button class="btn" classList={{ ghost: !!p.ghost, sm: p.size === "sm" }} title={b.title} disabled={busy()} onClick={() => void actions.power(p.machine.id, b.action)}>
+        <button
+          class="btn"
+          classList={{ ghost: !!p.ghost && !WAKES.includes(b.action), primary: WAKES.includes(b.action), sm: p.size === "sm" }}
+          title={b.title}
+          disabled={busy()}
+          onClick={() => void actions.power(p.machine.id, b.action)}
+        >
           <b.icon />
           {b.label}
         </button>
