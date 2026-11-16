@@ -48,8 +48,10 @@ shadows, except the floating shadow under dialogs and toasts.
   an orange square.
 - Left sidebar (260px): BOXES header with count and actions, a search field,
   box rows with a 7px state dot, name, and a second line with status and
-  size, cost per hour on the right. Agents nest under an AGENTS header with
-  their status and relative time.
+  size, cost per hour on the right, then a + for a new agent in that box
+  (shown while the row is hovered, selected or focused) and the caret that
+  folds its agents. Agents nest under an AGENTS header with their status and
+  relative time.
 - Main column: two tab rows, then the view. The top row has a pinned
   Fleet tab, then the open boxes, each with its state dot, icon, the count
   of its open agents and a close control that closes its agents too. Under
