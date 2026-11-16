@@ -142,6 +142,8 @@ export interface Capabilities {
   httpsDefaultRoute: boolean;
   portForwards: boolean;
   editorSsh: boolean;
+  /** Largest file one upload may carry, in bytes. */
+  maxUploadBytes: number;
   remoteUser: string;
   remoteHome: string;
   meteringNote: string;

@@ -99,6 +99,43 @@ impl Api {
         self.call(Method::DELETE, path, None, headers).await
     }
 
+    /// A URL the API handed out, made absolute against the API's origin
+    /// when it came as a path.
+    pub fn absolute(&self, url: &str) -> String {
+        if url.starts_with("https://") || url.starts_with("http://") {
+            return url.to_string();
+        }
+        let after_scheme = self.base.find("://").map(|i| i + 3).unwrap_or(0);
+        let origin = match self.base[after_scheme..].find('/') {
+            Some(i) => &self.base[..after_scheme + i],
+            None => &self.base,
+        };
+        format!("{origin}/{}", url.trim_start_matches('/'))
+    }
+
+    /// PUTs raw bytes to a signed URL. The URL carries its own grant, so no
+    /// bearer goes with it, and it is kept out of every error: anyone who
+    /// has it can write the file until it expires.
+    pub async fn put_signed(&self, url: &str, data: Vec<u8>) -> Result<()> {
+        let size = data.len() as u64;
+        let resp = self
+            .http
+            .put(url)
+            .header("Content-Type", "application/octet-stream")
+            .timeout(transfer_timeout(size))
+            .body(data)
+            .send()
+            .await?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let text = resp.text().await.unwrap_or_default();
+        let r = Refusal::parse(status.as_u16(), None, &text);
+        let what = [r.message, r.code].into_iter().find(|s| !s.is_empty()).unwrap_or_default();
+        Err(Error::Provider(format!("boat refused the upload ({}){}", status.as_u16(), if what.is_empty() { String::new() } else { format!(": {what}") })))
+    }
+
     /// Every item of a cursor-paged list, `field` being the array's name.
     pub async fn list_all(&self, path: &str, field: &str) -> Result<Vec<Value>> {
         let mut out = Vec::new();
@@ -162,6 +199,12 @@ impl Api {
     }
 }
 
+/// How long one transfer of `size` bytes may take: two minutes, plus a
+/// second per 512 KiB so a slow uplink is not cut off mid-file.
+pub fn transfer_timeout(size: u64) -> Duration {
+    Duration::from_secs(120 + size / (512 * 1024))
+}
+
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -221,6 +264,20 @@ mod tests {
     fn auth_errors_map_to_auth() {
         assert!(matches!(Refusal::parse(401, None, r#"{"code":"unauthorized","message":"bad key"}"#).into_error(), Error::Auth(_)));
         assert!(matches!(Refusal::parse(404, None, r#"{"code":"not_found","message":"no"}"#).into_error(), Error::NotFound(_)));
+    }
+
+    #[test]
+    fn handed_out_paths_resolve_against_the_origin() {
+        let api = Api::new("https://boat.dev/api/v1/", "boat_x".into()).unwrap();
+        assert_eq!(api.absolute("https://files.boat.dev/u/abc?sig=1"), "https://files.boat.dev/u/abc?sig=1");
+        assert_eq!(api.absolute("/api/v1/files/abc?sig=1"), "https://boat.dev/api/v1/files/abc?sig=1");
+        assert_eq!(Api::new("http://127.0.0.1:9", "k".into()).unwrap().absolute("x"), "http://127.0.0.1:9/x");
+    }
+
+    #[test]
+    fn big_transfers_get_more_time() {
+        assert_eq!(transfer_timeout(0), Duration::from_secs(120));
+        assert_eq!(transfer_timeout(1024 * 1024 * 1024), Duration::from_secs(120 + 2048));
     }
 
     #[test]

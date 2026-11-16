@@ -1115,6 +1115,25 @@ ul {
   color: var(--danger);
 }
 
+/* The last address on screen, so a sign-in link can be opened or copied
+   even while the app in the terminal holds the mouse. */
+.term-link {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: rgb(255 255 255 / 0.6);
+}
+
+.term-link-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+  margin-right: 4px;
+}
+
 /* ---------- forms ---------- */
 
 .field {

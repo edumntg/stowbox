@@ -1,16 +1,14 @@
 import { Show, createEffect, createMemo, createSignal, lazy, on, untrack } from "solid-js";
 import type { AgentMeta } from "../bridge/types";
-import { actions, agentBoxGone as boxGone, agentWorking, machineById, phaseOf, state } from "../state/store";
+import { actions, agentBoxGone as boxGone, agentWorking, capsFor, machineById, phaseOf, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot } from "./common";
-import { agentPhaseLabel, fileSize } from "./format";
+import { agentPhaseLabel, fileSize, uploadCapText } from "./format";
 import type { TermInput } from "./Terminal";
 import { agentTerminalKey, closeTerminal } from "./termSessions";
 
 const Changes = lazy(() => import("./Changes"));
 const Terminal = lazy(() => import("./Terminal"));
-
-const UPLOAD_MAX = 20 * 1024 * 1024;
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -114,10 +112,12 @@ export default function AgentView(p: { agent: AgentMeta }) {
   let picker!: HTMLInputElement;
   const addFiles = async (files: File[]) => {
     const id = a().id;
+    const m = machine();
+    const max = (m && capsFor(m)?.maxUploadBytes) || 20 * 1024 * 1024;
     for (const file of files) {
       const name = file.name || "pasted-image.png";
       if (file.size === 0) return setCopying({ name, error: "the file is empty" });
-      if (file.size > UPLOAD_MAX) return setCopying({ name, error: `${fileSize(file.size)}; files are limited to 20 MB each` });
+      if (file.size > max) return setCopying({ name, error: `${fileSize(file.size)}; files are limited to ${uploadCapText(max)} each` });
       setCopying({ name });
       try {
         const up = await actions.upload(id, name, new Uint8Array(await file.arrayBuffer()));

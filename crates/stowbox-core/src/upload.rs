@@ -12,7 +12,8 @@ use std::time::Duration;
 /// Upload directories live under `$HOME/<UPLOADS_DIR>/<agent id>/`.
 pub const UPLOADS_DIR: &str = ".stowbox/uploads";
 
-/// Largest file accepted, in bytes.
+/// Largest file accepted by default, in bytes; a provider's
+/// `Capabilities::max_upload_bytes` can raise it.
 pub const MAX_BYTES: u64 = 20 * 1024 * 1024;
 
 /// Most files in one drop.
@@ -32,19 +33,24 @@ pub struct Attachment {
     pub size: u64,
 }
 
-/// "20 MB" for the size cap in error messages.
-fn mb(bytes: u64) -> String {
-    format!("{} MB", bytes / (1024 * 1024))
+/// "20 MB" or "1 GB" for the size cap in error messages.
+fn cap_text(bytes: u64) -> String {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if bytes >= GIB && bytes % GIB == 0 {
+        format!("{} GB", bytes / GIB)
+    } else {
+        format!("{} MB", bytes / (1024 * 1024))
+    }
 }
 
-/// Refuses a file over the cap or an empty one, naming the file.
-pub fn check_size(name: &str, size: u64) -> Result<()> {
+/// Refuses a file over `max` or an empty one, naming the file.
+pub fn check_size(name: &str, size: u64, max: u64) -> Result<()> {
     if size == 0 {
         return Err(Error::Provider(format!("{name} is empty")));
     }
-    if size > MAX_BYTES {
+    if size > max {
         let shown = format!("{:.1} MB", size as f64 / (1024.0 * 1024.0));
-        return Err(Error::Provider(format!("{name} is {shown}; attachments are limited to {} each", mb(MAX_BYTES))));
+        return Err(Error::Provider(format!("{name} is {shown}; attachments are limited to {} each", cap_text(max))));
     }
     Ok(())
 }
@@ -127,7 +133,7 @@ pub async fn upload_over_exec<P: Provider + ?Sized>(p: &P, machine_id: &str, pat
 /// returns where it landed. Errors carry the provider's message.
 pub async fn upload<P: Provider + ?Sized>(p: &P, machine_id: &str, agent_id: &str, name: &str, data: Vec<u8>) -> Result<Attachment> {
     let size = data.len() as u64;
-    check_size(name, size)?;
+    check_size(name, size, p.capabilities().max_upload_bytes)?;
     let dir = crate::git::capture(p, machine_id, dir_script(agent_id), None, Duration::from_secs(60), "making the upload directory").await?;
     let dir_path = String::from_utf8_lossy(&dir.stdout).lines().map(str::trim).filter(|l| l.starts_with('/')).last().unwrap_or("").to_string();
     if dir.code != 0 || dir_path.is_empty() {
@@ -162,11 +168,14 @@ mod tests {
 
     #[test]
     fn size_cap_is_honest() {
-        assert!(check_size("a.png", 1).is_ok());
-        assert!(check_size("a.png", MAX_BYTES).is_ok());
-        let e = check_size("big.mov", MAX_BYTES + 1).unwrap_err().to_string();
+        assert!(check_size("a.png", 1, MAX_BYTES).is_ok());
+        assert!(check_size("a.png", MAX_BYTES, MAX_BYTES).is_ok());
+        let e = check_size("big.mov", MAX_BYTES + 1, MAX_BYTES).unwrap_err().to_string();
         assert!(e.contains("big.mov") && e.contains("20 MB"), "{e}");
-        assert!(check_size("empty.txt", 0).unwrap_err().to_string().contains("empty"));
+        assert!(check_size("empty.txt", 0, MAX_BYTES).unwrap_err().to_string().contains("empty"));
+        let gib = 1024 * 1024 * 1024;
+        assert!(check_size("big.mov", MAX_BYTES + 1, gib).is_ok());
+        assert!(check_size("huge.iso", gib + 1, gib).unwrap_err().to_string().contains("limited to 1 GB"));
     }
 
     #[test]

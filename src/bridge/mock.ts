@@ -1,6 +1,7 @@
 // Browser-only stand-in for the desktop shell. Used to develop and screenshot
 // the UI with `pnpm dev` outside Tauri. Every value here is a placeholder.
 
+import { uploadCapText } from "../ui/format";
 import type {
   Account,
   AgentLive,
@@ -56,6 +57,7 @@ const BOXD_CAPS: Capabilities = {
   httpsDefaultRoute: true,
   portForwards: true,
   editorSsh: true,
+  maxUploadBytes: 20 * 1024 * 1024,
   remoteUser: "boxd",
   remoteHome: "/home/boxd",
   meteringNote: "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.",
@@ -89,6 +91,7 @@ const BOAT_CAPS: Capabilities = {
   httpsDefaultRoute: false,
   portForwards: false,
   editorSsh: false,
+  maxUploadBytes: 512 * 1024 * 1024,
   remoteUser: "user",
   remoteHome: "/home/user",
   meteringNote: "boat counts by the second at list price; time included in the plan is not taken off here.",
@@ -116,6 +119,7 @@ const DAYTONA_CAPS: Capabilities = {
   httpsDefaultRoute: false,
   portForwards: false,
   editorSsh: false,
+  maxUploadBytes: 20 * 1024 * 1024,
   remoteUser: "daytona",
   remoteHome: "/home/daytona",
   meteringNote: "Daytona's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.",
@@ -418,7 +422,6 @@ function simulateTurn(id: string) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const UPLOAD_MAX = 20 * 1024 * 1024;
 const mb = (n: number) => (n / (1024 * 1024)).toFixed(1) + " MB";
 
 // Setup presets. Secret values are kept here only to mimic the keychain;
@@ -1070,11 +1073,12 @@ export const mockApi: Api = {
     const a = agents.find((x) => x.id === id);
     if (!a) throw new Error("agent not found");
     if (bytes.length === 0) throw new Error(`${name} is empty`);
-    if (bytes.length > UPLOAD_MAX) throw new Error(`${name} is ${mb(bytes.length)}; files are limited to 20 MB each`);
+    const caps = ownerCaps(a.machineId);
+    if (bytes.length > caps.maxUploadBytes) throw new Error(`${name} is ${mb(bytes.length)}; files are limited to ${uploadCapText(caps.maxUploadBytes)} each`);
     await sleep(400 + Math.min(1600, bytes.length / 4000));
     const clean = (name.split(/[\\/]/).pop() ?? "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "") || "file";
     const tag = Math.random().toString(16).slice(2, 8);
-    return { name, path: `/home/boxd/.stowbox/uploads/${id}/${tag}-${clean}`, size: bytes.length };
+    return { name, path: `${caps.remoteHome}/.stowbox/uploads/${id}/${tag}-${clean}`, size: bytes.length };
   },
   async agentStop(id) {
     await sleep(300);
@@ -1329,7 +1333,16 @@ export const mockApi: Api = {
       if (target.input?.trim()) simulateTurn(a.id);
       else setLive(a.id, () => ({ running: true }));
     } else if (target.kind === "claude-login") {
-      setTimeout(() => send("mock terminal: the desktop build runs claude /login inside the box.\r\nLeave this tab to pretend the sign-in worked.\r\n"), 100);
+      // Like the real sign-in: a long address that wraps over rows, under an
+      // app that tracks the mouse (which is what made selections vanish).
+      const url = `https://example.com/oauth/authorize?code=true&client_id=mock-client&response_type=code&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=user%3Ainference&state=${"m0ck".repeat(12)}`;
+      setTimeout(
+        () =>
+          send(
+            `\x1b[?1003h\x1b[?1006hmock terminal: the desktop build runs claude /login inside the box.\r\nLeave this tab to pretend the sign-in worked.\r\n\r\nBrowser didn't open? Use the url below to sign in:\r\n\r\n${url}\r\n\r\nPaste code here if prompted > `,
+          ),
+        100,
+      );
       loginTerminals.set(id, machineId);
     } else {
       setTimeout(() => send("mock terminal: the desktop build runs a real shell inside the box.\r\n$ "), 100);

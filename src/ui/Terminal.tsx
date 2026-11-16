@@ -1,7 +1,7 @@
-import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { api } from "../bridge/api";
 import type { TermTarget } from "../bridge/types";
-import { isWindows } from "./common";
+import { isMac } from "./common";
 import { sessions } from "./termSessions";
 
 /** Writes into an open terminal as if typed. */
@@ -25,6 +25,8 @@ interface Session {
   status: Status;
   detail: string;
   bad: boolean;
+  /** The last web address on screen, for the bar's Open and Copy. */
+  url: string;
   /** Set while open. */
   write: TermInput | null;
   /** The view showing it, if any. */
@@ -34,8 +36,37 @@ interface Session {
 
 const over = (s: Session) => s.status === "ended" || s.status === "error";
 
+const URL_RE = /https?:\/\/[^\s"'<>`]+/g;
+
+/** The last http(s) address in the visible rows. A long address runs over
+ * several rows: soft-wrapped ones are marked as such, and a full row that
+ * ends inside the address carries on into the next too, since some TUIs
+ * break lines themselves. */
+function lastUrlOnScreen(term: import("@xterm/xterm").Terminal): string {
+  const buf = term.buffer.active;
+  const text: string[] = [];
+  let line = "";
+  for (let y = buf.viewportY; y < buf.viewportY + term.rows; y++) {
+    const row = buf.getLine(y);
+    if (!row) break;
+    const s = row.translateToString(true);
+    const next = buf.getLine(y + 1);
+    line += s;
+    const nextText = next?.translateToString(true) ?? "";
+    const runsOn = next?.isWrapped || (s.length >= term.cols && /[^\s]$/.test(s) && /^[^\s]/.test(nextText) && /https?:\/\/[^\s]*$/.test(line));
+    if (!runsOn) {
+      text.push(line);
+      line = "";
+    }
+  }
+  if (line) text.push(line);
+  const found = text.join("\n").match(URL_RE);
+  // Closing punctuation of the sentence around it is not part of it.
+  return found ? found[found.length - 1].replace(/[).,;:!?\]]+$/, "") : "";
+}
+
 async function createSession(machine: string, target: TermTarget, host: HTMLElement, key: string | undefined): Promise<Session> {
-  const [{ Terminal: XTerm }, { FitAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
+  const [{ Terminal: XTerm }, { FitAddon }, { WebLinksAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit"), import("@xterm/addon-web-links")]);
   await import("@xterm/xterm/css/xterm.css");
 
   const css = getComputedStyle(document.documentElement);
@@ -45,6 +76,11 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
     lineHeight: 1.2,
     cursorBlink: true,
     scrollback: 5000,
+    // Option-drag selects on a Mac while the app tracks the mouse, as
+    // Shift-drag does elsewhere.
+    macOptionClickForcesSelection: true,
+    // Links the app marks itself (OSC 8) open in the browser too.
+    linkHandler: { activate: (_e, uri) => void api.openUrl(uri).catch(() => undefined) },
     theme: {
       background: css.getPropertyValue("--terminal").trim() || "#0a0a0a",
       foreground: "#e5e5e5",
@@ -52,30 +88,53 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
       selectionBackground: "rgba(255, 255, 255, 0.22)",
     },
   });
-  // Windows terminals copy with Ctrl+C when text is selected (and send
-  // Ctrl+C, the interrupt, when nothing is) and paste with Ctrl+V. xterm
-  // turns both into control characters, so hand them back here: copy the
-  // selection, and let Ctrl+V reach the browser's paste, which xterm reads.
-  if (isWindows) {
-    term.attachCustomKeyEventHandler((e) => {
-      if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return true;
-      const k = e.key.toLowerCase();
-      if (k === "c" && term.hasSelection()) {
-        if (e.type === "keydown") {
-          void api.copyText(term.getSelection()).catch(() => undefined);
-          term.clearSelection();
-        }
-        e.preventDefault();
-        return false;
+  // Full-screen harnesses such as Claude Code track the mouse. A plain drag
+  // then goes to the app (Shift-drag still selects), and every mouse move
+  // the app is told about counts as input, on which xterm drops the
+  // selection: it vanishes before it can be copied. So the last selection
+  // is kept here until a key is pressed or the terminal is clicked, and
+  // copying takes it when xterm has already let go.
+  let kept = "";
+  term.onSelectionChange(() => {
+    if (term.hasSelection()) kept = term.getSelection();
+  });
+  const selection = () => term.getSelection() || kept;
+  // Ctrl+C copies when there is a selection (and is the interrupt when
+  // there is none), Ctrl+Shift+C always copies, Cmd+C on a Mac. Ctrl+V and
+  // Ctrl+Shift+V reach the browser's paste, which xterm reads; xterm would
+  // otherwise send them as control characters.
+  term.attachCustomKeyEventHandler((e) => {
+    const k = e.key.toLowerCase();
+    const ctrlOnly = e.ctrlKey && !e.altKey && !e.metaKey;
+    const copyKey = k === "c" && (isMac ? e.metaKey && !e.ctrlKey && !e.altKey : ctrlOnly && (e.shiftKey || !!selection()));
+    if (copyKey) {
+      if (e.type === "keydown") {
+        const text = selection();
+        if (text) void api.copyText(text).catch(() => undefined);
+        kept = "";
+        term.clearSelection();
       }
-      return k !== "v";
-    });
-  }
+      e.preventDefault();
+      return false;
+    }
+    if (!isMac && ctrlOnly && k === "v") return false;
+    if (e.type === "keydown" && !["Shift", "Control", "Alt", "Meta"].includes(e.key)) kept = "";
+    return true;
+  });
   const fit = new FitAddon();
   term.loadAddon(fit);
+  term.loadAddon(new WebLinksAddon((_e, uri) => void api.openUrl(uri).catch(() => undefined)));
   const el = document.createElement("div");
   el.className = "term-el";
   host.appendChild(el);
+  // Capture: xterm's own handlers must not see the click first.
+  el.addEventListener("mousedown", () => (kept = ""), true);
+  // The menu's Copy, or the browser's, while xterm holds no selection.
+  el.addEventListener("copy", (e) => {
+    if (term.hasSelection() || !kept) return;
+    e.clipboardData?.setData("text/plain", kept);
+    e.preventDefault();
+  });
   term.open(el);
   fit.fit();
 
@@ -93,6 +152,7 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
     status: "connecting",
     detail: "",
     bad: false,
+    url: "",
     write: null,
     view: null,
     close() {
@@ -107,6 +167,20 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
     },
   };
   if (key) sessions.set(key, s);
+  // Look for an address once output settles, not on every chunk.
+  let urlTimer = 0;
+  const findUrl = () => {
+    window.clearTimeout(urlTimer);
+    urlTimer = window.setTimeout(() => {
+      if (closed) return;
+      const url = lastUrlOnScreen(term);
+      if (url === s.url) return;
+      s.url = url;
+      s.view?.refresh();
+    }, 150);
+  };
+  term.onWriteParsed(findUrl);
+  term.onScroll(findUrl);
   const end = (status: Status, detail: string, bad: boolean) => {
     Object.assign(s, { status, detail, bad, write: null });
     s.view?.onInput?.(null);
@@ -163,6 +237,8 @@ export default function Terminal(p: {
   const [status, setStatus] = createSignal<Status>("connecting");
   const [detail, setDetail] = createSignal("");
   const [bad, setBad] = createSignal(false);
+  const [url, setUrl] = createSignal("");
+  const [copied, setCopied] = createSignal(false);
   let session: Session | null = null;
   let ro: ResizeObserver | null = null;
   let disposed = false;
@@ -199,6 +275,8 @@ export default function Terminal(p: {
         setStatus(s.status);
         setDetail(s.detail);
         setBad(s.bad);
+        if (s.url !== url()) setCopied(false);
+        setUrl(s.url);
       },
       onInput: onInput,
       onEnd: p.onEnd,
@@ -235,6 +313,29 @@ export default function Terminal(p: {
         {status() === "connecting" && <span>{opening[target.kind]}</span>}
         {status() === "open" && <span>{p.hint ?? "Connected. Close the tab to end the session."}</span>}
         {(status() === "ended" || status() === "error") && <span>{detail() || "The session ended."}</span>}
+        <Show when={url()}>
+          {(u) => (
+            <span class="term-link">
+              <span class="term-link-url mono" title={u()}>
+                {u()}
+              </span>
+              <button class="btn sm ghost" onClick={() => void api.openUrl(u()).catch(() => undefined)}>
+                Open link
+              </button>
+              <button
+                class="btn sm ghost"
+                onClick={() =>
+                  void api
+                    .copyText(u())
+                    .then(() => setCopied(true))
+                    .catch(() => undefined)
+                }
+              >
+                {copied() ? "Copied" : "Copy link"}
+              </button>
+            </span>
+          )}
+        </Show>
       </div>
     </div>
   );

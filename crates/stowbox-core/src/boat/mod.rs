@@ -22,6 +22,11 @@ use std::sync::Mutex;
 pub const DEFAULT_API: &str = "https://boat.dev/api/v1";
 pub const DEFAULT_CONSOLE_URL: &str = "https://boat.dev/dashboard";
 
+/// Largest file one upload may carry. Uploads go to a signed URL, which has
+/// no documented cap; the file is held in memory on its way through the
+/// app, a few copies at once, and this keeps that sane.
+pub const MAX_UPLOAD_BYTES: u64 = 512 * 1024 * 1024;
+
 /// One size on boat's menu, from its pricing page (2026-11).
 pub struct Size {
     pub id: &'static str,
@@ -73,6 +78,7 @@ pub fn capabilities() -> Capabilities {
         https_default_route: false,
         port_forwards: false,
         editor_ssh: false,
+        max_upload_bytes: MAX_UPLOAD_BYTES,
         remote_user: "user".into(),
         remote_home: "/home/user".into(),
         metering_note: "boat counts by the second at list price; time included in the plan is not taken off here.".into(),
@@ -123,6 +129,17 @@ impl Boat {
         }
         Ok(convert::machine(&self.sandbox(id).await?))
     }
+}
+
+/// Writes `data` to `path` in the sandbox through a signed upload URL: no
+/// size cap of the JSON file call (5 MiB) and no base64 over SSH. boat makes
+/// missing directories and swaps the file in only once it is complete.
+async fn upload_signed(api: &Api, id: &str, path: &str, data: Vec<u8>) -> Result<u64> {
+    let size = data.len() as u64;
+    let r = api.post(&format!("/sandboxes/{}/files/upload-url", seg(id)), json!({ "path": path })).await?;
+    let url = r.get("url").and_then(Value::as_str).filter(|u| !u.is_empty()).ok_or_else(|| Error::Provider("boat answered without an upload URL".into()))?;
+    api.put_signed(&api.absolute(url), data).await?;
+    Ok(size)
 }
 
 /// `ttlSeconds` for a create or a resume: None leaves boat's default (one
@@ -244,6 +261,10 @@ impl Provider for Boat {
         self.ssh.exec(&ssh::ApiAuth(&self.api), id, spec).await
     }
 
+    async fn upload_file(&self, id: &str, path: &str, data: Vec<u8>) -> Result<u64> {
+        upload_signed(&self.api, id, path, data).await
+    }
+
     async fn machine_usage(&self, id: &str) -> Result<Usage> {
         let u = self.api.get(&format!("/sandboxes/{}/usage", seg(id))).await?;
         Ok(convert::usage(&u))
@@ -298,6 +319,101 @@ mod tests {
         // A default sandbox for a 730-hour month: boat's "$26".
         let default = SIZES.iter().find(|s| s.id == "default").unwrap();
         assert_eq!(crate::cost::money(default.hourly_micro_usd * 730, "usd"), "$26.28");
+    }
+
+    /// A one-thread HTTP/1.1 server that answers `replies` in order and
+    /// hands back each request as (head, body).
+    fn serve(replies: Vec<String>) -> (String, std::thread::JoinHandle<Vec<(String, Vec<u8>)>>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            let mut replies = replies.into_iter();
+            while let Some(reply) = replies.next() {
+                let (stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut stream = stream;
+                let mut reply = Some(reply);
+                // Keep-alive: several requests can come on one connection.
+                while let Some(r) = reply.take() {
+                    let mut head = String::new();
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                            break;
+                        }
+                        head.push_str(&line);
+                    }
+                    let len = head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                    let mut body = vec![0; len];
+                    reader.read_exact(&mut body).unwrap();
+                    seen.push((head, body));
+                    stream.write_all(r.as_bytes()).unwrap();
+                    stream.flush().unwrap();
+                    reply = replies.next();
+                    if reply.is_none() {
+                        break;
+                    }
+                }
+            }
+            seen
+        });
+        (base, handle)
+    }
+
+    fn json_reply(status: &str, body: &str) -> String {
+        format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len())
+    }
+
+    #[tokio::test]
+    async fn uploads_go_to_a_signed_url_without_the_key() {
+        let data: Vec<u8> = (0..=255u8).cycle().take(6 * 1024 * 1024).collect();
+        // The URL comes back as a path; it resolves against the API's origin.
+        let (base, server) = serve(vec![
+            json_reply("200 OK", r#"{"ok":true,"url":"/upload/abc?sig=s3cr3t","expiresAt":"2026-11-16T12:00:00Z"}"#),
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".into(),
+        ]);
+        let api = Api::new(&format!("{base}/api/v1"), "boat_key".into()).unwrap();
+        let n = upload_signed(&api, "bx_1", "/home/user/.stowbox/uploads/a/t-big.bin", data.clone()).await.unwrap();
+        assert_eq!(n, data.len() as u64);
+        let seen = server.join().unwrap();
+        assert_eq!(seen.len(), 2);
+        let (ask, ask_body) = &seen[0];
+        assert!(ask.starts_with("POST /api/v1/sandboxes/bx_1/files/upload-url "), "{ask}");
+        assert!(ask.to_ascii_lowercase().contains("authorization: bearer boat_key"), "{ask}");
+        assert_eq!(serde_json::from_slice::<Value>(ask_body).unwrap(), json!({ "path": "/home/user/.stowbox/uploads/a/t-big.bin" }));
+        let (put, put_body) = &seen[1];
+        assert!(put.starts_with("PUT /upload/abc?sig=s3cr3t "), "{put}");
+        assert!(!put.to_ascii_lowercase().contains("authorization"), "the key went to the signed URL: {put}");
+        assert_eq!(put_body, &data);
+    }
+
+    #[tokio::test]
+    async fn a_refused_upload_says_why_without_the_url() {
+        let (base, server) = serve(vec![
+            json_reply("200 OK", &format!(r#"{{"url":"http://{}/upload/abc?sig=s3cr3t"}}"#, "127.0.0.1:1")),
+        ]);
+        let api = Api::new(&base, "boat_key".into()).unwrap();
+        // Port 1 refuses the connection: a network error, which must not name the URL.
+        let e = upload_signed(&api, "bx_1", "/tmp/f", b"x".to_vec()).await.unwrap_err().to_string();
+        assert!(!e.contains("s3cr3t"), "{e}");
+        server.join().unwrap();
+
+        let (base, server) = serve(vec![
+            json_reply("200 OK", r#"{"url":"/upload/abc?sig=s3cr3t"}"#),
+            json_reply("403 Forbidden", r#"{"code":"url_expired","message":"This upload URL has expired."}"#),
+        ]);
+        let api = Api::new(&base, "boat_key".into()).unwrap();
+        let e = upload_signed(&api, "bx_1", "/tmp/f", b"x".to_vec()).await.unwrap_err().to_string();
+        assert_eq!(e, "boat refused the upload (403): This upload URL has expired.");
+        server.join().unwrap();
+
+        let (base, server) = serve(vec![json_reply("400 Bad Request", r#"{"code":"invalid_path","message":"Path must be under /home/user or /tmp."}"#)]);
+        let api = Api::new(&base, "boat_key".into()).unwrap();
+        let e = upload_signed(&api, "bx_1", "/etc/f", b"x".to_vec()).await.unwrap_err().to_string();
+        assert!(e.contains("invalid_path"), "{e}");
+        server.join().unwrap();
     }
 
     #[test]
