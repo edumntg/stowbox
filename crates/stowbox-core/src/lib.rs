@@ -3,6 +3,9 @@
 //! - `provider`: the trait the UI talks to (list boxes, power actions, exec).
 //! - `boxd`: boxd.sh, over its public gRPC API.
 //! - `boat`: boat.dev, over its REST API, with exec over SSH.
+//! - `daytona`: Daytona, over its REST API, with exec over its SSH gateway.
+//! - `agent37`: Agent37, over its REST API, with exec over SSH through a
+//!   WebSocket at its edge.
 //! - `capabilities`: what each provider supports, for the UI.
 //! - `registry`: the connected providers, and which one owns each box.
 //! - `agent`: a coding agent's interactive session inside a box, its state,
@@ -19,12 +22,14 @@
 //! - `ssh`: the key, `~/.ssh/config` block and editor links that open a box
 //!   in VS Code or Cursor over Remote-SSH.
 //! - `sshexec`: exec in a box over SSH, for providers whose command API
-//!   lacks stdin or a TTY (boat, Daytona).
+//!   lacks stdin or a TTY (boat, Daytona, Agent37).
 //! - `store`: on-disk persistence of agents, presets and setup runs.
 //! - `upload`: files dropped on an agent's terminal, copied into the box.
 //! - `worktree`: one git worktree and branch per agent, next to the repository.
+//! - `wstunnel`: a byte stream over a WebSocket, for SSH through a provider's edge.
 
 pub mod agent;
+pub mod agent37;
 pub mod boat;
 pub mod boxd;
 pub mod capabilities;
@@ -47,5 +52,6 @@ pub(crate) mod testing;
 pub mod types;
 pub mod upload;
 pub mod worktree;
+pub mod wstunnel;
 
 pub use error::{Error, Result};

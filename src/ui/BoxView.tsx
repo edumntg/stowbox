@@ -15,7 +15,7 @@ const Ports = lazy(() => import("./Ports"));
 /** boxd: works with any key linked to the account, and "Open in editor" sets
  * up the `stowbox-<name>` alias. boat: its own CLI links a key on the way. */
 const sshCommand = (m: Machine) =>
-  m.provider === "boat" ? `boat ssh ${m.id}` : m.provider === "daytona" ? `daytona ssh ${m.id}` : m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "";
+  m.provider === "boat" ? `boat ssh ${m.id}` : m.provider === "daytona" ? `daytona ssh ${m.id}` : m.provider === "agent37" ? `npx agent37 ssh ${m.id}` : m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "";
 
 /** "in 3 h 20 min" until a unix time, or "now" once it passed. */
 const until = (at: number) => {

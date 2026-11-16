@@ -15,7 +15,7 @@ export type MachineStatus =
 
 export interface Machine {
   id: string;
-  /** The provider that owns the box: "boxd", "boat" or "daytona". */
+  /** The provider that owns the box: "boxd", "boat", "daytona" or "agent37". */
   provider: string;
   /** The provider's size name for fixed-size providers ("default"), else "". */
   size: string;

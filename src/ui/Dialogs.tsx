@@ -86,6 +86,8 @@ const newBoxBlurb: Record<string, string> = {
   boat: "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.",
   daytona:
     "A Daytona sandbox from the default image, up in about a second. Daytona stops it after a stretch with no activity, even with work running; Stowbox reports activity while a terminal or an agent is open.",
+  agent37:
+    "A persistent Linux sandbox on Agent37, billed by the minute. Stowbox installs tmux, Claude Code and Codex in it, which adds about half a minute. With no activity it sleeps and bills only its disk; the next connection wakes it.",
 };
 
 /** Free vCPU and memory choices; Daytona's default ceiling is 4 vCPU and 8 GiB. */
