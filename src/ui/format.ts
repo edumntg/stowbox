@@ -119,3 +119,9 @@ export function fileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** An agent's title from its first prompt: the first line, cut at 64. */
+export const firstLine = (text: string) => {
+  const line = text.trim().split("\n")[0].trim();
+  return line.length > 64 ? line.slice(0, 63).trimEnd() + "…" : line;
+};

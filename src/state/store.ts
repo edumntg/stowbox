@@ -1,5 +1,5 @@
 import { createStore, produce } from "solid-js/store";
-import { api } from "../bridge/api";
+import { api, isDemo, setDemo } from "../bridge/api";
 import { presetVariables } from "../bridge/variables";
 import type {
   TermTarget,
@@ -15,6 +15,7 @@ import type {
   IdlePolicy,
   Machine,
   MachineMetrics,
+  Harness,
   NewAgent,
   Notice,
   NoticeTarget,
@@ -29,7 +30,7 @@ import type {
   SpendCheck,
   VariableValues,
 } from "../bridge/types";
-import { agentPhase, money, spendLine } from "../ui/format";
+import { agentPhase, firstLine, money, spendLine } from "../ui/format";
 import { agentTerminalKey, boxTerminalKey, closeTerminal } from "../ui/termSessions";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
@@ -40,7 +41,7 @@ export type Dialog =
   | null
   | { kind: "new-box" }
   | { kind: "run-setup"; machineId: string; presetId: string }
-  | { kind: "new-agent"; machineId?: string }
+  | { kind: "new-agent"; machineId?: string; prompt?: string; cwd?: string; harness?: Harness }
   | { kind: "settings" }
   | { kind: "delete-agent"; agentId: string }
   /** `dir` is the directory in the box to open; null is the home directory. */
@@ -372,6 +373,9 @@ export const machineById = (id: string) => state.machines.find((m) => m.id === i
 export const agentBoxGone = (a: AgentMeta) => state.machinesLoaded && !state.machinesError && state.providerErrors.length === 0 && !machineById(a.machineId);
 
 /** Providers with a key, in Stowbox's order. */
+/** The app runs on example data; see bridge/api. */
+export const demo = isDemo;
+
 export const connectedProviders = () => (state.providers?.providers ?? []).filter((p) => p.connected);
 export const capsOf = (provider: string): Capabilities | undefined => state.providers?.providers.find((p) => p.id === provider)?.capabilities;
 export const capsFor = (m: Machine): Capabilities | undefined => capsOf(m.provider);
@@ -996,6 +1000,63 @@ export const actions = {
     setState("agents", (as) => [meta, ...as]);
     actions.openAgentTerminal(meta.id, firstPrompt?.trim() || null);
     return meta;
+  },
+
+  /** The composer's one step: a box (an existing one, or a new one that
+   * is waited for until it runs), then an agent in it with the prompt.
+   * `onStep` names what is happening, for the button. Throws the
+   * provider's message. */
+  async startTask(
+    task: { prompt: string; harness: Harness; cwd: string | null; box: { existing: string } | { create: CreateSpec } },
+    onStep: (step: string) => void,
+  ): Promise<AgentMeta> {
+    let m: Machine | undefined;
+    if ("existing" in task.box) {
+      m = machineById(task.box.existing);
+      if (!m) throw new Error("That box is gone; pick another.");
+    } else {
+      onStep("Creating the box…");
+      m = await api.createMachine(task.box.create, null, null);
+      setState("machines", (ms) => [...ms.filter((x) => x.id !== m!.id), m!].sort((a, b) => a.name.localeCompare(b.name)));
+      onStep(`Starting ${m.name}…`);
+      // A new box can take a moment; the agent needs it running.
+      const deadline = Date.now() + 180_000;
+      while (m.status !== "running") {
+        if (m.status === "failed" || m.status === "stopped") throw new Error(`${m.name} did not start: ${providerLabel(m.provider)} reports it ${m.status}.`);
+        if (Date.now() > deadline) throw new Error(`${m.name} is still ${m.status} after three minutes. It stays in the list; start the agent from it once it runs.`);
+        await new Promise((r) => window.setTimeout(r, 2000));
+        m = await api.getMachine(m.id);
+        setState("machines", (ms) => ms.map((x) => (x.id === m!.id ? m! : x)));
+      }
+    }
+    onStep("Opening the agent…");
+    return actions.createAgent(
+      {
+        machineId: m.id,
+        machineName: m.name,
+        harness: task.harness,
+        title: firstLine(task.prompt) || null,
+        cwd: task.cwd,
+        model: null,
+        skipPermissions: true,
+        ownBranch: false,
+        branchHint: task.prompt.trim() || null,
+      },
+      task.prompt,
+    );
+  },
+
+  /** Back to the Fleet view with the cursor in the composer. */
+  focusComposer() {
+    actions.select({ kind: "fleet" });
+    window.setTimeout(() => document.getElementById("task-prompt")?.focus(), 0);
+  },
+
+  startDemo() {
+    setDemo(true);
+  },
+  exitDemo() {
+    setDemo(false);
   },
 
   /** Throws the provider's message; the terminal view shows it. */

@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
-import { actions, agentBoxGone, agentById, connectedProviders, machineById, multiProvider, selectedAgent, selectedMachine, spendCurrency, state, type Selection } from "../state/store";
+import { actions, agentBoxGone, agentById, connectedProviders, demo, machineById, multiProvider, selectedAgent, selectedMachine, spendCurrency, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import AgentView from "./AgentView";
 import BoxView from "./BoxView";
@@ -132,8 +132,20 @@ const Shell = () => {
   const machine = selectedMachine;
   const panel = () => state.ui.inspector && !!agent();
   return (
-    <div class="app">
+    <div class="app" classList={{ demo }}>
       <Topbar />
+      <Show when={demo}>
+        <div class="demo-bar" role="status">
+          <span class="sq" data-state="idle" />
+          <span>
+            <strong>Demo.</strong> Example boxes, agents and costs; nothing here is real and nothing reaches a provider.
+          </span>
+          <span class="spacer" />
+          <button class="btn sm primary" onClick={() => actions.exitDemo()}>
+            <I.Key /> Connect a provider
+          </button>
+        </div>
+      </Show>
       <div class="body" classList={{ "has-panel": panel(), "no-sidebar": !state.ui.sidebar }}>
         <Show when={state.ui.sidebar}>
           <Sidebar />

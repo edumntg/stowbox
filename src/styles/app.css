@@ -283,6 +283,11 @@ ul {
   grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--statusbar-h);
 }
 
+/* The demo bar sits between the top bar and the body. */
+.app.demo {
+  grid-template-rows: var(--topbar-h) auto minmax(0, 1fr) var(--statusbar-h);
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -1538,9 +1543,9 @@ select.input {
 .fleet .view-body {
   max-width: 1120px;
   width: 100%;
-  padding: 18px 20px 28px;
+  padding: 22px 24px 32px;
   display: grid;
-  gap: 18px;
+  gap: 24px;
   align-content: start;
 }
 
@@ -2853,4 +2858,153 @@ select.input {
 
 .term-el {
   height: 100%;
+}
+
+/* ---------- fleet composer ---------- */
+
+.composer {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--foreground) 30%, transparent);
+}
+
+.composer-input {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+.composer-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-bar .spacer {
+  flex: 1;
+}
+
+.composer-box {
+  width: auto;
+  max-width: 320px;
+}
+
+.composer-dir {
+  width: 200px;
+}
+
+.composer-hint {
+  margin: 0;
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+/* Two or three options side by side; the pressed one inverts like a primary button. */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.seg button {
+  padding: 5px 10px;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  background: transparent;
+  transition: background 150ms, color 150ms;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--input);
+}
+
+.seg button:hover {
+  background: var(--accent);
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.fleet-section {
+  display: grid;
+  gap: 8px;
+}
+
+.fleet-section > .fleet-h {
+  margin: 0;
+}
+
+.aline-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.aline-go svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---------- demo ---------- */
+
+.demo-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 4px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+.demo-bar strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.demo-bar .spacer {
+  flex: 1;
+}
+
+.onboard-demo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+/* The card shows focus; the field inside needs no ring of its own. */
+.composer-input:focus,
+.composer-input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
