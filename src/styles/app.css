@@ -3111,3 +3111,34 @@ button.statusbar-update:hover {
   align-items: center;
   gap: 10px;
 }
+
+/* A box's state in words, next to its dot, wherever being down matters. */
+/* The state colours are mixed with the text colour: at 11px the plain
+   green and orange miss 4.5:1 on the light theme. Stopped takes the text
+   colour, so a box that is down reads as plainly as one that runs. */
+.box-state {
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.box-state[data-state="running"] {
+  color: color-mix(in srgb, var(--ok) 75%, var(--foreground));
+}
+
+.box-state[data-state="standby"],
+.box-state[data-state="hibernated"],
+.box-state[data-state="pending"] {
+  color: color-mix(in srgb, var(--warn) 75%, var(--foreground));
+}
+
+.box-state[data-state="failed"] {
+  color: color-mix(in srgb, var(--danger) 75%, var(--foreground));
+}
+
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}

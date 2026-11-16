@@ -174,6 +174,14 @@ shadows, except the floating shadow under dialogs and toasts.
   agent first, then views, boxes and recent agents; with one, "Best
   matches" across every box. No match is one muted line in the list. A
   footer names the keys.
+- A box that is not running says so in words wherever its agents are: its
+  state (Stopped, Standby, Hibernated, Failed, in the state's colour mixed
+  with the text colour so it reads at 11px) next to the box name in the
+  agent's header and in the box panel; where the terminal would be, the
+  reason and the power buttons. Start, Resume and Wake are always the
+  primary button of a power row, so bringing a box back is never hunted for.
+  Providers with auto-stop show when it falls due in the box panel, with
+  "4 h from now".
 - A 24px status bar: how many boxes are running and the combined hourly
   estimate. No account or balance: with several providers connected, one
   provider's account there reads as the whole app's.

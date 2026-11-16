@@ -113,6 +113,15 @@ export function span(secs: number): string {
   return `${m}m`;
 }
 
+/** "in 3 h 20 min" until a unix time, or "now" once it passed. */
+export const until = (at: number) => {
+  const secs = at - Math.floor(Date.now() / 1000);
+  if (secs <= 0) return "now";
+  const h = Math.floor(secs / 3600);
+  const min = Math.round((secs % 3600) / 60);
+  return `in ${h ? `${h} h ` : ""}${min} min`;
+};
+
 /** "512 B", "48 KB", "1.2 MB" for attached files. */
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

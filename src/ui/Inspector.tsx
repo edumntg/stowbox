@@ -1,9 +1,9 @@
 import { Show } from "solid-js";
 import type { AgentMeta } from "../bridge/types";
-import { actions, capsFor, machineById } from "../state/store";
+import { actions, capsFor, machineById, state } from "../state/store";
 import * as I from "../icons";
-import { Dot, PowerActions } from "./common";
-import { money, sizeLabel, statusLabel } from "./format";
+import { BoxState, Dot, PowerActions } from "./common";
+import { money, sizeLabel, until } from "./format";
 
 /** The box behind the selected agent: state, live cost and quick controls,
  * so pausing or opening a shell never means leaving the agent. */
@@ -46,13 +46,26 @@ export default function Inspector(p: { agent: AgentMeta }) {
               <div class="title">
                 <Dot status={box().status} />
                 <span>{box().name}</span>
-                <span class="meta">{statusLabel[box().status]}</span>
+                <span class="meta">
+                  <BoxState status={box().status} always />
+                </span>
               </div>
               <div class="hourly mono">
                 {money(box().estHourlyMicro, box().currency)}
                 <small>/ h estimated</small>
               </div>
               <div class="muted">{sizeLabel(box())}</div>
+              <Show when={capsFor(box())?.autoStop && box().status === "running"}>
+                <div class="muted">
+                  <Show when={box().autoStopAt > 0} fallback={<>No auto-stop</>}>
+                    Auto-stop {until(box().autoStopAt)}
+                  </Show>
+                  {" · "}
+                  <button class="link" disabled={!!state.pending[box().id]} onClick={() => void actions.setAutoStop(box().id, 4 * 3600)} title="Stop it 4 hours from now instead">
+                    4 h from now
+                  </button>
+                </div>
+              </Show>
               <div class="actions">
                 <PowerActions machine={box()} ghost size="sm" />
               </div>
