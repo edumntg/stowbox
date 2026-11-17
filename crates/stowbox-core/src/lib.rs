@@ -6,6 +6,7 @@
 //! - `daytona`: Daytona, over its REST API, with exec over its SSH gateway.
 //! - `agent37`: Agent37, over its REST API, with exec over SSH through a
 //!   WebSocket at its edge.
+//! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
 //! - `registry`: the connected providers, and which one owns each box.
 //! - `agent`: a coding agent's interactive session inside a box, its state,
@@ -30,6 +31,7 @@
 
 pub mod agent;
 pub mod agent37;
+pub mod audit;
 pub mod boat;
 pub mod boxd;
 pub mod capabilities;

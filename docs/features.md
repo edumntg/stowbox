@@ -150,7 +150,8 @@ Everything the app does today, in full. The README has the short version.
   `~/.config/stowbox/env.sh` (mode 0600), which `~/.profile` and `~/.bashrc`
   load, so terminals and agents see them too. The script travels over boxd's
   exec stream on stdin, never on a command line, and secret values are
-  masked in the setup log. Commands run in order in one shell (`cd` and
+  masked in the setup log (line by line too, for a value that spans lines
+  such as a private key). Commands run in order in one shell (`cd` and
   `export` carry over); the first non-zero exit stops the run. A command can
   hold `{{name}}` placeholders (`git checkout {{branch}}`): the editor lists
   them with an optional default, and *New box* or *Run* asks for each value
@@ -158,6 +159,13 @@ Everything the app does today, in full. The README has the short version.
   shell word, so keep placeholders outside quotes; other text in braces,
   such as `{{.State}}` for `docker inspect`, is left alone. Values are not
   secrets: the run keeps them and they show in the log.
+- **Audit log**: `audit.jsonl` in the app's `state` folder records, one
+  JSON line each with a timestamp, every API key saved or cleared, every
+  preset saved (which secrets got a new value) or deleted, every setup run
+  (which secret names went into which box, and how it ended), and every box
+  created, forked or powered on, off or deleted. Names only: no secret
+  value or key is ever written there. The file is 0600; past 1 MiB it moves
+  to `audit.jsonl.1` and a new one starts.
 - **Desktop**: one click opens boxd's live desktop view in the browser.
 - **Open in VS Code or Cursor**: *Editor* on a box (and the code button in
   an agent's box panel, at the agent's directory or worktree) opens the
