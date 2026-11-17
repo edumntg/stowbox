@@ -91,8 +91,10 @@ struct AppState {
     preset_secrets: secrets::PresetSecrets,
     /// The latest setup run per box, finished or not.
     setup_runs: RwLock<Vec<ProvisionRun>>,
-    /// Live setup runs by machine id.
-    setups: Mutex<HashMap<String, AbortHandle>>,
+    /// Live setup runs by machine id: the run's id and its runner. The id
+    /// says which run a handle belongs to, so cancelling or finishing one
+    /// run never touches a newer one in the same box.
+    setups: Mutex<HashMap<String, (String, AbortHandle)>>,
     /// Decides which pushes carry a desktop notification.
     notifier: std::sync::Mutex<Notifier>,
     /// When each box was last seen doing something, for the idle guard.
@@ -442,7 +444,7 @@ async fn machine_power(state: State<'_, AppState>, id: String, action: PowerActi
     state.audit(AuditEvent::Power { machine_id: id.clone(), power: action });
     if action == PowerAction::Destroy {
         state.providers.forget(&id);
-        if let Some(h) = state.setups.lock().await.remove(&id) {
+        if let Some((_, h)) = state.setups.lock().await.remove(&id) {
             h.abort();
         }
         state.setup_runs.write().await.retain(|r| r.machine_id != id);
@@ -1159,7 +1161,11 @@ async fn apply_setup_event(app: &AppHandle, state: &AppState, run_id: &str, ev: 
     let _ = app.emit("setup-event", SetupPush { run: ProvisionRun { output: String::new(), ..run.clone() }, append, notice });
     if done {
         state.audit(AuditEvent::SetupEnded { run_id: run.id.clone(), machine_id: run.machine_id.clone(), status: run.status, secrets_written: run.secrets_written });
-        state.setups.lock().await.remove(&run.machine_id);
+        let mut setups = state.setups.lock().await;
+        if setups.get(&run.machine_id).is_some_and(|(id, _)| *id == run.id) {
+            setups.remove(&run.machine_id);
+        }
+        drop(setups);
         let _ = state.persist_setup_runs().await;
     }
 }
@@ -1201,7 +1207,7 @@ async fn start_setup(
         })
         .await;
     });
-    setups.insert(machine.id.clone(), runner.abort_handle());
+    setups.insert(machine.id.clone(), (run.id.clone(), runner.abort_handle()));
     drop(setups);
 
     let app2 = app.clone();
@@ -1233,13 +1239,11 @@ async fn setup_start(
 
 #[tauri::command]
 async fn setup_cancel(app: AppHandle, state: State<'_, AppState>, machine_id: String) -> CmdResult<()> {
-    let Some(h) = state.setups.lock().await.remove(&machine_id) else { return Ok(()) };
+    let Some((run_id, h)) = state.setups.lock().await.remove(&machine_id) else { return Ok(()) };
     // Mark it first, so the runner's own "stopped" report after the abort
-    // finds the run already over and is dropped.
-    let run_id = state.setup_runs.read().await.iter().find(|r| r.machine_id == machine_id).map(|r| r.id.clone());
-    if let Some(id) = run_id {
-        apply_setup_event(&app, &state, &id, RunEvent::Cancelled).await;
-    }
+    // finds the run already over and is dropped. By id: a setup started in
+    // this box since the handle was taken is another run.
+    apply_setup_event(&app, &state, &run_id, RunEvent::Cancelled).await;
     // Aborting drops the exec stream, which kills the remote process group.
     h.abort();
     Ok(())

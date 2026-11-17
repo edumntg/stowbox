@@ -128,7 +128,9 @@ interface AppState {
   live: Record<string, AgentLive>;
   /** Per box: whether it has tmux, so agents outlive their terminal. */
   tmux: Record<string, boolean>;
-  pending: Record<string, boolean>;
+  /** Per box: operations in flight (power, auto-stop, fork). A count, so
+   * one that ends does not re-enable the controls while another runs. */
+  pending: Record<string, number>;
   /** Last sample per box, kept after the box leaves `running` so the fleet
    * view can say "as of 24 min ago" instead of forgetting. */
   metrics: Record<string, MachineMetrics>;
@@ -352,6 +354,14 @@ const keepWhy: Record<string, string> = {
   "not-running": "it is no longer running",
   "guard-off": "idle standby was turned off",
 };
+
+function beginPending(id: string) {
+  setState("pending", id, (n) => (n ?? 0) + 1);
+}
+
+function endPending(id: string) {
+  setState("pending", id, (n) => Math.max(0, (n ?? 1) - 1));
+}
 
 function saveGuard() {
   try {
@@ -1023,7 +1033,7 @@ export const actions = {
   },
 
   async power(id: string, action: PowerAction) {
-    setState("pending", id, true);
+    beginPending(id);
     try {
       await api.machinePower(id, action);
       if (action === "destroy") {
@@ -1051,13 +1061,13 @@ export const actions = {
     } catch (e) {
       actions.toast(`${action} failed: ${message(e)}`);
     } finally {
-      setState("pending", id, false);
+      endPending(id);
     }
   },
 
   /** Moves the box's auto-stop to `secs` from now; 0 turns it off. */
   async setAutoStop(id: string, secs: number) {
-    setState("pending", id, true);
+    beginPending(id);
     try {
       const m = await api.setAutoStop(id, secs);
       setState("machines", (ms) => ms.map((x) => (x.id === id ? m : x)));
@@ -1067,7 +1077,7 @@ export const actions = {
     } catch (e) {
       actions.toast("Could not change the auto-stop: " + message(e));
     } finally {
-      setState("pending", id, false);
+      endPending(id);
     }
   },
 
@@ -1145,7 +1155,7 @@ export const actions = {
   },
 
   async forkBox(source: Machine) {
-    setState("pending", source.id, true);
+    beginPending(source.id);
     try {
       const m = await api.forkMachine(source.id, null);
       setState("machines", (ms) => [...ms, m].sort((a, b) => a.name.localeCompare(b.name)));
@@ -1154,7 +1164,7 @@ export const actions = {
     } catch (e) {
       actions.toast("Fork failed: " + message(e));
     } finally {
-      setState("pending", source.id, false);
+      endPending(source.id);
     }
   },
 

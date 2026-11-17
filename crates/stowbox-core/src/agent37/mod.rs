@@ -250,6 +250,17 @@ impl Agent37 {
     }
 }
 
+/// How long a sleeping instance gets to leave `sleeping` after a start
+/// before another one is sent.
+const START_AGAIN_AFTER: Duration = Duration::from_secs(30);
+
+/// Whether to send a start to an instance that still reports `sleeping`:
+/// once, then again only if the last one has had time and did not take.
+/// The status lags the start by a few polls, and every poll is 2 s.
+fn start_due(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|t| now.duration_since(t) >= START_AGAIN_AFTER)
+}
+
 /// Wakes a sleeping instance and says how to reach it through the edge.
 struct EdgeAuth<'a>(&'a Agent37);
 
@@ -260,12 +271,15 @@ impl Authorize for EdgeAuth<'_> {
         p.ensure_key().await?;
         let mut i = p.instance(id).await?;
         let deadline = Instant::now() + Duration::from_secs(120);
+        let mut started: Option<Instant> = None;
         loop {
             match i.get("status").and_then(Value::as_str).unwrap_or("") {
                 "running" => break,
-                "sleeping" => {
+                "sleeping" if start_due(started, Instant::now()) => {
                     p.api.post(&format!("/instances/{}/start", seg(id)), None).await?;
+                    started = Some(Instant::now());
                 }
+                "sleeping" => {}
                 "waking" | "starting" | "restarting" | "provisioning" | "updating" => {}
                 "stopped" | "stopping" => return Err(Error::Provider("the instance is stopped; start it first".into())),
                 s => return Err(Error::Provider(format!("the instance is {}; it cannot take a terminal", if s.is_empty() { "in an unknown state" } else { s }))),
@@ -502,6 +516,15 @@ mod tests {
         assert_eq!(perf.hourly_micro, 4 * (2 * 1_096 + 4 * 959) + 4 * 123);
         assert!(card.sizes.iter().any(|s| s.size == "vm-4x32"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_sleeping_instance_gets_one_start_per_window() {
+        let t0 = Instant::now();
+        assert!(start_due(None, t0));
+        assert!(!start_due(Some(t0), t0 + Duration::from_secs(2)));
+        assert!(!start_due(Some(t0), t0 + START_AGAIN_AFTER - Duration::from_millis(1)));
+        assert!(start_due(Some(t0), t0 + START_AGAIN_AFTER));
     }
 
     #[test]
