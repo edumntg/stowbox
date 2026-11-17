@@ -48,6 +48,20 @@ pub enum HostCheck {
     /// The provider announces none: the first key seen for this host and
     /// port is kept in the file, and any other key later is refused.
     Remembered(PathBuf),
+    /// Any key. Only for a [`Dial::WebSocket`] tunnel, where TLS and the
+    /// API key at the provider's edge already say who answers, and the box
+    /// makes a new host key whenever it moves (Agent37).
+    Edge,
+}
+
+/// How the SSH byte stream gets to the box.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Dial {
+    /// Straight TCP to host and port.
+    Tcp,
+    /// A WebSocket to `wss://host:port/` with these headers on the upgrade
+    /// (see [`crate::wstunnel`]).
+    WebSocket(Vec<(String, String)>),
 }
 
 /// Where to reach one box over SSH.
@@ -58,6 +72,7 @@ pub struct Endpoint {
     pub user: String,
     pub login: Login,
     pub check: HostCheck,
+    pub dial: Dial,
     /// The provider's name, for messages.
     pub provider: &'static str,
 }
@@ -119,6 +134,7 @@ impl client::Handler for Checker {
         Ok(match &self.check {
             HostCheck::Pinned(expected) => key.key_data() == expected.key_data(),
             HostCheck::Remembered(path) => remember_host_key(path, &self.at, key),
+            HostCheck::Edge => true,
         })
     }
 }
@@ -201,7 +217,22 @@ impl Pool {
             ..Default::default()
         });
         let at = format!("{}:{}", ep.host, ep.port);
-        let connect = client::connect(config, (ep.host.as_str(), ep.port), Checker { check: ep.check.clone(), at });
+        let checker = Checker { check: ep.check.clone(), at };
+        // The tunnel first, so its refusals (a revoked API key) keep their own error.
+        let tunnel = match &ep.dial {
+            Dial::Tcp => None,
+            Dial::WebSocket(headers) => Some(
+                tokio::time::timeout(Duration::from_secs(20), crate::wstunnel::connect(&ep.host, ep.port, headers))
+                    .await
+                    .map_err(|_| Error::Network(format!("no tunnel to {} within 20 s", ep.host)))??,
+            ),
+        };
+        let connect = async {
+            match tunnel {
+                None => client::connect(config, (ep.host.as_str(), ep.port), checker).await,
+                Some(stream) => client::connect_stream(config, stream, checker).await,
+            }
+        };
         let mut handle = tokio::time::timeout(Duration::from_secs(20), connect)
             .await
             .map_err(|_| Error::Network(format!("ssh: no answer from {}:{} within 20 s", ep.host, ep.port)))?
@@ -215,6 +246,7 @@ impl Pool {
                         ep.host,
                         path.display()
                     ),
+                    HostCheck::Edge => format!("{} refused the SSH host key", ep.provider),
                 }),
                 e => ssh_err(e),
             })?;
@@ -577,7 +609,7 @@ mod tests {
             }
         }
         let host_key = parse_host_key(&std::fs::read_to_string(host.with_extension("pub")).unwrap()).unwrap();
-        let ep = Endpoint { host: "127.0.0.1".into(), port, user: user.clone(), login: Login::Key, check: HostCheck::Pinned(host_key), provider: "test" };
+        let ep = Endpoint { host: "127.0.0.1".into(), port, user: user.clone(), login: Login::Key, check: HostCheck::Pinned(host_key), dial: Dial::Tcp, provider: "test" };
         let auth = Local { ep, calls: AtomicUsize::new(0) };
 
         async fn collect(mut h: ExecHandle) -> (String, String, Option<i32>) {

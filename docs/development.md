@@ -21,8 +21,8 @@ To run the app from this repo:
    ```
 
 3. On first launch the app asks for a boxd (`bxd_…`, from
-   [app.boxd.sh](https://app.boxd.sh)), boat (`boat_…`) or Daytona (`dtn_…`)
-   API key. The others can be added later in Settings. Keys are stored in the OS keychain.
+   [app.boxd.sh](https://app.boxd.sh)), boat (`boat_…`), Daytona (`dtn_…`) or
+   Agent37 (`sk_live_…`) API key. The others can be added later in Settings. Keys are stored in the OS keychain.
 
 To install it as a regular app instead of running it from a terminal:
 
@@ -86,7 +86,9 @@ crates/stowbox-core/   provider trait, registry, capabilities, agent protocol, c
   src/boxd/            boxd's gRPC client
   src/boat/            boat's REST client and how its sandboxes are reached over SSH
   src/daytona/         Daytona's REST client, states and SSH gateway login
+  src/agent37/         Agent37's REST client, states, new-box install and SSH through its edge
   src/sshexec.rs       exec over SSH (russh) for providers without a usable exec API
+  src/wstunnel.rs      a byte stream over a WebSocket, for SSH through a provider's edge
   proto/boxd/api.proto boxd's public API, compiled with tonic at build time
 src-tauri/             the desktop shell: state, commands, agent turn runner, terminals
 src/                   SolidJS UI (bridge/, state/, ui/, icons/, styles/)
@@ -96,8 +98,9 @@ src/                   SolidJS UI (bridge/, state/, ui/, icons/, styles/)
 box. Every provider implements the `Provider` trait and describes itself with
 `Capabilities`; the `Registry` holds every connected one and routes each box to
 the provider that owns it. The UI turns features on and off from the
-capabilities, never from the provider's name. How boat and Daytona are used,
-and what they do not have, is in `docs/boat.md` and `docs/daytona.md`.
+capabilities, never from the provider's name. How boat, Daytona and Agent37
+are used, and what they do not have, is in `docs/boat.md`, `docs/daytona.md`
+and `docs/agent37.md`.
 
 ## How boxd is used
 
@@ -137,3 +140,5 @@ works and nothing is lost. Details in `docs/boxd-resume-after-wake-race.md`.
   environments (see `docs/boat.md`).
 - On Daytona: VM-class sandboxes (pause, fork), snapshots, volumes, metered
   usage (see `docs/daytona.md`).
+- On Agent37: `vm` and `performance` instances, regions, resize, backups and
+  opening a box in an editor (see `docs/agent37.md`).

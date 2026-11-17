@@ -34,7 +34,7 @@ import { substitute, variablesIn } from "./variables";
 const GIB = 1024 ** 3;
 let nextSshPort = 21843;
 
-// Mirrors core boxd::capabilities, boat::capabilities and daytona::capabilities.
+// Mirrors core boxd::capabilities, boat::capabilities, daytona::capabilities and agent37::capabilities.
 const BOXD_CAPS: Capabilities = {
   label: "boxd",
   consoleUrl: "https://app.boxd.sh",
@@ -125,10 +125,47 @@ const DAYTONA_CAPS: Capabilities = {
   meteringNote: "Daytona's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.",
   meteredUsage: false,
 };
-const CAPS: Record<string, Capabilities> = { boxd: BOXD_CAPS, boat: BOAT_CAPS, daytona: DAYTONA_CAPS };
+/** Agent37's list prices per hour, as in core agent37::RATES. */
+const AGENT37_RATES = { vcpuHourMicro: 1_096, ramGibHourMicro: 959, diskGibHourMicro: 123 };
+const AGENT37_SHAPES = [
+  { id: "default", vcpu: 2, mem: 4, disk: 4 },
+  { id: "medium", vcpu: 4, mem: 8, disk: 6 },
+  { id: "large", vcpu: 4, mem: 16, disk: 12 },
+  { id: "xlarge", vcpu: 4, mem: 32, disk: 24 },
+];
+const agent37Hourly = (vcpu: number, mem: number, disk: number) => vcpu * AGENT37_RATES.vcpuHourMicro + mem * AGENT37_RATES.ramGibHourMicro + disk * AGENT37_RATES.diskGibHourMicro;
+const AGENT37_CAPS: Capabilities = {
+  label: "agent37",
+  consoleUrl: "https://www.agent37.com/dashboard/cloud",
+  keyHint: "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal.",
+  keyPrefixes: ["sk_live_"],
+  currency: "usd",
+  power: ["start", "stop", "reboot", "hibernate", "wake", "destroy"],
+  fork: true,
+  isolated: false,
+  autoSuspend: false,
+  autoHibernate: false,
+  autoStop: false,
+  idleStop: true,
+  customSize: false,
+  sizes: AGENT37_SHAPES.map((z) => ({ id: z.id, vcpu: z.vcpu, memoryBytes: z.mem * GIB, diskBytes: z.disk * GIB, hourlyMicro: agent37Hourly(z.vcpu, z.mem, z.disk), note: "" })),
+  httpsLinks: true,
+  httpsNamed: false,
+  httpsList: false,
+  httpsRemove: false,
+  httpsDefaultRoute: false,
+  portForwards: false,
+  editorSsh: false,
+  maxUploadBytes: 20 * 1024 * 1024,
+  remoteUser: "node",
+  remoteHome: "/home/node",
+  meteringNote: "Agent37 settles metered minutes at least hourly and reports them by UTC day; managed model spend is not counted here.",
+  meteredUsage: true,
+};
+const CAPS: Record<string, Capabilities> = { boxd: BOXD_CAPS, boat: BOAT_CAPS, daytona: DAYTONA_CAPS, agent37: AGENT37_CAPS };
 
 // `?providers=boxd` or `?providers=boat,daytona` previews a subset of connected providers.
-const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona").split(",").filter((p) => p in CAPS));
+const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37").split(",").filter((p) => p in CAPS));
 
 /** Daytona's list prices per hour, as in core daytona::RATES. */
 const DAYTONA_RATES = { vcpuHourMicro: 50_400, ramGibHourMicro: 16_200, diskGibHourMicro: 108 };
@@ -163,6 +200,43 @@ function daytonaMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" 
     diskBytes,
     currency: "usd",
     provider: "daytona",
+    size: "",
+    autoStopAt: 0,
+    estHourlyMicro: Math.round(est),
+  };
+}
+
+function agent37Machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
+  const shape = AGENT37_SHAPES.find((z) => z.id === partial.size) ?? AGENT37_SHAPES[0];
+  const vcpu = partial.vcpu ?? shape.vcpu;
+  const memoryBytes = partial.memoryBytes ?? shape.mem * GIB;
+  const diskBytes = partial.diskBytes ?? shape.disk * GIB;
+  const live = partial.status === "running" || partial.status === "starting";
+  const est = live ? agent37Hourly(vcpu, memoryBytes / GIB, diskBytes / GIB) : (diskBytes / GIB) * AGENT37_RATES.diskGibHourMicro;
+  return {
+    publicIp: "",
+    accessDomain: "",
+    url: "",
+    desktopUrl: "",
+    sshPort: 0,
+    org: "",
+    billingOrg: "",
+    source: "agent37-base",
+    isolated: false,
+    createdAt: Math.floor(Date.now() / 1000) - 3 * 86_400,
+    hibernatedAtMs: partial.status === "hibernated" ? Date.now() - 2 * 3_600_000 : 0,
+    bootTimeMs: 0,
+    lastConnectedMs: 0,
+    autoSuspendSecs: 0,
+    autoHibernateSecs: 0,
+    autoDestroySecs: 0,
+    idleStopSecs: 3_600,
+    ...partial,
+    vcpu,
+    memoryBytes,
+    diskBytes,
+    currency: "usd",
+    provider: "agent37",
     size: "",
     autoStopAt: 0,
     estHourlyMicro: Math.round(est),
@@ -205,6 +279,7 @@ function boatMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "
 function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
   if (partial.provider === "boat") return boatMachine(partial);
   if (partial.provider === "daytona") return daytonaMachine(partial);
+  if (partial.provider === "agent37") return agent37Machine(partial);
   const vcpu = partial.vcpu ?? 2;
   const memoryBytes = partial.memoryBytes ?? 8 * GIB;
   const running = partial.status === "running";
@@ -251,6 +326,8 @@ let machines: Machine[] = [
   machine({ id: "sbx_mock_6", name: "boat-ci", status: "running", provider: "boat", size: "large", autoStopAt: Math.floor(Date.now() / 1000) + 12 * 60 }),
   machine({ id: "sbx_mock_7", name: "boat-notes", status: "stopped", provider: "boat", size: "small" }),
   machine({ id: "dt-mock-8", name: "daytona-eval", status: "running", provider: "daytona", vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 10 * GIB }),
+  machine({ id: "a37mock009", name: "agent37-research", status: "running", provider: "agent37", size: "medium" }),
+  machine({ id: "a37mock010", name: "agent37-nightly", status: "hibernated", provider: "agent37" }),
 ].filter((m) => connected.has(m.provider));
 
 // Metrics drift a little per sample so the fleet view shows movement, and
@@ -310,7 +387,23 @@ const daytonaAccount: Account = {
     subscriptionStatus: "",
   },
 };
-const accounts: Record<string, Account> = { boxd: account, boat: boatAccount, daytona: daytonaAccount };
+const agent37Account: Account = {
+  userId: "",
+  displayName: "Agent37 workspace",
+  billing: {
+    mode: "wallet",
+    currency: "usd",
+    balanceMicro: 5_000_000,
+    accruingMicro: null,
+    maxVms: 8,
+    defaultVcpu: 2,
+    defaultMemoryBytes: 4 * GIB,
+    ceilingVcpu: 4,
+    ceilingMemoryBytes: 32 * GIB,
+    subscriptionStatus: "",
+  },
+};
+const accounts: Record<string, Account> = { boxd: account, boat: boatAccount, daytona: daytonaAccount, agent37: agent37Account };
 
 function ownerCaps(id: string): Capabilities {
   const m = machines.find((m) => m.id === id || m.name === id);
@@ -833,11 +926,13 @@ const mockForwards: Record<string, { vmPort: number; publicPort: number; protoco
 const AUTO_PORTS = [80, 443, 8080, 8000, 3000, 5000, 5173];
 
 function mockRouteList(m: Machine): HttpsRoute[] {
-  // boat and Daytona: one tokened link per port, only those made in this session.
-  if (m.provider === "boat" || m.provider === "daytona")
+  // boat, Daytona and Agent37: one tokened link per port, only those made in this session.
+  if (m.provider === "boat" || m.provider === "daytona" || m.provider === "agent37")
     return (mockRoutes[m.id] ?? []).map((r): HttpsRoute => {
-      const domain = m.provider === "boat" ? `${r.port}-${m.id.replace(/_/g, "")}.on.boat.dev` : `${r.port}-${m.id}.proxy.daytona.works`;
-      return { name: String(r.port), domain, url: `https://${domain}/?token=mock${r.port}`, port: r.port, portMode: "locked", isDefault: false };
+      const domain =
+        m.provider === "boat" ? `${r.port}-${m.id.replace(/_/g, "")}.on.boat.dev` : m.provider === "daytona" ? `${r.port}-${m.id}.proxy.daytona.works` : `${m.id}-${r.port}.agent37.app`;
+      const token = m.provider === "agent37" ? "a37_token" : "token";
+      return { name: String(r.port), domain, url: `https://${domain}/?${token}=mock${r.port}`, port: r.port, portMode: "locked", isDefault: false };
     });
   const host = `${m.name}.${m.accessDomain || "boxd.sh"}`;
   const pinned = mockDefaultPort[m.id] ?? null;
@@ -908,7 +1003,9 @@ export const mockApi: Api = {
         ? machine({ id: "sbx_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "boat-new", status: "running", provider, size: spec.size ?? "default", autoStopAt: spec.autoStopSecs ? Math.floor(Date.now() / 1000) + spec.autoStopSecs : 0 })
         : provider === "daytona"
           ? machine({ id: "dt-mock-" + Date.now(), createdAt: Math.floor(Date.now() / 1000), lastConnectedMs: Date.now(), name: spec.name || "daytona-new", status: "running", provider, vcpu: spec.vcpu ?? 1, memoryBytes: spec.memoryBytes ?? GIB, idleStopSecs: spec.autoStopSecs ?? 3_600 })
-          : machine({ id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
+          : provider === "agent37"
+            ? machine({ id: "a37" + Date.now().toString(36).slice(-7), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "agent37-new", status: "running", provider, size: spec.size ?? "default", idleStopSecs: spec.autoStopSecs ?? 3_600 })
+            : machine({ id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
     machines = [...machines, m];
     if (presetId) startMockSetup(m, presetId, variables ?? {});
     return m;
@@ -916,7 +1013,8 @@ export const mockApi: Api = {
   async forkMachine(source, name) {
     await sleep(300);
     const src = await mockApi.getMachine(source);
-    const m = machine({ ...src, id: (src.provider === "boat" ? "sbx_mock_" : "vm_mock_") + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: name || src.name + "-fork", status: "running", source: "fork/" + src.name });
+    const prefix = src.provider === "boat" ? "sbx_mock_" : src.provider === "agent37" ? "a37" : "vm_mock_";
+    const m = machine({ ...src, id: prefix + (src.provider === "agent37" ? Date.now().toString(36).slice(-7) : Date.now()), createdAt: Math.floor(Date.now() / 1000), name: name || src.name + "-fork", status: "running", source: "fork/" + src.name });
     machines = [...machines, m];
     return m;
   },
@@ -948,6 +1046,19 @@ export const mockApi: Api = {
   async machineUsage(id) {
     const m = await mockApi.getMachine(id);
     if (m.provider === "daytona") throw new Error("Daytona's API does not report what a sandbox has cost; the Daytona dashboard does");
+    if (m.provider === "agent37")
+      return {
+        periodStart: m.createdAt,
+        periodEnd: Math.floor(Date.now() / 1000),
+        currency: "usd",
+        rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 },
+        vcpuHours: 0,
+        ramGibHours: 0,
+        diskGibHours: 0,
+        costMicro: 96_000,
+        seconds: { running: 41_400, standby: 0, hibernated: 0, stopped: 0 },
+        complete: false,
+      };
     if (m.provider === "boat")
       return {
         periodStart: m.createdAt,
@@ -996,6 +1107,7 @@ export const mockApi: Api = {
   },
   async rates(provider) {
     if (provider === "daytona") return { currency: "usd", rates: DAYTONA_RATES, sizes: [] };
+    if (provider === "agent37") return { currency: "usd", rates: AGENT37_RATES, sizes: [] };
     if (provider === "boat") return { currency: "usd", rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 }, sizes: BOAT_SIZES.map((z) => ({ size: z.id, hourlyMicro: z.hourlyMicro })) };
     return { currency: "eur", rates: { vcpuHourMicro: 39_000, ramGibHourMicro: 12_000, diskGibHourMicro: 80 }, sizes: [] };
   },
@@ -1036,6 +1148,7 @@ export const mockApi: Api = {
   },
   async orgBilling(provider) {
     if (provider === "daytona") throw new Error("Daytona's API does not report a balance");
+    if (provider === "agent37") return { id: "", name: "Agent37 workspace", isAdmin: true, currency: "usd", mode: "wallet", balanceMicro: 5_000_000, accruingMicro: null, vmCount: machines.filter((m) => m.provider === "agent37" && m.status === "running").length, maxVms: 8 };
     if (provider === "boat") return { id: "team_mock", name: "", isAdmin: false, currency: "usd", mode: "wallet", balanceMicro: 18_500_000, accruingMicro: null, vmCount: machines.filter((m) => m.provider === "boat").length, maxVms: 10 };
     return { id: "org_mock", name: "mock-org", isAdmin: true, currency: "eur", mode: "credits", balanceMicro: 24_310_000, accruingMicro: 410_000, vmCount: machines.length, maxVms: 50 };
   },
@@ -1233,7 +1346,7 @@ export const mockApi: Api = {
   async addHttpsRoute(machineId, name, port) {
     const m = await mockApi.getMachine(machineId);
     mockPort(port);
-    if (m.provider === "boat" || m.provider === "daytona") {
+    if (m.provider === "boat" || m.provider === "daytona" || m.provider === "agent37") {
       await sleep(400);
       mockRoutes[m.id] = [...(mockRoutes[m.id] ?? []).filter((r) => r.port !== port), { name: String(port), port }].sort((a, b) => a.port - b.port);
       return mockRouteList(m).find((r) => r.port === port)!;

@@ -19,7 +19,7 @@ use crate::capabilities::Capabilities;
 use crate::cost::RateCard;
 use crate::ports::HttpsRoute;
 use crate::provider::Provider;
-use crate::sshexec::{self, Authorize, Endpoint, HostCheck, Login};
+use crate::sshexec::{self, Authorize, Dial, Endpoint, HostCheck, Login};
 use crate::types::*;
 use crate::{Error, Result};
 use api::{seg, Api};
@@ -140,7 +140,7 @@ impl Authorize for GatewayAuth<'_> {
         let a = self.api.post(&format!("/sandbox/{}/ssh-access?expiresInMinutes={TOKEN_MINUTES}", seg(id)), None).await?;
         let token = a.get("token").and_then(Value::as_str).filter(|t| !t.is_empty()).ok_or_else(|| Error::Provider("Daytona gave no SSH access token".into()))?;
         let (host, port) = a.get("sshCommand").and_then(Value::as_str).and_then(convert::ssh_target).unwrap_or_else(|| ("ssh.app.daytona.io".into(), 22));
-        Ok(Endpoint { host, port, user: token.to_string(), login: Login::Token, check: HostCheck::Remembered(self.known_hosts.clone()), provider: "Daytona" })
+        Ok(Endpoint { host, port, user: token.to_string(), login: Login::Token, check: HostCheck::Remembered(self.known_hosts.clone()), dial: Dial::Tcp, provider: "Daytona" })
     }
 }
 

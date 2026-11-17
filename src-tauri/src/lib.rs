@@ -1,7 +1,7 @@
 //! The desktop shell: owns the provider connection, the on-disk store, the
 //! live terminals and the agent turns, and exposes them to the UI as Tauri
 //! commands. Nothing here knows about one provider specifically: boxd,
-//! boat and Daytona live in core, and every call about a box goes to the provider the
+//! boat, Daytona and Agent37 live in core, and every call about a box goes to the provider the
 //! registry says owns it.
 
 mod secrets;
@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stowbox_core::agent::{self, session, AgentMeta, Harness};
+use stowbox_core::agent37::{Agent37, Agent37Config};
 use stowbox_core::boat::{Boat, BoatConfig};
 use stowbox_core::daytona::{Daytona, DaytonaConfig};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
@@ -45,13 +46,14 @@ struct RunHandle {
 }
 
 /// Every provider Stowbox can drive, in the order the UI lists them.
-const PROVIDERS: &[&str] = &["boxd", "boat", "daytona"];
+const PROVIDERS: &[&str] = &["boxd", "boat", "daytona", "agent37"];
 
 fn capabilities_of(id: &str) -> Option<Capabilities> {
     match id {
         "boxd" => Some(stowbox_core::boxd::capabilities()),
         "boat" => Some(stowbox_core::boat::capabilities()),
         "daytona" => Some(stowbox_core::daytona::capabilities()),
+        "agent37" => Some(stowbox_core::agent37::capabilities()),
         _ => None,
     }
 }
@@ -63,6 +65,7 @@ fn make_provider(id: &str, key: String, data_dir: &std::path::Path) -> CmdResult
         "boxd" => Arc::new(Boxd::new(key, BoxdConfig::default()).map_err(err)?),
         "boat" => Arc::new(Boat::new(key, BoatConfig::new(data_dir.join("ssh").join("boat_ed25519"))).map_err(err)?),
         "daytona" => Arc::new(Daytona::new(DaytonaConfig::new(data_dir.join("ssh").join("daytona_known_hosts")), key).map_err(err)?),
+        "agent37" => Arc::new(Agent37::new(key, Agent37Config::new(data_dir.join("ssh").join("agent37_ed25519"))).map_err(err)?),
         other => return Err(format!("Stowbox does not know the provider {other}")),
     })
 }
@@ -528,8 +531,17 @@ async fn guard_suspend(state: State<'_, AppState>, machine_id: String, policy: I
     let card = state.card(&p).await;
     let hourly_before_micro = card.hourly_micro(&m);
     let suspended = matches!(verdict, Verdict::Suspend { .. });
-    // Standby where the provider has it; a provider without it (boat, Daytona) is stopped.
-    let (action, after) = if p.capabilities().supports(PowerAction::Pause) { (PowerAction::Pause, MachineStatus::Suspended) } else { (PowerAction::Stop, MachineStatus::Stopped) };
+    // Standby where the provider has it, else hibernate (Agent37's sleep,
+    // which wakes on the next connection); a provider with neither (boat,
+    // Daytona) is stopped.
+    let caps = p.capabilities();
+    let (action, after) = if caps.supports(PowerAction::Pause) {
+        (PowerAction::Pause, MachineStatus::Suspended)
+    } else if caps.supports(PowerAction::Hibernate) {
+        (PowerAction::Hibernate, MachineStatus::Hibernated)
+    } else {
+        (PowerAction::Stop, MachineStatus::Stopped)
+    };
     let hourly_after_micro = if suspended {
         p.power(&m.id, action).await.map_err(err)?;
         card.hourly_micro(&Machine { status: after, ..m.clone() })

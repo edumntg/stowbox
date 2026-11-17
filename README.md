@@ -15,8 +15,8 @@
 
 <p align="center"><b>A desktop cockpit for cloud boxes and the coding agents running in them.</b></p>
 
-Stowbox talks to [boxd](https://boxd.sh), [boat](https://boat.dev) and
-[Daytona](https://www.daytona.io) with your own API keys, from your computer;
+Stowbox talks to [boxd](https://boxd.sh), [boat](https://boat.dev),
+[Daytona](https://www.daytona.io) and [Agent37](https://www.agent37.com) with your own API keys, from your computer;
 connect one or several. It shows your boxes with a
 live cost estimate, runs Claude Code or Codex inside them, one terminal and one
 session per agent, opens a shell in any box, and pauses, stops, forks or deletes
@@ -151,11 +151,12 @@ which the installer fetches when it is missing.
 On first launch the app asks for an API key: boxd (`bxd_…`, from
 [app.boxd.sh](https://app.boxd.sh) or `boxd auth keys create stowbox`) or boat
 (`boat_…`, from the boat dashboard or `boat api-key create stowbox`, with the
-ssh action) or Daytona (`dtn_…`, from the Daytona dashboard under Keys). The
+ssh action) or Daytona (`dtn_…`, from the Daytona dashboard under Keys) or
+Agent37 (`sk_live_…`, from the Agent37 dashboard under Cloud API). The
 others can be added later in Settings. Keys go to the OS keychain (Windows
 Credential Manager on Windows) and never to a Stowbox server. What differs
-between the providers is in [docs/boat.md](docs/boat.md) and
-[docs/daytona.md](docs/daytona.md).
+between the providers is in [docs/boat.md](docs/boat.md),
+[docs/daytona.md](docs/daytona.md) and [docs/agent37.md](docs/agent37.md).
 
 Platform notes for Windows (OpenSSH for the editor integration, where secrets
 live, CI): [docs/windows.md](docs/windows.md).
@@ -220,4 +221,4 @@ No license has been chosen for this repository yet.
 
 Icons are [Phosphor Icons](https://phosphoricons.com) (bold weight), MIT,
 inlined in `src/icons`. Terminal rendering by [xterm.js](https://xtermjs.org).
-Boxes by [boxd](https://boxd.sh), [boat](https://boat.dev) and [Daytona](https://www.daytona.io).
+Boxes by [boxd](https://boxd.sh), [boat](https://boat.dev), [Daytona](https://www.daytona.io) and [Agent37](https://www.agent37.com).

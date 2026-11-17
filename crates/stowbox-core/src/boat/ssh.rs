@@ -9,7 +9,7 @@
 //! nothing else.
 
 use super::api::{seg, Api};
-use crate::sshexec::{parse_host_key, Authorize, Endpoint, HostCheck, Login};
+use crate::sshexec::{parse_host_key, Authorize, Dial, Endpoint, HostCheck, Login};
 use crate::{Error, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -31,7 +31,7 @@ pub fn endpoint(v: &Value) -> Result<Endpoint> {
     }
     let host_key = parse_host_key(&s("hostKey")).map_err(|_| Error::Provider("boat did not send the sandbox's SSH host key, so the connection cannot be checked".into()))?;
     let user = Some(s("sshUser")).filter(|u| !u.is_empty()).unwrap_or_else(|| "user".into());
-    Ok(Endpoint { host, port, user, login: Login::Key, check: HostCheck::Pinned(host_key), provider: "boat" })
+    Ok(Endpoint { host, port, user, login: Login::Key, check: HostCheck::Pinned(host_key), dial: Dial::Tcp, provider: "boat" })
 }
 
 /// boat's `POST /sandboxes/{id}/sshkey`. The first seconds of a start

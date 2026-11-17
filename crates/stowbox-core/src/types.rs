@@ -47,7 +47,7 @@ impl MachineStatus {
 #[serde(rename_all = "camelCase")]
 pub struct Machine {
     pub id: String,
-    /// The provider that owns the box: "boxd", "boat" or "daytona". Filled by the
+    /// The provider that owns the box: "boxd", "boat", "daytona" or "agent37". Filled by the
     /// provider, so the shell can route every call about the box.
     #[serde(default)]
     pub provider: String,
