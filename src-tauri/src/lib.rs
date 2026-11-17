@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stowbox_core::agent::{self, session, AgentMeta, Harness};
 use stowbox_core::agent37::{Agent37, Agent37Config};
+use stowbox_core::audit::{AuditLog, Event as AuditEvent};
 use stowbox_core::boat::{Boat, BoatConfig};
 use stowbox_core::daytona::{Daytona, DaytonaConfig};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
@@ -102,6 +103,7 @@ struct AppState {
     data_dir: std::path::PathBuf,
     /// The person's home, where `~/.ssh` is; None when the OS reports none.
     home: Option<std::path::PathBuf>,
+    audit: AuditLog,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -136,6 +138,13 @@ fn now_ms() -> i64 {
 }
 
 impl AppState {
+    /// Adds to the audit log. A write that fails never fails the action.
+    fn audit(&self, event: AuditEvent) {
+        if let Err(e) = self.audit.record(&event, now_ms()) {
+            eprintln!("stowbox: could not write {}: {e}", self.audit.path().display());
+        }
+    }
+
     /// The provider that owns the box.
     async fn owner(&self, machine_id: &str) -> CmdResult<Arc<dyn Provider>> {
         self.providers.owner(machine_id).await.map_err(err)
@@ -330,6 +339,7 @@ async fn set_api_key(state: State<'_, AppState>, provider: Option<String>, key: 
     let store = state.secrets.get(id.as_str()).ok_or("no key store for this provider")?;
     let backend = store.save(&key).map_err(|e| format!("could not store the key: {e}"))?;
     state.secret_backend.write().await.insert(id.clone(), backend);
+    state.audit(AuditEvent::KeySaved { provider: id.clone(), backend: format!("{backend:?}").to_lowercase() });
     state.providers.set(p);
     state.rates.write().await.remove(&id);
     Ok(account)
@@ -345,6 +355,7 @@ async fn clear_api_key(state: State<'_, AppState>, provider: Option<String>) -> 
     for id in ids {
         if let Some(s) = state.secrets.get(id.as_str()) {
             s.clear();
+            state.audit(AuditEvent::KeyCleared { provider: id.clone() });
         }
         state.secret_backend.write().await.remove(&id);
         state.providers.remove(&id);
@@ -408,6 +419,7 @@ async fn create_machine(
         None => None,
     };
     let m = state.providers.adopt(&p, p.create_machine(spec).await.map_err(err)?);
+    state.audit(AuditEvent::BoxCreated { provider: m.provider.clone(), machine_id: m.id.clone(), machine_name: m.name.clone() });
     if let Some(setup) = setup {
         start_setup(&app, &state, p.clone(), &m, setup).await?;
     }
@@ -418,6 +430,7 @@ async fn create_machine(
 async fn fork_machine(state: State<'_, AppState>, source: String, name: Option<String>) -> CmdResult<MachineView> {
     let p = state.owner(&source).await?;
     let m = state.providers.adopt(&p, p.fork_machine(&source, name).await.map_err(err)?);
+    state.audit(AuditEvent::BoxForked { source, machine_id: m.id.clone(), machine_name: m.name.clone() });
     Ok(state.view(&p, m).await)
 }
 
@@ -428,6 +441,7 @@ async fn machine_power(state: State<'_, AppState>, id: String, action: PowerActi
         return Err(format!("{} boxes cannot {}", p.capabilities().label, format!("{action:?}").to_lowercase()));
     }
     p.power(&id, action).await.map_err(err)?;
+    state.audit(AuditEvent::Power { machine_id: id.clone(), power: action });
     if action == PowerAction::Destroy {
         state.providers.forget(&id);
         if let Some((_, h)) = state.setups.lock().await.remove(&id) {
@@ -1050,9 +1064,13 @@ async fn save_preset(state: State<'_, AppState>, input: PresetInput) -> CmdResul
 
     let old = state.preset_secrets.load(&id);
     let mut values = HashMap::new();
+    let mut changed = Vec::new();
     for (s, name) in input.secrets.iter().zip(&secret_names) {
         match s.value.as_ref().filter(|v| !v.is_empty()) {
             Some(v) => {
+                if old.get(name) != Some(v) {
+                    changed.push(name.clone());
+                }
                 values.insert(name.clone(), v.clone());
             }
             None => match old.get(name) {
@@ -1064,6 +1082,7 @@ async fn save_preset(state: State<'_, AppState>, input: PresetInput) -> CmdResul
         }
     }
     state.preset_secrets.save(&id, &values).map_err(|e| format!("could not store the secrets: {e}"))?;
+    state.audit(AuditEvent::PresetSaved { preset_id: id.clone(), preset_name: name.clone(), secret_names: secret_names.clone(), changed });
 
     let preset = Preset {
         id: id.clone(),
@@ -1088,13 +1107,17 @@ async fn save_preset(state: State<'_, AppState>, input: PresetInput) -> CmdResul
 
 #[tauri::command]
 async fn delete_preset(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let all = {
+    let (all, gone) = {
         let mut presets = state.presets.write().await;
+        let gone = presets.iter().find(|p| p.id == id).map(|p| p.name.clone());
         presets.retain(|p| p.id != id);
-        presets.clone()
+        (presets.clone(), gone)
     };
     state.store.save_presets(&all).await.map_err(err)?;
     state.preset_secrets.delete(&id);
+    if let Some(preset_name) = gone {
+        state.audit(AuditEvent::PresetDeleted { preset_id: id, preset_name });
+    }
     Ok(())
 }
 
@@ -1137,6 +1160,7 @@ async fn apply_setup_event(app: &AppHandle, state: &AppState, run_id: &str, ev: 
     let notice = if done { state.notifier.lock().unwrap_or_else(|e| e.into_inner()).setup(&run) } else { None };
     let _ = app.emit("setup-event", SetupPush { run: ProvisionRun { output: String::new(), ..run.clone() }, append, notice });
     if done {
+        state.audit(AuditEvent::SetupEnded { run_id: run.id.clone(), machine_id: run.machine_id.clone(), status: run.status, secrets_written: run.secrets_written });
         let mut setups = state.setups.lock().await;
         if setups.get(&run.machine_id).is_some_and(|(id, _)| *id == run.id) {
             setups.remove(&run.machine_id);
@@ -1165,6 +1189,14 @@ async fn start_setup(
         runs.push(run.clone());
     }
     let _ = app.emit("setup-event", SetupPush { run: run.clone(), append: String::new(), notice: None });
+    state.audit(AuditEvent::SetupStarted {
+        run_id: run.id.clone(),
+        machine_id: machine.id.clone(),
+        machine_name: machine.name.clone(),
+        preset_id: preset.id.clone(),
+        preset_name: preset.name.clone(),
+        secret_names: secrets.iter().map(|(n, _)| n.clone()).collect(),
+    });
 
     let (tx, mut rx) = mpsc::unbounded_channel::<RunEvent>();
     let machine_id = machine.id.clone();
@@ -1414,6 +1446,7 @@ pub fn run() {
                 idle: std::sync::Mutex::new(IdleWatch::new()),
                 data_dir: data.clone(),
                 home,
+                audit: AuditLog::new(data.join("state")),
             });
             Ok(())
         })
