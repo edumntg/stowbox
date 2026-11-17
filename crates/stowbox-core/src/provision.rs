@@ -398,8 +398,13 @@ impl ProvisionRun {
         matches!(self.status, RunStatus::Waiting | RunStatus::Running)
     }
 
-    /// Folds one event into the run. `now_ms` stamps the end.
+    /// Folds one event into the run. `now_ms` stamps the end. A run that
+    /// ended stays as it ended: a late event (the runner's own report after
+    /// a cancel, say) changes nothing.
     pub fn apply(&mut self, ev: &RunEvent, now_ms: i64) {
+        if !self.is_active() {
+            return;
+        }
         match ev {
             RunEvent::Running => self.status = RunStatus::Running,
             RunEvent::SecretsWritten => self.secrets_written = true,
@@ -954,6 +959,23 @@ mod tests {
         r.apply(&RunEvent::Finished(0), 5);
         assert_eq!(r.status, RunStatus::Done);
         assert!(r.error.is_none());
+    }
+
+    #[test]
+    fn run_reducer_ignores_events_after_the_end() {
+        let mut r = sample_run();
+        r.apply(&RunEvent::Running, 0);
+        r.apply(&RunEvent::StepStart(0), 0);
+        r.apply(&RunEvent::Cancelled, 7);
+        let ended = r.clone();
+        // What the runner reports as it is torn down after the cancel.
+        for ev in [RunEvent::StepExit(0, 143), RunEvent::StepStart(1), RunEvent::Output("late\n".into()), RunEvent::Failed("stopped".into()), RunEvent::Finished(143)] {
+            r.apply(&ev, 50);
+        }
+        assert_eq!(r.status, RunStatus::Cancelled);
+        assert_eq!(r.finished_at, Some(7));
+        assert!(r.error.is_none() && r.output.is_empty());
+        assert_eq!(r.steps.iter().map(|s| s.state).collect::<Vec<_>>(), ended.steps.iter().map(|s| s.state).collect::<Vec<_>>());
     }
 
     #[tokio::test(flavor = "multi_thread")]
