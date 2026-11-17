@@ -289,12 +289,22 @@ pub fn parse_line(line: &str, nonce: &str) -> Line {
 
 /// Replaces every secret value in `text` with `[NAME]`. Short values are
 /// left alone: masking "1" everywhere would wreck the log for nothing.
+/// The log arrives one line at a time, so a value that spans lines (a
+/// private key, a JSON credential) is also masked line by line.
 pub fn redact(text: &str, secrets: &[(String, String)]) -> String {
+    let mut pieces: Vec<(&str, &str)> = Vec::new();
+    for (k, v) in secrets {
+        if v.len() >= 4 {
+            pieces.push((k, v));
+        }
+        if v.contains('\n') {
+            pieces.extend(v.lines().map(|l| l.trim_end_matches('\r')).filter(|l| l.trim().len() >= 8).map(|l| (k.as_str(), l)));
+        }
+    }
+    pieces.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
     let mut out = text.to_string();
-    let mut by_len: Vec<&(String, String)> = secrets.iter().filter(|(_, v)| v.len() >= 4).collect();
-    by_len.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-    for (k, v) in by_len {
-        out = out.replace(v.as_str(), &format!("[{k}]"));
+    for (k, v) in pieces {
+        out = out.replace(v, &format!("[{k}]"));
     }
     out
 }
@@ -869,6 +879,17 @@ mod tests {
             redact("push with ghp_abcdef to 1 remote", &s),
             "push with [TOKEN] to 1 remote"
         );
+    }
+
+    #[test]
+    fn redact_masks_each_line_of_a_multi_line_value() {
+        let key = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\r\nQyNTUxOQAAACBzZWNyZXQ\n-----END OPENSSH PRIVATE KEY-----\n";
+        let s = vec![("DEPLOY_KEY".to_string(), key.to_string())];
+        for line in key.lines() {
+            let line = line.trim_end_matches('\r');
+            assert_eq!(redact(&format!("cat: {line}"), &s), "cat: [DEPLOY_KEY]");
+        }
+        assert_eq!(redact("ok", &s), "ok");
     }
 
     fn sample_machine() -> Machine {

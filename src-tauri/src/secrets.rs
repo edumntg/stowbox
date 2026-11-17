@@ -14,6 +14,24 @@ use std::path::PathBuf;
 
 const SERVICE: &str = "sh.stowbox.desktop";
 
+/// Writes `bytes` to `path` readable by the owner only. A new file is
+/// created 0600, so the value is never readable by others, not even for a
+/// moment; an older file with wider bits is narrowed before the write.
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        opts.mode(0o600);
+        if path.exists() {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    use std::io::Write;
+    opts.open(path)?.write_all(bytes)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
@@ -60,12 +78,7 @@ impl Secrets {
         if let Some(parent) = self.file.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.file, value)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.file, std::fs::Permissions::from_mode(0o600))?;
-        }
+        write_private(&self.file, value.as_bytes())?;
         Ok(Backend::File)
     }
 
@@ -122,16 +135,7 @@ impl PresetSecrets {
             let _ = entry.delete_credential();
         }
         std::fs::create_dir_all(&self.dir)?;
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            // Created 0600, so the values are never readable by others.
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        use std::io::Write;
-        opts.open(self.file(id))?.write_all(json.as_bytes())?;
+        write_private(&self.file(id), json.as_bytes())?;
         Ok(Backend::File)
     }
 
