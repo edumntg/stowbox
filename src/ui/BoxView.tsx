@@ -538,12 +538,17 @@ export default function BoxView(p: { machine: Machine }) {
               }
             >
               <Show when={state.ui.boxTerminal?.machineId === m().id ? state.ui.boxTerminal : null} keyed fallback={
-                  <Terminal
-                    machine={m().id}
-                    key={m().id}
-                    persist={boxTerminalKey(m().id)}
-                    hint="Connected. The shell keeps running while you look elsewhere; closing the box's tab ends it."
-                  />
+                  // Keyed on the box: the terminal reads its props once, so
+                  // switching boxes has to mount a new one.
+                  <Show when={m().id} keyed>
+                    {(id) => (
+                      <Terminal
+                        machine={id}
+                        persist={boxTerminalKey(id)}
+                        hint="Connected. The shell keeps running while you look elsewhere; closing the box's tab ends it."
+                      />
+                    )}
+                  </Show>
                 }>
                 {(t) => (
                   <div class="term-pane">

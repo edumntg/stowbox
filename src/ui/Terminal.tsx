@@ -219,7 +219,6 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
  * the same key shows it again, scrollback and all. */
 export default function Terminal(p: {
   machine: string;
-  key?: string;
   target?: TermTarget;
   /** Keeps the session under this key when the view goes away. */
   persist?: string;
