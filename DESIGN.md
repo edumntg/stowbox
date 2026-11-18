@@ -18,9 +18,10 @@ on `#171717`, or dark text on `#e5e5e5`.
 Colour means state and only state:
 
 - green: a box running, an agent working (or running, for a harness
-  without hooks), a diff line added
-- orange: standby, hibernated, pending, and an agent whose turn ended and
-  that waits for the person
+  without hooks), a diff line added. A working agent's marker pulses.
+- yellow: an agent whose turn ended and that waits for the person. Kept
+  apart from orange so a reply never reads as a fault.
+- orange: standby, hibernated, pending
 - red: failed, a destructive button on hover, a diff line removed
 - grey: stopped, idle, an agent not running or not checked yet
 
@@ -229,7 +230,9 @@ cube drawn with the same stroke.
 
 150ms background and colour transitions on hover, a 150ms rotate on the
 disclosure caret, 160ms pop-in on dialogs and toasts. Hover reveals row
-controls; touch devices always show them. Nothing loops.
+controls; touch devices always show them. One loop only: a working
+agent's marker fades to 35% and back over 1.6s, and stops under reduced
+motion.
 
 ## Copy
 

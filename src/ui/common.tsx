@@ -24,7 +24,7 @@ export function dotState(s: MachineStatus): string {
   }
 }
 
-export const phaseDot: Record<AgentPhase, string> = { working: "busy", waiting: "done", running: "running", stopped: "stopped", unknown: "idle" };
+export const phaseDot: Record<AgentPhase, string> = { working: "working", waiting: "waiting", running: "running", stopped: "stopped", unknown: "idle" };
 
 export const Dot = (p: { status: MachineStatus }) => <span class="dot" data-state={dotState(p.status)} />;
 /** The box's state in words, coloured like its dot. Running says nothing:

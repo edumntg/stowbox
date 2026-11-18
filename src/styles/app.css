@@ -149,14 +149,18 @@ ul {
 }
 
 .dot[data-state="running"],
-.dot[data-state="busy"] {
+.dot[data-state="busy"],
+.dot[data-state="working"] {
   background: var(--ok);
+}
+
+.dot[data-state="waiting"] {
+  background: var(--attention);
 }
 
 .dot[data-state="standby"],
 .dot[data-state="hibernated"],
-.dot[data-state="pending"],
-.dot[data-state="done"] {
+.dot[data-state="pending"] {
   background: var(--warn);
 }
 
@@ -1609,12 +1613,32 @@ select.input {
 }
 
 .sq[data-state="busy"],
-.sq[data-state="running"] {
+.sq[data-state="running"],
+.sq[data-state="working"] {
   background: var(--ok);
 }
 
-.sq[data-state="done"] {
-  background: var(--warn);
+.sq[data-state="waiting"] {
+  background: var(--attention);
+}
+
+/* An agent mid-turn breathes; the one loop in the app. */
+.dot[data-state="working"],
+.sq[data-state="working"] {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot[data-state="working"],
+  .sq[data-state="working"] {
+    animation: none;
+  }
 }
 
 .sq[data-state="failed"] {
