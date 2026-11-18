@@ -1147,6 +1147,7 @@ ul {
 /* ---------- terminal ---------- */
 
 .term-wrap {
+  position: relative;
   height: 100%;
   background: var(--terminal);
   padding: 8px 4px 6px 10px;
@@ -1189,6 +1190,59 @@ ul {
   white-space: nowrap;
   max-width: 360px;
   margin-right: 4px;
+}
+
+/* Every address the session showed, newest first, floating over the
+   terminal just above the bar. */
+.term-links {
+  position: absolute;
+  right: 4px;
+  bottom: 30px;
+  width: min(560px, calc(100% - 8px));
+  max-height: min(320px, 70%);
+  overflow-y: auto;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-floating);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  z-index: 5;
+  color: var(--foreground);
+  font-size: var(--text-3xs);
+  animation: pop-in 160ms var(--ease-out);
+}
+
+.term-links-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 4px 6px;
+}
+
+.term-links-head .section-title {
+  margin: 0;
+}
+
+.term-links-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding-left: 6px;
+  border-radius: var(--radius-sm);
+}
+
+.term-links-row:hover {
+  background: var(--muted);
+}
+
+.term-links-row .term-link-url {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
 }
 
 /* ---------- forms ---------- */

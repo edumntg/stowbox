@@ -36,7 +36,16 @@ const TMUX_CONF: &[&str] = &[
     "set -s escape-time 0",
     "set -g default-terminal xterm-256color",
     "set -ga terminal-overrides ,xterm-256color:Tc",
+    // Pass hyperlinks (OSC 8) through to Stowbox's terminal, which tmux
+    // drops unless told the outer terminal takes them (tmux 3.4 and later).
+    "%if #{>=:#{version},3.4}",
+    HYPERLINKS,
+    "%endif",
 ];
+
+/// tmux's setting for hyperlinks, at a fixed index so setting it again on a
+/// running server does not add it twice.
+const HYPERLINKS: &str = "set -s 'terminal-features[90]' 'xterm*:hyperlinks'";
 
 pub const DEADLINE: Duration = Duration::from_secs(20);
 
@@ -108,7 +117,9 @@ pub fn harness_command(a: &AgentMeta, input: Option<&str>) -> String {
     let input = input.map(str::trim).filter(|i| !i.is_empty());
     if a.harness == Harness::ClaudeCode {
         s.push_str(&account::prelude());
-        s.push('\n');
+        // Addresses come as hyperlinks (OSC 8) carrying the whole URL, so
+        // one that Claude Code breaks over rows still opens and copies whole.
+        s.push_str("\nexport FORCE_HYPERLINK=1\n");
     }
     if let Some(cwd) = a.cwd.as_deref().filter(|c| !c.trim().is_empty()) {
         s.push_str(&format!("cd {} || exit 1\n", shell_quote(cwd)));
@@ -168,6 +179,10 @@ pub fn open_script(a: &AgentMeta, input: Option<&str>) -> String {
         "  printf '%s\\n' {} > \"$HOME/.stowbox/tmux.conf\"\n",
         TMUX_CONF.iter().map(|l| shell_quote(l)).collect::<Vec<_>>().join(" ")
     ));
+    // The config is read when the server starts; a server already running
+    // (older agents still open) gets the hyperlink setting here. Fails
+    // quietly on a tmux too old for it, or when no server runs yet.
+    s.push_str(&format!("  tmux -L {TMUX_SOCKET} {HYPERLINKS} 2>/dev/null\n"));
     s.push_str(&format!(
         "  exec tmux -L {TMUX_SOCKET} -f \"$HOME/.stowbox/tmux.conf\" new-session -A -s {} {}\n",
         tmux_name(&a.id),
@@ -315,6 +330,40 @@ mod tests {
         assert!(c.contains("set -- --resume \"$sid\"; else set -- --session-id \"$sid\""));
         assert!(c.contains("exec claude \"$@\" --model opus --dangerously-skip-permissions --settings '{\"hooks\""));
         assert!(c.trim_end().ends_with(" 'Add a test'"), "{c}");
+    }
+
+    #[test]
+    fn claude_sends_whole_addresses_as_hyperlinks_through_tmux() {
+        let a = meta(Harness::ClaudeCode, Some("s1"));
+        assert!(harness_command(&a, None).contains("\nexport FORCE_HYPERLINK=1\n"));
+        assert!(!harness_command(&meta(Harness::Codex, None), None).contains("FORCE_HYPERLINK"));
+        let open = open_script(&a, None);
+        assert!(open.contains(&format!("  tmux -L stowbox {HYPERLINKS} 2>/dev/null\n")), "{open}");
+        assert!(open.contains(&shell_quote(HYPERLINKS)), "{open}");
+    }
+
+    /// The config loads without errors and turns hyperlinks on where tmux
+    /// has them; only where tmux is installed.
+    #[test]
+    fn tmux_takes_the_config() {
+        let tmux = |args: &[&str]| std::process::Command::new("tmux").args(args).env_remove("TMUX").output();
+        let Ok(v) = tmux(&["-V"]) else { return };
+        let version = String::from_utf8_lossy(&v.stdout).trim().trim_start_matches("tmux ").to_string();
+        let dir = std::env::temp_dir().join(format!("stowbox-tmux-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conf = dir.join("tmux.conf");
+        std::fs::write(&conf, TMUX_CONF.join("\n") + "\n").unwrap();
+        let sock = format!("stowbox-test-{}", uuid::Uuid::new_v4().simple());
+        let conf = conf.to_str().unwrap();
+        let started = tmux(&["-L", &sock, "-f", conf, "new-session", "-d", "-s", "t", "sleep 5"]).unwrap();
+        let features = tmux(&["-L", &sock, "show", "-s", "terminal-features"]).unwrap();
+        let _ = tmux(&["-L", &sock, "kill-server"]);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(started.status.success(), "{}", String::from_utf8_lossy(&started.stderr));
+        let features = String::from_utf8_lossy(&features.stdout);
+        if version.as_str() >= "3.4" {
+            assert!(features.contains("xterm*:hyperlinks"), "tmux {version}: {features}");
+        }
     }
 
     #[test]

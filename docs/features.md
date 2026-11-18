@@ -212,5 +212,13 @@ Everything the app does today, in full. The README has the short version.
   of the line); ⌘K types nothing there and works everywhere. On Windows the
   terminal copies a selection with Ctrl+C (with nothing selected Ctrl+C is
   the interrupt, as always) and pastes with Ctrl+V, as Windows Terminal does.
+- **Links in the terminal**: the bar under a terminal shows the newest web
+  address the session printed, with Open link and Copy link, and "N links"
+  for a list of every address it showed, newest first, each with Copy and
+  Open. Claude Code runs with `FORCE_HYPERLINK=1` and Stowbox's tmux passes
+  hyperlinks through (tmux 3.4 and later), so an address it breaks over
+  several rows still opens and copies whole. Elsewhere the address is
+  pieced together from the rows, and a selection that is one address
+  broken over rows is copied on one line.
 - Light and dark themes, keyboard reachable, honest empty, loading and error
   states everywhere.

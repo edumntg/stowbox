@@ -671,6 +671,29 @@ const clickListeners = new Set<(t: NoticeTarget) => void>();
 const runningSince: Record<string, number> = { vm_mock_5: Date.now() - 3 * 3_600_000 };
 const touchedAt: Record<string, number> = {};
 const openTerminals = new Map<string, string>();
+/** A reply the way Claude Code prints one: it breaks long lines itself
+ * at the terminal's width and indents what follows the "● ". The first
+ * address is a hyperlink (OSC 8), as Stowbox has Claude Code send them;
+ * the second is plain text, as an older tmux in the box would leave it. */
+function claudeReply(cols: number): string {
+  const width = Math.max(40, cols || 80);
+  const wrap = (text: string, bullet = true) => {
+    const rows: string[] = [];
+    for (let rest = text, first = bullet; rest; first = false) {
+      const room = width - 2;
+      rows.push((first ? "● " : "  ") + rest.slice(0, room));
+      rest = rest.slice(room);
+    }
+    return rows;
+  };
+  const link = (url: string) => `\x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\`;
+  const pr = "https://github.com/example/mock-api/compare/main...agent/health-endpoint?expand=1&title=Add%20a%20%2Fhealth%20endpoint";
+  const preview = `https://mock-api-3000.example.dev/health?check=all&verbose=true&token=${"pr3v13w".repeat(6)}`;
+  // Each row of a hyperlink is its own OSC 8 span, as tmux redraws them.
+  const prRows = wrap(pr, false).map((r) => r.slice(0, 2) + link(pr).replace(pr + "\x1b]8", r.slice(2) + "\x1b]8"));
+  return ["● Pushed. Open the pull request here:", ...prRows, "", ...wrap(preview), ""].join("\r\n");
+}
+
 let terminalSeq = 0;
 const terminalEvents = new Map<string, (s: string) => void>();
 /** Agent terminals by terminal id; they echo what is typed, like a prompt would. */
@@ -1430,7 +1453,7 @@ export const mockApi: Api = {
     console.info("mock: would open", url);
     return { url, alias: plan.alias, changes };
   },
-  async terminalOpen(machineId, _cols, _rows, target, onEvent) {
+  async terminalOpen(machineId, cols, _rows, target, onEvent) {
     const enc = new TextEncoder();
     const send = (s: string) => onEvent({ type: "data", b64: btoa(String.fromCharCode(...enc.encode(s))) } as TermEvent);
     const id = `term_mock_${++terminalSeq}`;
@@ -1439,7 +1462,7 @@ export const mockApi: Api = {
       if (!a) throw new Error("no such agent");
       const cmd = a.harness === "claude-code" ? `claude --resume ${a.sessionId}` : `codex${a.sessionId ? ` resume ${a.sessionId}` : ""}`;
       const where = noTmux.has(machineId) ? "" : " in tmux, so it keeps running when this terminal closes";
-      setTimeout(() => send(`mock terminal: the desktop build runs ${cmd} inside the box${where}.\r\n\r\n> ${target.input ? `${target.input}\r\n> ` : ""}`), 100);
+      setTimeout(() => send(`mock terminal: the desktop build runs ${cmd} inside the box${where}.\r\n\r\n${claudeReply(cols)}\r\n> ${target.input ? `${target.input}\r\n> ` : ""}`), 100);
       agentTerminals.set(id, a.id);
       terminalEnds.set(id, (code) => onEvent({ type: "exit", code }));
       agents = agents.map((x) => (x.id === a.id ? { ...x, updatedAt: Date.now() } : x));
