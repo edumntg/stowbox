@@ -39,7 +39,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_API: &str = "https://api.agent37.com/v1";
@@ -90,8 +90,11 @@ pub struct Shape {
     pub disk_gb: u32,
 }
 
+/// What a create without a size gets.
+const DEFAULT_SHAPE: Shape = Shape { id: "default", cpu: 2, memory_gb: 4, disk_gb: 4 };
+
 pub const SHAPES: &[Shape] = &[
-    Shape { id: "default", cpu: 2, memory_gb: 4, disk_gb: 4 },
+    DEFAULT_SHAPE,
     Shape { id: "medium", cpu: 4, memory_gb: 8, disk_gb: 6 },
     Shape { id: "large", cpu: 4, memory_gb: 16, disk_gb: 12 },
     Shape { id: "xlarge", cpu: 4, memory_gb: 32, disk_gb: 24 },
@@ -201,6 +204,12 @@ impl Agent37 {
         })
     }
 
+    /// The signed links made so far. A panic elsewhere while the lock was
+    /// held leaves the map as it was, which is still a valid cache.
+    fn links(&self) -> MutexGuard<'_, HashMap<String, Vec<HttpsRoute>>> {
+        self.links.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Installs what agents need in a new instance and waits for it. The
     /// exit code of the install, or an error when it could not be started
     /// or did not end in time.
@@ -258,7 +267,8 @@ const START_AGAIN_AFTER: Duration = Duration::from_secs(30);
 /// once, then again only if the last one has had time and did not take.
 /// The status lags the start by a few polls, and every poll is 2 s.
 fn start_due(last: Option<Instant>, now: Instant) -> bool {
-    last.is_none_or(|t| now.duration_since(t) >= START_AGAIN_AFTER)
+    // Not `is_none_or`: it is newer than the crate's rust-version.
+    last.map_or(true, |t| now.duration_since(t) >= START_AGAIN_AFTER)
 }
 
 /// Wakes a sleeping instance and says how to reach it through the edge.
@@ -326,7 +336,7 @@ impl Provider for Agent37 {
     }
 
     async fn create_machine(&self, spec: CreateSpec) -> Result<Machine> {
-        let shape = SHAPES.iter().find(|s| Some(s.id) == spec.size.as_deref()).unwrap_or(&SHAPES[0]);
+        let shape = SHAPES.iter().find(|s| Some(s.id) == spec.size.as_deref()).unwrap_or(&DEFAULT_SHAPE);
         let mut body = Map::new();
         body.insert("template".into(), json!(TEMPLATE));
         body.insert("resources".into(), json!({ "cpu": shape.cpu, "memory": shape.memory_gb, "disk": shape.disk_gb }));
@@ -382,7 +392,7 @@ impl Provider for Agent37 {
             }
             PowerAction::Destroy => {
                 self.api.delete(&path).await?;
-                self.links.lock().unwrap().remove(id);
+                self.links().remove(id);
             }
             PowerAction::Pause => return Err(Error::Provider("Agent37 instances have no standby; put it to sleep instead".into())),
         }
@@ -454,7 +464,7 @@ impl Provider for Agent37 {
     }
 
     async fn https_routes(&self, id: &str) -> Result<Vec<HttpsRoute>> {
-        Ok(self.links.lock().unwrap().get(id).cloned().unwrap_or_default())
+        Ok(self.links().get(id).cloned().unwrap_or_default())
     }
 
     /// A signed link to `port`: every port has a URL at the edge, but a
@@ -470,7 +480,7 @@ impl Provider for Agent37 {
         let url = r.get("url").and_then(Value::as_str).unwrap_or("").to_string();
         let domain = url.trim_start_matches("https://").split(['/', '?']).next().unwrap_or("").to_string();
         let route = HttpsRoute { name: port.to_string(), domain, url: Some(url).filter(|u| !u.is_empty()), port: port as u32, port_mode: "locked".into(), is_default: false };
-        let mut links = self.links.lock().unwrap();
+        let mut links = self.links();
         let list = links.entry(id.to_string()).or_default();
         list.retain(|l| l.port != route.port);
         list.push(route.clone());

@@ -52,6 +52,12 @@ pub async fn over<S>(mut stream: S, host: &str, headers: &[(String, String)]) ->
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    // The host is a box id from the provider's API and the headers carry the
+    // key the person typed: a line break in either would add lines of its
+    // own to the request.
+    if host.contains(['\r', '\n']) || headers.iter().any(|(k, v)| k.contains(['\r', '\n', ':']) || v.contains(['\r', '\n'])) {
+        return Err(Error::Provider("a WebSocket tunnel header holds a line break; check the API key for stray characters".into()));
+    }
     let mut nonce = [0u8; 16];
     getrandom::getrandom(&mut nonce).map_err(|e| Error::Network(format!("no randomness for the WebSocket key: {e}")))?;
     let key = base64::engine::general_purpose::STANDARD.encode(nonce);
@@ -64,27 +70,34 @@ where
     stream.flush().await?;
 
     let mut buf = Vec::with_capacity(1024);
-    let end = loop {
-        if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-            break at;
+    let mut chunk = [0u8; 2048];
+    let (head, rest) = loop {
+        if let Some(split) = split_head(&buf) {
+            break split;
         }
         if buf.len() > MAX_HEAD {
             return Err(Error::Network(format!("{host} sent no end to its WebSocket answer")));
         }
-        let mut chunk = [0u8; 2048];
         let n = stream.read(&mut chunk).await?;
         if n == 0 {
             return Err(Error::Network(format!("{host} closed the connection during the WebSocket handshake")));
         }
-        buf.extend_from_slice(&chunk[..n]);
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
     };
-    let head = String::from_utf8_lossy(&buf[..end]).to_string();
-    check_answer(&head, &key, host)?;
-    let rest = buf[end + 4..].to_vec();
+    check_answer(&String::from_utf8_lossy(head), &key, host)?;
+    let rest = rest.to_vec();
 
     let (ours, theirs) = tokio::io::duplex(256 * 1024);
     tokio::spawn(pump(stream, theirs, rest));
     Ok(ours)
+}
+
+/// The handshake answer's head and what came after its blank line, once
+/// `buf` holds the whole head.
+fn split_head(buf: &[u8]) -> Option<(&[u8], &[u8])> {
+    let at = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let (head, rest) = buf.split_at_checked(at)?;
+    Some((head, rest.strip_prefix(b"\r\n\r\n")?))
 }
 
 /// The value the server must answer a `Sec-WebSocket-Key` with.
@@ -127,57 +140,53 @@ pub fn encode(opcode: u8, payload: &[u8], mask: [u8; 4]) -> Vec<u8> {
         out.extend_from_slice(&(len as u64).to_be_bytes());
     }
     out.extend_from_slice(&mask);
-    out.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+    out.extend(payload.iter().zip(mask.iter().cycle()).map(|(b, m)| b ^ m));
     out
 }
 
 /// A frame read off the front of `buf`: its opcode, its payload and the
-/// bytes it took. `None` while the frame is incomplete.
+/// bytes it took. `None` while the frame is incomplete. The bytes come from
+/// the network, so every field is read with a bounds check and the length
+/// is capped before anything is copied.
 pub fn decode(buf: &[u8]) -> Result<Option<(u8, Vec<u8>, usize)>> {
-    if buf.len() < 2 {
+    let [b0, b1, rest @ ..] = buf else {
         return Ok(None);
-    }
-    let opcode = buf[0] & 0x0f;
-    let masked = buf[1] & 0x80 != 0;
-    let mut at = 2;
-    let len = match buf[1] & 0x7f {
-        126 => {
-            if buf.len() < 4 {
-                return Ok(None);
-            }
-            at = 4;
-            u16::from_be_bytes([buf[2], buf[3]]) as u64
-        }
-        127 => {
-            if buf.len() < 10 {
-                return Ok(None);
-            }
-            at = 10;
-            u64::from_be_bytes(buf[2..10].try_into().unwrap())
-        }
-        n => n as u64,
+    };
+    let opcode = b0 & 0x0f;
+    let masked = b1 & 0x80 != 0;
+    let (len, rest) = match b1 & 0x7f {
+        126 => match rest.split_first_chunk::<2>() {
+            Some((n, rest)) => (u64::from(u16::from_be_bytes(*n)), rest),
+            None => return Ok(None),
+        },
+        127 => match rest.split_first_chunk::<8>() {
+            Some((n, rest)) => (u64::from_be_bytes(*n), rest),
+            None => return Ok(None),
+        },
+        n => (u64::from(n), rest),
     };
     if len > MAX_FRAME {
         return Err(Error::Network(format!("the tunnel sent a {len}-byte frame")));
     }
-    let mask = if masked {
-        if buf.len() < at + 4 {
-            return Ok(None);
+    let (mask, rest) = if masked {
+        match rest.split_first_chunk::<4>() {
+            Some((m, rest)) => (Some(*m), rest),
+            None => return Ok(None),
         }
-        at += 4;
-        Some([buf[at - 4], buf[at - 3], buf[at - 2], buf[at - 1]])
     } else {
-        None
+        (None, rest)
     };
-    let len = len as usize;
-    if buf.len() < at + len {
+    let len = usize::try_from(len).map_err(|_| Error::Network(format!("the tunnel sent a {len}-byte frame")))?;
+    let Some(payload) = rest.get(..len) else {
         return Ok(None);
-    }
-    let mut payload = buf[at..at + len].to_vec();
+    };
+    let mut payload = payload.to_vec();
     if let Some(m) = mask {
-        payload.iter_mut().enumerate().for_each(|(i, b)| *b ^= m[i % 4]);
+        payload.iter_mut().zip(m.iter().cycle()).for_each(|(b, k)| *b ^= k);
     }
-    Ok(Some((opcode, payload, at + len)))
+    // `rest` is a suffix of `buf`, so the header is what lies before it.
+    let used = buf.len() - rest.len() + len;
+    Ok(Some((opcode, payload, used)))
 }
 
 fn new_mask() -> [u8; 4] {
@@ -199,29 +208,27 @@ where
 
     let inbound = async move {
         let mut buf = rest;
+        let mut chunk = vec![0u8; 64 * 1024];
         loop {
-            while let Ok(Some((op, payload, used))) = decode(&buf) {
-                buf.drain(..used);
-                match op {
-                    OP_CLOSE => return,
-                    OP_PING => {
-                        let _ = pong_tx.send(payload).await;
-                    }
-                    0x0..=0x2 if !payload.is_empty() => {
-                        if local_w.write_all(&payload).await.is_err() {
-                            return;
+            match decode(&buf) {
+                Ok(Some((op, payload, used))) => {
+                    buf.drain(..used);
+                    match op {
+                        OP_CLOSE => return,
+                        OP_PING => {
+                            let _ = pong_tx.send(payload).await;
                         }
+                        0x0..=0x2 if !payload.is_empty() && local_w.write_all(&payload).await.is_err() => return,
+                        _ => {}
                     }
-                    _ => {}
+                    continue;
                 }
+                Ok(None) => {}
+                Err(_) => return,
             }
-            if decode(&buf).is_err() {
-                return;
-            }
-            let mut chunk = vec![0u8; 64 * 1024];
             match sock_r.read(&mut chunk).await {
                 Ok(0) | Err(_) => return,
-                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                Ok(n) => buf.extend_from_slice(chunk.get(..n).unwrap_or_default()),
             }
         }
     };
@@ -237,7 +244,7 @@ where
                         return;
                     }
                     Ok(n) => {
-                        if sock_w.write_all(&encode(OP_BINARY, &chunk[..n], new_mask())).await.is_err() {
+                        if sock_w.write_all(&encode(OP_BINARY, chunk.get(..n).unwrap_or_default(), new_mask())).await.is_err() {
                             return;
                         }
                     }
@@ -287,6 +294,56 @@ mod tests {
         let mut f = vec![0x82, 127];
         f.extend_from_slice(&(MAX_FRAME + 1).to_be_bytes());
         assert!(decode(&f).is_err());
+        let mut f = vec![0x82, 127];
+        f.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert!(decode(&f).is_err());
+    }
+
+    #[test]
+    fn a_header_cut_short_is_incomplete_in_every_length_form() {
+        for f in [&[0x82u8][..], &[0x82, 126], &[0x82, 126, 0], &[0x82, 127, 0, 0, 0], &[0x82, 0x85], &[0x82, 0x85, 1, 2, 3], &[0x82, 0xfe, 0, 10, 1]] {
+            assert!(decode(f).unwrap().is_none(), "{f:?}");
+        }
+    }
+
+    /// Whatever the server sends, decoding answers and never panics, and a
+    /// frame it accepts never claims more bytes than it was given.
+    #[test]
+    fn hostile_bytes_never_panic() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..20_000 {
+            let len = (next() % 40) as usize;
+            let mut buf: Vec<u8> = (0..len).map(|_| next() as u8).collect();
+            // Bias the length byte towards the extended forms.
+            if let Some(b) = buf.get_mut(1) {
+                *b = [*b, 0x7e, 0x7f, 0xfe, 0xff][(next() % 5) as usize];
+            }
+            if let Ok(Some((_, payload, used))) = decode(&buf) {
+                assert!(used <= buf.len() && payload.len() <= used, "{buf:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_handshake_head_ends_at_the_first_blank_line() {
+        assert_eq!(split_head(b"HTTP/1.1 101\r\nA: b\r\n\r\n\x82\x00"), Some((&b"HTTP/1.1 101\r\nA: b"[..], &b"\x82\x00"[..])));
+        assert_eq!(split_head(b"HTTP/1.1 101\r\n\r"), None);
+        assert_eq!(split_head(b""), None);
+    }
+
+    #[tokio::test]
+    async fn line_breaks_in_headers_are_refused_before_anything_is_sent() {
+        let (client, _server) = tokio::io::duplex(1024);
+        let e = over(client, "h", &[("X-Agent37-Key".into(), "sk_live_x\r\nEvil: 1".into())]).await.unwrap_err();
+        assert!(e.to_string().contains("line break"), "{e}");
+        let (client, _server) = tokio::io::duplex(1024);
+        assert!(over(client, "h\r\nEvil: 1", &[]).await.is_err());
     }
 
     #[test]
