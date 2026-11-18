@@ -96,7 +96,11 @@ shadows, except the floating shadow under dialogs and toasts.
   the terminal (tmux) or not, with Add files on the right and Open again
   once the harness exits. Files dropped on the terminal or added there
   are copied into the box and their paths typed at the prompt; the bar
-  says "Copying…" meanwhile, or the reason in red. The header's End
+  says "Copying…" meanwhile, or the reason in red. Under the terminal, the
+  bar's right end shows the newest web address in faint monospace with
+  Open link and Copy link, and "N links" once there are more: a floating
+  list above the bar (popover surface, LINKS IN THIS SESSION, Close), one
+  row per address, newest first, each with Copy and Open. The header's End
   session (red, ghost) quits the harness in the box; the terminal then
   gives way to a one-line empty state and "Open … again". The stats line
   says the state from the box (Working, Waiting for you, Running, Not

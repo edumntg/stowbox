@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { api } from "../bridge/api";
 import type { TermTarget } from "../bridge/types";
 import { isMac } from "./common";
@@ -25,8 +25,9 @@ interface Session {
   status: Status;
   detail: string;
   bad: boolean;
-  /** The last web address on screen, for the bar's Open and Copy. */
-  url: string;
+  /** Web addresses the session showed, newest first, for the bar's Open
+   * and Copy and its list of links. */
+  links: string[];
   /** Set while open. */
   write: TermInput | null;
   /** The view showing it, if any. */
@@ -37,32 +38,53 @@ interface Session {
 const over = (s: Session) => s.status === "ended" || s.status === "error";
 
 const URL_RE = /https?:\/\/[^\s"'<>`]+/g;
+const WHOLE_URL = /^https?:\/\/[^\s"'<>`]+$/;
 
-/** The last http(s) address in the visible rows. A long address runs over
- * several rows: soft-wrapped ones are marked as such, and a full row that
- * ends inside the address carries on into the next too, since some TUIs
- * break lines themselves. */
-function lastUrlOnScreen(term: import("@xterm/xterm").Terminal): string {
+/** How many addresses a session keeps for its list. */
+const LINKS_KEPT = 30;
+
+/** The http(s) addresses in the visible rows, top to bottom. A long
+ * address runs over several rows: soft-wrapped ones are marked as such,
+ * and a row that reaches the right edge inside an address carries on into
+ * the next, whose indent is dropped, since TUIs such as Claude Code break
+ * and indent long lines themselves. */
+function urlsOnScreen(term: import("@xterm/xterm").Terminal): string[] {
   const buf = term.buffer.active;
   const text: string[] = [];
   let line = "";
+  let indentGoes = false;
   for (let y = buf.viewportY; y < buf.viewportY + term.rows; y++) {
     const row = buf.getLine(y);
     if (!row) break;
-    const s = row.translateToString(true);
+    let s = row.translateToString(true);
+    if (indentGoes) s = s.trimStart();
     const next = buf.getLine(y + 1);
     line += s;
     const nextText = next?.translateToString(true) ?? "";
-    const runsOn = next?.isWrapped || (s.length >= term.cols && /[^\s]$/.test(s) && /^[^\s]/.test(nextText) && /https?:\/\/[^\s]*$/.test(line));
-    if (!runsOn) {
+    const atEdge = row.translateToString(true).length >= term.cols - 3 && /[^\s]$/.test(s);
+    const breaksUrl = atEdge && /^\s*[^\s]/.test(nextText) && /https?:\/\/[^\s]*$/.test(line);
+    indentGoes = !next?.isWrapped && breaksUrl;
+    if (!next?.isWrapped && !breaksUrl) {
       text.push(line);
       line = "";
     }
   }
   if (line) text.push(line);
-  const found = text.join("\n").match(URL_RE);
   // Closing punctuation of the sentence around it is not part of it.
-  return found ? found[found.length - 1].replace(/[).,;:!?\]]+$/, "") : "";
+  return (text.join("\n").match(URL_RE) ?? []).map((u) => u.replace(/[).,;:!?\]]+$/, ""));
+}
+
+/** A selection that is one address broken over rows (with the indent the
+ * app put in front of the rest) is copied as that address, on one line;
+ * anything else is copied as selected. */
+export function unbrokenUrl(text: string): string {
+  if (!text.includes("\n")) return text;
+  const joined = text
+    .split(/\r?\n/)
+    .map((l, i) => (i ? l.trim() : l.trimEnd()))
+    .join("")
+    .trim();
+  return WHOLE_URL.test(joined) ? joined : text;
 }
 
 async function createSession(machine: string, target: TermTarget, host: HTMLElement, key: string | undefined): Promise<Session> {
@@ -109,7 +131,7 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
     const copyKey = k === "c" && (isMac ? e.metaKey && !e.ctrlKey && !e.altKey : ctrlOnly && (e.shiftKey || !!selection()));
     if (copyKey) {
       if (e.type === "keydown") {
-        const text = selection();
+        const text = unbrokenUrl(selection());
         if (text) void api.copyText(text).catch(() => undefined);
         kept = "";
         term.clearSelection();
@@ -129,10 +151,12 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
   host.appendChild(el);
   // Capture: xterm's own handlers must not see the click first.
   el.addEventListener("mousedown", () => (kept = ""), true);
-  // The menu's Copy, or the browser's, while xterm holds no selection.
+  // The menu's Copy, or the browser's: xterm's selection, or the kept one
+  // once xterm let go of it.
   el.addEventListener("copy", (e) => {
-    if (term.hasSelection() || !kept) return;
-    e.clipboardData?.setData("text/plain", kept);
+    const text = selection();
+    if (!text) return;
+    e.clipboardData?.setData("text/plain", unbrokenUrl(text));
     e.preventDefault();
   });
   term.open(el);
@@ -152,7 +176,7 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
     status: "connecting",
     detail: "",
     bad: false,
-    url: "",
+    links: [],
     write: null,
     view: null,
     close() {
@@ -167,20 +191,44 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
     },
   };
   if (key) sessions.set(key, s);
-  // Look for an address once output settles, not on every chunk.
+  // Every address seen, by when it was last seen. A hyperlink (OSC 8)
+  // carries the whole address however the text around it wraps; one read
+  // off the screen is a guess, dropped when a hyperlink extends it.
+  const seen = new Map<string, { at: number; hyperlink: boolean }>();
+  let seq = 0;
+  const note = (url: string, hyperlink: boolean) => {
+    seen.set(url, { at: ++seq, hyperlink: hyperlink || !!seen.get(url)?.hyperlink });
+  };
+  const publish = () => {
+    const sure = [...seen].filter(([, v]) => v.hyperlink).map(([u]) => u);
+    const links = [...seen]
+      .filter(([u, v]) => v.hyperlink || !sure.some((h) => h.length > u.length && h.startsWith(u)))
+      .sort((a, b) => b[1].at - a[1].at)
+      .map(([u]) => u);
+    for (const u of links.slice(LINKS_KEPT)) seen.delete(u);
+    const next = links.slice(0, LINKS_KEPT);
+    if (next.join("\n") === s.links.join("\n")) return;
+    s.links = next;
+    s.view?.refresh();
+  };
+  term.parser.registerOscHandler(8, (data) => {
+    const uri = data.slice(data.indexOf(";") + 1);
+    if (WHOLE_URL.test(uri)) note(uri, true);
+    // xterm still draws and opens the link itself.
+    return false;
+  });
+  // Look for addresses once output settles, not on every chunk.
   let urlTimer = 0;
-  const findUrl = () => {
+  const findUrls = () => {
     window.clearTimeout(urlTimer);
     urlTimer = window.setTimeout(() => {
       if (closed) return;
-      const url = lastUrlOnScreen(term);
-      if (url === s.url) return;
-      s.url = url;
-      s.view?.refresh();
+      for (const u of urlsOnScreen(term)) note(u, false);
+      publish();
     }, 150);
   };
-  term.onWriteParsed(findUrl);
-  term.onScroll(findUrl);
+  term.onWriteParsed(findUrls);
+  term.onScroll(findUrls);
   const end = (status: Status, detail: string, bad: boolean) => {
     Object.assign(s, { status, detail, bad, write: null });
     s.view?.onInput?.(null);
@@ -236,8 +284,16 @@ export default function Terminal(p: {
   const [status, setStatus] = createSignal<Status>("connecting");
   const [detail, setDetail] = createSignal("");
   const [bad, setBad] = createSignal(false);
-  const [url, setUrl] = createSignal("");
-  const [copied, setCopied] = createSignal(false);
+  const [links, setLinks] = createSignal<string[]>([]);
+  const [copied, setCopied] = createSignal("");
+  const [listOpen, setListOpen] = createSignal(false);
+  const url = () => links()[0] ?? "";
+  const copy = (u: string) =>
+    void api
+      .copyText(u)
+      .then(() => setCopied(u))
+      .catch(() => undefined);
+  const open = (u: string) => void api.openUrl(u).catch(() => undefined);
   let session: Session | null = null;
   let ro: ResizeObserver | null = null;
   let disposed = false;
@@ -274,8 +330,9 @@ export default function Terminal(p: {
         setStatus(s.status);
         setDetail(s.detail);
         setBad(s.bad);
-        if (s.url !== url()) setCopied(false);
-        setUrl(s.url);
+        if (s.links[0] !== url()) setCopied("");
+        setLinks(s.links);
+        if (s.links.length < 2) setListOpen(false);
       },
       onInput: onInput,
       onEnd: p.onEnd,
@@ -318,22 +375,44 @@ export default function Terminal(p: {
               <span class="term-link-url mono" title={u()}>
                 {u()}
               </span>
-              <button class="btn sm ghost" onClick={() => void api.openUrl(u()).catch(() => undefined)}>
+              <button class="btn sm ghost" onClick={() => open(u())}>
                 Open link
               </button>
-              <button
-                class="btn sm ghost"
-                onClick={() =>
-                  void api
-                    .copyText(u())
-                    .then(() => setCopied(true))
-                    .catch(() => undefined)
-                }
-              >
-                {copied() ? "Copied" : "Copy link"}
+              <button class="btn sm ghost" onClick={() => copy(u())}>
+                {copied() === u() ? "Copied" : "Copy link"}
               </button>
+              <Show when={links().length > 1}>
+                <button class="btn sm ghost" aria-expanded={listOpen()} onClick={() => setListOpen((o) => !o)} title="Every address this session showed, newest first">
+                  {links().length} links
+                </button>
+              </Show>
             </span>
           )}
+        </Show>
+        <Show when={listOpen()}>
+          <div class="term-links" role="dialog" aria-label="Links in this session" onKeyDown={(e) => e.key === "Escape" && setListOpen(false)}>
+            <div class="term-links-head">
+              <span class="section-title">Links in this session</span>
+              <button class="btn sm ghost" onClick={() => setListOpen(false)}>
+                Close
+              </button>
+            </div>
+            <For each={links()}>
+              {(u) => (
+                <div class="term-links-row">
+                  <span class="term-link-url mono" title={u}>
+                    {u}
+                  </span>
+                  <button class="btn sm ghost" onClick={() => copy(u)}>
+                    {copied() === u ? "Copied" : "Copy"}
+                  </button>
+                  <button class="btn sm ghost" onClick={() => open(u)}>
+                    Open
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
         </Show>
       </div>
     </div>
