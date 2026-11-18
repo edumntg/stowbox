@@ -76,12 +76,13 @@ impl Api {
     /// the answer carries `exit_code`, `stdout` and `stderr`.
     pub async fn exec(&self, id: &str, command: &str, root: bool, background: bool) -> Result<Value> {
         let url = format!("{}/instances/{}/exec", self.sandbox, seg(id));
-        let mut body = serde_json::json!({ "command": command });
+        let mut body = serde_json::Map::new();
+        body.insert("command".into(), command.into());
         if root {
-            body["user"] = "root".into();
+            body.insert("user".into(), "root".into());
         }
         if background {
-            body["background"] = true.into();
+            body.insert("background".into(), true.into());
         }
         let resp = self.http.post(&url).header("X-Agent37-Key", &self.key).json(&body).send().await?;
         let status = resp.status();
