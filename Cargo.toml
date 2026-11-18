@@ -7,6 +7,22 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 
+# Stricter than rustc's defaults: no unsafe anywhere, and the calls that can
+# panic on bad input warn so new code avoids them. Tests may still unwrap
+# (clippy.toml). A call that cannot fail carries #[allow] with the reason.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+
 [profile.release]
 codegen-units = 1
 lto = true

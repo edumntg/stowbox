@@ -79,6 +79,36 @@ pull request and push to `main`, on Ubuntu, plus the Rust ones on Windows.
 `.github/workflows/windows-smoke.yml` builds the real Windows exe and drives
 it through onboarding; see [windows.md](windows.md).
 
+## Checks for coding agents
+
+The repo carries a Claude Code setup in `.claude/` that holds agent-written
+changes to the bar in `AGENTS.md`:
+
+- `.claude/settings.json` registers `.claude/hooks/post-edit-check.sh` to
+  run after every Write and Edit. It blocks the change when the crate stops
+  building, when clippy flags the lines it touched (the workspace lints in
+  `Cargo.toml` forbid `unsafe` and flag `unwrap`, `expect`, `panic!`,
+  indexing and string slicing), on rustfmt drift, on tsc errors, on raw-HTML
+  or eval sinks in the UI, on credential-looking strings, and when
+  `stowbox-core` starts depending on Tauri.
+- `.claude/skills/phase-gate/` is the gate for each phase of planned work
+  and for PRs that add a provider, a transport, a Tauri command or a
+  dependency: `gate.sh` runs the mechanical checks against the merge base
+  with `main`, and `SKILL.md` lists the review steps that follow.
+
+You can run either one without Claude Code:
+
+```bash
+echo '{"tool_input":{"file_path":"'"$PWD"'/crates/stowbox-core/src/cost.rs"}}' | bash .claude/hooks/post-edit-check.sh
+bash .claude/skills/phase-gate/gate.sh
+```
+
+They need bash 3.2 or later, git, jq and awk, plus `cargo install --locked
+cargo-audit cargo-deny` for the gate. On macOS, `brew install coreutils`
+adds the `gtimeout` the hook uses to bound clippy. Your own Claude Code
+settings go in `.claude/settings.local.json`, which git ignores; to turn the
+hook off for yourself, set `"disableAllHooks": true` there.
+
 ## Layout
 
 ```

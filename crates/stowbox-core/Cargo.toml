@@ -4,6 +4,10 @@ description = "Provider clients, agent protocol and cost math for Stowbox"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
 
 [dependencies]
 tonic = { version = "0.14", default-features = false, features = ["transport", "channel", "codegen", "tls-ring", "tls-webpki-roots"] }
