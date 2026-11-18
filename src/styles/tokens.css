@@ -1,5 +1,5 @@
 /* Stowbox tokens, after Orca's shadcn "new-york" neutral scale.
-   Monochrome surfaces; colour exists only for state (green, orange, red)
+   Monochrome surfaces; colour exists only for state (green, orange, yellow, red)
    and for diff lines (added, removed). */
 
 :root {
@@ -53,6 +53,7 @@
   --chat-composer-border: color-mix(in srgb, var(--foreground) 11%, transparent);
   --ok: #16a34a;
   --warn: #ea580c;
+  --attention: #ca8a04;
   --danger: #dc2626;
   --ok-bg: rgb(22 163 74 / 0.1);
   --warn-bg: rgb(234 88 12 / 0.1);
@@ -94,6 +95,7 @@
   --chat-composer-border: color-mix(in srgb, var(--foreground) 9%, transparent);
   --ok: #22c55e;
   --warn: #f97316;
+  --attention: #eab308;
   --danger: #ef4444;
   --ok-bg: rgb(34 197 94 / 0.12);
   --warn-bg: rgb(249 115 22 / 0.12);

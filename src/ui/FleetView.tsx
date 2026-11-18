@@ -370,7 +370,7 @@ export default function FleetView() {
           }
         >
           <div class="tiles">
-            <Tile label="Needs you" value={String(needsCount())} sub={needsCount() ? "replies and problems below" : "nothing right now"} dot={needsCount() ? "done" : undefined} />
+            <Tile label="Needs you" value={String(needsCount())} sub={needsCount() ? "replies and problems below" : "nothing right now"} dot={needsCount() ? "waiting" : undefined} />
             <Tile label="Working" value={String(working().length)} sub={`of ${state.agents.length} agents`} dot={working().length ? "busy" : undefined} />
             <Tile label="Running" value={String(running().length)} sub={`of ${state.machines.length} boxes`} ratio={state.machines.length ? running().length / state.machines.length : 0} dot={running().length ? "running" : undefined} />
             <Tile label="Cost now" value={`${money(hourlyIn(spendCurrency()), spendCurrency())}/h`} sub={costSub()} />
@@ -422,7 +422,7 @@ export default function FleetView() {
                 <span class="sq" data-state="busy" /> Working or running
               </span>
               <span>
-                <span class="sq" data-state="done" /> Waiting
+                <span class="sq" data-state="waiting" /> Waiting
               </span>
               <span>
                 <span class="sq" data-state="idle" /> Not running or not checked
