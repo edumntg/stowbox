@@ -1732,6 +1732,11 @@ select.input {
   display: grid;
   gap: 24px;
   align-content: start;
+  /* Rows take their content's height and the body scrolls. With auto rows a
+     short window shrinks the tiles and the box table, whose overflow makes
+     their minimum zero, to a 2px line. */
+  grid-auto-rows: max-content;
+  container-type: inline-size;
 }
 
 .tiles {
@@ -1742,6 +1747,21 @@ select.input {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+
+/* The panel, not the window, decides: the sidebar and inspector take their
+   share first. Four tiles, then two by two, then one under another, so a
+   number is never cut and no row is left with one tile. */
+@container (max-width: 720px) {
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 380px) {
+  .tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .tile {
@@ -2031,12 +2051,6 @@ select.input {
 .asof {
   font-size: var(--text-2xs);
   color: var(--warn);
-}
-
-@media (max-width: 760px) {
-  .tiles {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 /* ---------- setup presets ---------- */
