@@ -20,7 +20,7 @@ export function ProviderKeyForm(p: { provider: ProviderInfo; onDone?: () => void
   const [error, setError] = createSignal("");
   const caps = () => p.provider.capabilities;
   const inputId = (field: string) => `key-${p.provider.id}-${field}`;
-  const complete = () => caps().credentialFields.every((f) => values()[f.name]?.trim());
+  const complete = () => caps().credentialFields.every((f) => f.optional || values()[f.name]?.trim());
 
   const connect = async () => {
     if (!complete() || busy()) return;
@@ -51,13 +51,16 @@ export function ProviderKeyForm(p: { provider: ProviderInfo; onDone?: () => void
             <div class="field">
               <label for={inputId(f.name)}>
                 {caps().label} {f.label}
+                <Show when={f.optional}>
+                  <span class="faint"> (optional)</span>
+                </Show>
               </label>
               <div class="input-row">
                 <input
                   id={inputId(f.name)}
                   class="input mono"
                   type={f.secret && !reveal() ? "password" : "text"}
-                  placeholder={f.name === "api_key" ? `${caps().keyPrefixes[0] ?? ""}…` : ""}
+                  placeholder={f.placeholder || (f.name === "api_key" && caps().keyPrefixes[0] ? `${caps().keyPrefixes[0]}…` : "")}
                   autocomplete="off"
                   spellcheck={false}
                   value={values()[f.name] ?? ""}
@@ -73,10 +76,13 @@ export function ProviderKeyForm(p: { provider: ProviderInfo; onDone?: () => void
               </div>
             </div>
             <p class="hint">
-              {f.hint}{" "}
-              <button type="button" class="link" onClick={() => void actions.open(caps().consoleUrl)}>
-                {host(caps().consoleUrl)}
-              </button>
+              {f.hint}
+              <Show when={f.secret && caps().consoleUrl}>
+                {" "}
+                <button type="button" class="link" onClick={() => void actions.open(caps().consoleUrl)}>
+                  {host(caps().consoleUrl)}
+                </button>
+              </Show>
             </p>
           </>
         )}
@@ -92,6 +98,13 @@ export function ProviderKeyForm(p: { provider: ProviderInfo; onDone?: () => void
     </form>
   );
 }
+
+/** Currency and sizes under a provider's name; a host Stowbox cannot make boxes on says so. */
+const choiceDetail = (p: ProviderInfo) => {
+  const c = p.capabilities;
+  if (!c.create) return "a machine you have";
+  return `${c.currency.toUpperCase()} · ${c.customSize ? "any size" : `${c.sizes.length} sizes`}`;
+};
 
 export default function Onboarding() {
   const providers = () => state.providers?.providers ?? [];
@@ -117,7 +130,7 @@ export default function Onboarding() {
                 <span class="choice-name">
                   <ProviderIcon provider={p.id} /> {p.capabilities.label}
                 </span>
-                <span class="faint">{p.capabilities.currency.toUpperCase()} · {p.capabilities.customSize ? "any size" : `${p.capabilities.sizes.length} sizes`}</span>
+                <span class="faint">{choiceDetail(p)}</span>
               </button>
             )}
           </For>

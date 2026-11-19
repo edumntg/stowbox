@@ -18,6 +18,9 @@ use std::collections::HashMap;
 pub struct BoxActivity {
     pub machine_id: String,
     pub status: MachineStatus,
+    /// The provider can put the box in standby, hibernate or stop it; an
+    /// SSH host cannot, so the guard leaves it alone.
+    pub can_idle_down: bool,
     /// Agents that hold the box: see [`agent_holds_box`].
     pub agents_busy: u32,
     pub setup_active: bool,
@@ -46,6 +49,7 @@ pub enum KeepReason {
     AgentWorking,
     SetupRunning,
     TerminalOpen,
+    CannotStop,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +79,9 @@ pub fn decide(b: &BoxActivity, policy: &IdlePolicy, now_ms: i64) -> Verdict {
     }
     if b.status != MachineStatus::Running {
         return keep(KeepReason::NotRunning);
+    }
+    if !b.can_idle_down {
+        return keep(KeepReason::CannotStop);
     }
     if policy.opted_out.iter().any(|id| id == &b.machine_id) {
         return keep(KeepReason::OptedOut);
@@ -211,6 +218,7 @@ mod tests {
         BoxActivity {
             machine_id: "vm_1".into(),
             status: MachineStatus::Running,
+            can_idle_down: true,
             agents_busy: 0,
             setup_active: false,
             terminals_open: 0,
@@ -254,6 +262,9 @@ mod tests {
         let mut b = idle_box(0);
         b.terminals_open = 2;
         assert_eq!(decide(&b, &p, now), Verdict::Keep { reason: KeepReason::TerminalOpen });
+        let mut b = idle_box(0);
+        b.can_idle_down = false;
+        assert_eq!(decide(&b, &p, now), Verdict::Keep { reason: KeepReason::CannotStop });
     }
 
     #[test]

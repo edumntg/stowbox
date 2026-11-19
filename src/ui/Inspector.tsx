@@ -50,10 +50,12 @@ export default function Inspector(p: { agent: AgentMeta }) {
                   <BoxState status={box().status} always />
                 </span>
               </div>
-              <div class="hourly mono">
-                {money(box().estHourlyMicro, box().currency)}
-                <small>/ h estimated</small>
-              </div>
+              <Show when={box().currency} fallback={<div class="hourly mono">no price</div>}>
+                <div class="hourly mono">
+                  {money(box().estHourlyMicro, box().currency)}
+                  <small>/ h estimated</small>
+                </div>
+              </Show>
               <div class="muted">{sizeLabel(box())}</div>
               <Show when={capsFor(box())?.autoStop && box().status === "running"}>
                 <div class="muted">

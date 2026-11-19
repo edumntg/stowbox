@@ -1,10 +1,10 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { AgentMeta, Machine, MachineMetrics } from "../bridge/types";
-import { actions, agentWorking, agentsForMachine, capsFor, connectedProviders, machineById, multiProvider, phaseOf, providerLabel, spendCurrency, state, type Selection } from "../state/store";
+import { actions, agentWorking, agentsForMachine, capsFor, connectedProviders, hasPrices, machineById, multiProvider, phaseOf, providerLabel, spendCurrency, state, type Selection } from "../state/store";
 import * as I from "../icons";
 import { Dot, phaseDot } from "./common";
 import Composer from "./Composer";
-import { agentPhaseLabel, gib, money, moneyByCurrency, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
+import { agentPhaseLabel, boxHourly, gib, money, moneyByCurrency, pct, relTime, sizeLabel, spendLine, statusLabel, span } from "./format";
 
 /** Something a person should look at. Derived from state on every render;
  * nothing is stored, so an alert disappears the moment its cause does. */
@@ -53,7 +53,8 @@ function deriveAlerts(now: number): Alert[] {
         go,
       });
     }
-    if (m.status === "running") {
+    // Idle warnings are about money; a box with no price has nothing to save.
+    if (m.status === "running" && m.currency) {
       const busy = agents.some(agentWorking);
       const waiting = agents.filter((a) => phaseOf(a) === "waiting" && now - waitingSince(a) > IDLE_AFTER_MS);
       if (!busy && waiting.length > 0) {
@@ -234,7 +235,7 @@ const Row = (p: { machine: Machine; now: number }) => {
       <span class="fcell mono" classList={{ faint: stale() }} title={m().createdAt ? `Created ${new Date(m().createdAt * 1000).toLocaleString()}` : `${providerLabel(m().provider)} did not say when`}>
         {m().createdAt ? span(Math.max(0, p.now / 1000 - m().createdAt)) : "—"}
       </span>
-      <span class="fcell mono">{money(m().estHourlyMicro, m().currency)}/h</span>
+      <span class="fcell mono">{boxHourly(m())}</span>
       <span class="fcell chev">
         <I.ChevronRight />
       </span>
@@ -299,7 +300,7 @@ export default function FleetView() {
   const waiting = () => state.agents.filter((a) => phaseOf(a) === "waiting");
   /** The hourly estimate in the main currency, big; any other currency goes in the line under it. */
   const hourlyIn = (currency: string) => billing().filter((m) => m.currency === currency).reduce((sum, m) => sum + m.estHourlyMicro, 0);
-  const others = () => [...new Set(billing().map((m) => m.currency))].filter((c) => c !== spendCurrency());
+  const others = () => [...new Set(billing().map((m) => m.currency))].filter((c) => c && c !== spendCurrency());
   const costSub = () => {
     const parts: string[] = [];
     const rest = others().map((c) => ({ micro: hourlyIn(c), currency: c }));
@@ -373,7 +374,7 @@ export default function FleetView() {
             <Tile label="Needs you" value={String(needsCount())} sub={needsCount() ? "replies and problems below" : "nothing right now"} dot={needsCount() ? "waiting" : undefined} />
             <Tile label="Working" value={String(working().length)} sub={`of ${state.agents.length} agents`} dot={working().length ? "busy" : undefined} />
             <Tile label="Running" value={String(running().length)} sub={`of ${state.machines.length} boxes`} ratio={state.machines.length ? running().length / state.machines.length : 0} dot={running().length ? "running" : undefined} />
-            <Tile label="Cost now" value={`${money(hourlyIn(spendCurrency()), spendCurrency())}/h`} sub={costSub()} />
+            <Tile label="Cost now" value={hasPrices() ? `${money(hourlyIn(spendCurrency()), spendCurrency())}/h` : "no price"} sub={costSub()} />
           </div>
 
           <section class="fleet-section">

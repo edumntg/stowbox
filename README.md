@@ -152,11 +152,13 @@ On first launch the app asks for an API key: boxd (`bxd_…`, from
 [app.boxd.sh](https://app.boxd.sh) or `boxd auth keys create stowbox`) or boat
 (`boat_…`, from the boat dashboard or `boat api-key create stowbox`, with the
 ssh action) or Daytona (`dtn_…`, from the Daytona dashboard under Keys) or
-Agent37 (`sk_live_…`, from the Agent37 dashboard under Cloud API). The
+Agent37 (`sk_live_…`, from the Agent37 dashboard under Cloud API), or a
+machine you already have, reached over SSH with a host and a user. The
 others can be added later in Settings. Keys go to the OS keychain (Windows
 Credential Manager on Windows) and never to a Stowbox server. What differs
 between the providers is in [docs/boat.md](docs/boat.md),
-[docs/daytona.md](docs/daytona.md) and [docs/agent37.md](docs/agent37.md).
+[docs/daytona.md](docs/daytona.md), [docs/agent37.md](docs/agent37.md) and
+[docs/sshhost.md](docs/sshhost.md).
 
 Platform notes for Windows (OpenSSH for the editor integration, where secrets
 live, CI): [docs/windows.md](docs/windows.md).

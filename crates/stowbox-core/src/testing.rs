@@ -1,6 +1,6 @@
 //! Test doubles shared by the modules that drive a box over exec.
 
-mod conformance;
+pub mod conformance;
 mod live;
 
 use crate::provider::Provider;
@@ -54,6 +54,63 @@ pub fn temp_dir(prefix: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&d).unwrap();
     d
+}
+
+/// A throwaway OpenSSH sshd on 127.0.0.1 with its own config, host key and
+/// authorized_keys, logging in as the user running the tests. Killed when
+/// dropped.
+#[cfg(unix)]
+pub struct LocalSshd {
+    pub dir: std::path::PathBuf,
+    pub port: u16,
+    pub user: String,
+    /// The host's public key, as an OpenSSH line.
+    pub host_key: String,
+    daemon: std::process::Child,
+}
+
+#[cfg(unix)]
+impl LocalSshd {
+    /// Starts one that lets `authorized` (an OpenSSH public-key line) in.
+    pub async fn start(authorized: &str) -> Self {
+        let sshd = ["/usr/sbin/sshd", "/usr/local/sbin/sshd"].into_iter().find(|p| std::path::Path::new(p).exists()).expect("sshd");
+        let dir = temp_dir("stowbox-sshd");
+        let host = dir.join("host");
+        assert!(std::process::Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-f"]).arg(&host).status().unwrap().success());
+        std::fs::write(dir.join("authorized_keys"), format!("{authorized}\n")).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let user = String::from_utf8(std::process::Command::new("id").arg("-un").output().unwrap().stdout).unwrap().trim().to_string();
+        let cfg = dir.join("sshd_config");
+        std::fs::write(
+            &cfg,
+            format!(
+                "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nAuthorizedKeysFile {}\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\nPermitRootLogin yes\nPidFile {}\n",
+                host.display(),
+                dir.join("authorized_keys").display(),
+                dir.join("pid").display()
+            ),
+        )
+        .unwrap();
+        let _ = std::fs::create_dir_all("/run/sshd");
+        let daemon = std::process::Command::new(sshd).arg("-D").arg("-e").arg("-f").arg(&cfg).stderr(std::process::Stdio::null()).spawn().unwrap();
+        for _ in 0..50 {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let host_key = std::fs::read_to_string(host.with_extension("pub")).unwrap();
+        Self { dir, port, user, host_key, daemon }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for LocalSshd {
+    fn drop(&mut self) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 /// Runs `cmd` with local bash in `dir`, with `home` as `$HOME`; panics on failure.

@@ -39,6 +39,7 @@ pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind 
 pub fn capabilities() -> crate::capabilities::Capabilities {
     use PowerAction::*;
     crate::capabilities::Capabilities {
+        create: true,
         new_box_blurb: "A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.".into(),
         free_sizes: [(1, 4), (2, 8), (4, 16)].into_iter().map(|(vcpu, memory_gib)| crate::capabilities::FreeSize { vcpu, memory_gib }).collect(),
         default_size: String::new(),

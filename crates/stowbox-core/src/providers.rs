@@ -60,7 +60,12 @@ impl Credentials {
             return Err(Error::Auth(format!("{} does not take a field named {extra}", caps.label)));
         }
         for field in &caps.credential_fields {
-            let value = self.get(&field.name).ok_or_else(|| Error::Auth(format!("{} needs its {}", caps.label, field.label)))?;
+            let Some(value) = self.get(&field.name) else {
+                if field.optional {
+                    continue;
+                }
+                return Err(Error::Auth(format!("{} needs its {}", caps.label, field.label)));
+            };
             if value.len() > MAX_VALUE_LEN {
                 return Err(Error::Auth(format!("That {} {} is too long", caps.label, field.label)));
             }
@@ -108,7 +113,7 @@ pub struct ProviderKind {
 }
 
 /// Every provider, in the order the UI lists them.
-pub const ALL: &[ProviderKind] = &[crate::boxd::KIND, crate::boat::KIND, crate::daytona::KIND, crate::agent37::KIND];
+pub const ALL: &[ProviderKind] = &[crate::boxd::KIND, crate::boat::KIND, crate::daytona::KIND, crate::agent37::KIND, crate::sshhost::KIND];
 
 /// The provider with this id.
 pub fn find(id: &str) -> Result<&'static ProviderKind> {
@@ -233,8 +238,11 @@ mod tests {
             assert!(!caps.new_box_blurb.is_empty(), "{}", kind.id);
             assert!(!caps.icon.is_empty(), "{}", kind.id);
             assert!(!caps.credential_fields.is_empty(), "{}", kind.id);
-            assert!(caps.default_disk_gib > 0, "{}", kind.id);
-            if caps.custom_size {
+            // A disk size is only a default for a box Stowbox makes.
+            assert_eq!(caps.default_disk_gib > 0, caps.create, "{}", kind.id);
+            if !caps.create {
+                assert!(caps.power.is_empty() && !caps.fork, "{} cannot make boxes, so it cannot power or fork them", kind.id);
+            } else if caps.custom_size {
                 assert!(!caps.free_sizes.is_empty(), "{} offers free sizes but lists none", kind.id);
             } else {
                 assert!(caps.sizes.iter().any(|s| s.id == caps.default_size), "{}'s default size is not on its menu", kind.id);

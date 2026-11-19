@@ -192,7 +192,9 @@ impl AppState {
         }
         let terminals_open = self.terminals.lock().await.values().filter(|t| t.machine == m.id && !t.abort.is_finished()).count() as u32;
         let last_activity_ms = self.idle.lock().unwrap().last_activity(&m.id, signals, now);
-        BoxActivity { machine_id: m.id.clone(), status: m.status, agents_busy, setup_active, terminals_open, last_activity_ms }
+        // An unknown provider counts as one that cannot: the guard never acts on a guess.
+        let can_idle_down = providers::find(&m.provider).is_ok_and(|k| (k.capabilities)().can_idle_down());
+        BoxActivity { machine_id: m.id.clone(), status: m.status, can_idle_down, agents_busy, setup_active, terminals_open, last_activity_ms }
     }
 
     async fn persist_agents(&self) -> CmdResult<()> {

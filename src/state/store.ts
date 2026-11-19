@@ -353,6 +353,7 @@ const keepWhy: Record<string, string> = {
   "opted-out": "it was excluded from idle standby",
   "not-running": "it is no longer running",
   "guard-off": "idle standby was turned off",
+  "cannot-stop": "its provider cannot stop it",
 };
 
 function beginPending(id: string) {
@@ -445,6 +446,8 @@ export const agentBoxGone = (a: AgentMeta) => state.machinesLoaded && !state.mac
 export const demo = isDemo;
 
 export const connectedProviders = () => (state.providers?.providers ?? []).filter((p) => p.connected);
+/** Connected providers Stowbox can make boxes on; an SSH host is not one. */
+export const creatableProviders = () => connectedProviders().filter((p) => p.capabilities.create);
 export const capsOf = (provider: string): Capabilities | undefined => state.providers?.providers.find((p) => p.id === provider)?.capabilities;
 export const capsFor = (m: Machine): Capabilities | undefined => capsOf(m.provider);
 /** The short name of a provider for the UI: "boxd", "boat". */
@@ -453,9 +456,11 @@ export const providerLabel = (provider: string) => capsOf(provider)?.label ?? pr
 export const multiProvider = () => connectedProviders().length > 1;
 /** The label of a box's provider, or of the only one connected. */
 export const boxProvider = (m: Machine | undefined) => (m ? providerLabel(m.provider) : connectedProviders().map((p) => p.capabilities.label).join(" or ") || "the provider");
-/** The currency the spend limit is in: the first connected provider's. */
+/** Whether any connected provider has a price; an SSH host alone has none. */
+export const hasPrices = () => connectedProviders().some((p) => p.capabilities.currency);
+/** The currency the spend limit is in: that of the first connected provider with a price. */
 export const spendCurrency = () => {
-  const first = connectedProviders()[0];
+  const first = connectedProviders().find((p) => p.capabilities.currency);
   return (first && state.rateCards[first.id]?.currency) || first?.capabilities.currency || "usd";
 };
 export const agentById = (id: string) => state.agents.find((a) => a.id === id);

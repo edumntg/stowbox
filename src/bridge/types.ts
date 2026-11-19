@@ -133,10 +133,15 @@ export interface CredentialField {
   label: string;
   secret: boolean;
   hint: string;
+  /** May be left empty; the provider then uses its default. */
+  optional: boolean;
+  placeholder: string;
 }
 
 /** What a provider supports. Mirrors core capabilities::Capabilities. */
 export interface Capabilities {
+  /** Whether Stowbox can make boxes here; an SSH host cannot. */
+  create: boolean;
   newBoxBlurb: string;
   /** Free-size choices in New box, for providers with `customSize`. */
   freeSizes: { vcpu: number; memoryGib: number }[];
@@ -478,7 +483,7 @@ export interface IdlePolicy {
   optedOut: string[];
 }
 
-export type KeepReason = "guard-off" | "not-running" | "opted-out" | "agent-working" | "setup-running" | "terminal-open";
+export type KeepReason = "guard-off" | "not-running" | "opted-out" | "agent-working" | "setup-running" | "terminal-open" | "cannot-stop";
 
 export type GuardVerdict = { kind: "suspend"; idleSinceMs: number } | { kind: "wait"; dueAtMs: number } | { kind: "keep"; reason: KeepReason };
 

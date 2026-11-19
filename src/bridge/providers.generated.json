@@ -5,11 +5,14 @@
       "autoStop": false,
       "autoSuspend": true,
       "consoleUrl": "https://app.boxd.sh",
+      "create": true,
       "credentialFields": [
         {
           "hint": "Make one at app.boxd.sh or with `boxd auth keys create stowbox`. Keys are fenced to one organization.",
           "label": "API key",
           "name": "api_key",
+          "optional": false,
+          "placeholder": "",
           "secret": true
         }
       ],
@@ -73,11 +76,14 @@
       "autoStop": true,
       "autoSuspend": false,
       "consoleUrl": "https://boat.dev/dashboard",
+      "create": true,
       "credentialFields": [
         {
           "hint": "Make one with `boat api-key create stowbox` or on the boat dashboard. It needs the ssh action: Stowbox runs every command over SSH.",
           "label": "API key",
           "name": "api_key",
+          "optional": false,
+          "placeholder": "",
           "secret": true
         }
       ],
@@ -157,11 +163,14 @@
       "autoStop": false,
       "autoSuspend": false,
       "consoleUrl": "https://app.daytona.io/dashboard",
+      "create": true,
       "credentialFields": [
         {
           "hint": "Make one on the Daytona dashboard under Keys, with permission to write and delete sandboxes. Keys are fenced to one organization.",
           "label": "API key",
           "name": "api_key",
+          "optional": false,
+          "placeholder": "",
           "secret": true
         }
       ],
@@ -232,11 +241,14 @@
       "autoStop": false,
       "autoSuspend": false,
       "consoleUrl": "https://www.agent37.com/dashboard/cloud",
+      "create": true,
       "credentialFields": [
         {
           "hint": "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal.",
           "label": "API key",
           "name": "api_key",
+          "optional": false,
+          "placeholder": "",
           "secret": true
         }
       ],
@@ -311,5 +323,76 @@
       "sshHint": "npx agent37 ssh {id}"
     },
     "id": "agent37"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
+      "consoleUrl": "",
+      "create": false,
+      "credentialFields": [
+        {
+          "hint": "A host name or address Stowbox can reach.",
+          "label": "address",
+          "name": "host",
+          "optional": false,
+          "placeholder": "server.example.com",
+          "secret": false
+        },
+        {
+          "hint": "The account Stowbox logs in as.",
+          "label": "user",
+          "name": "user",
+          "optional": false,
+          "placeholder": "ubuntu",
+          "secret": false
+        },
+        {
+          "hint": "Leave empty for 22.",
+          "label": "port",
+          "name": "port",
+          "optional": true,
+          "placeholder": "22",
+          "secret": false
+        },
+        {
+          "hint": "Leave empty and Stowbox makes a key of its own; the first connection says which line to add to the host's authorized_keys. Otherwise the path to an unencrypted private key.",
+          "label": "key file",
+          "name": "key_path",
+          "optional": true,
+          "placeholder": "~/.ssh/id_ed25519",
+          "secret": false
+        }
+      ],
+      "currency": "",
+      "customSize": false,
+      "defaultDiskGib": 0,
+      "defaultSize": "",
+      "editorSsh": false,
+      "fork": false,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": false,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "SH",
+      "idleStop": false,
+      "isolated": false,
+      "keyPrefixes": [],
+      "label": "SSH host",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": false,
+      "meteringNote": "An SSH host has no price Stowbox can read.",
+      "newBoxBlurb": "A machine you already have, reached over SSH. Stowbox does not make, stop or delete it.",
+      "portForwards": false,
+      "power": [],
+      "remoteHome": "",
+      "remoteUser": "",
+      "sizes": [],
+      "sshHint": ""
+    },
+    "id": "sshhost"
   }
 ]

@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onMount, type JSX } from "solid-js";
 import type { Machine } from "../bridge/types";
-import { actions, machineById, phaseOf, selectedAgent, selectedMachine, state } from "../state/store";
+import { actions, capsFor, machineById, phaseOf, selectedAgent, selectedMachine, state } from "../state/store";
 import * as I from "../icons";
 import { ProviderIcon, dotState, isMac, phaseDot, powerButtons } from "./common";
 import { agentPhaseLabel, sizeLabel, statusLabel } from "./format";
@@ -60,10 +60,10 @@ function boxCommands(m: Machine, all: boolean): Command[] {
   for (const b of powerButtons(m)) {
     cmds.push({ id: `power:${b.action}:${m.id}`, kind: "Action", label: `${b.label} ${m.name}`, detail: b.title, keywords: where, icon: () => <b.icon />, run: () => void actions.power(m.id, b.action) });
   }
-  if (m.status !== "stopped") {
+  if (m.status !== "stopped" && (capsFor(m)?.editorSsh ?? true)) {
     cmds.push({ id: `editor:${m.id}`, kind: "Action", label: `Open ${m.name} in VS Code or Cursor`, keywords: "editor remote ssh", icon: () => <I.Code />, run: () => actions.openDialog({ kind: "open-editor", machineId: m.id, dir: null }) });
   }
-  if (all) cmds.push({ id: `delete:${m.id}`, kind: "Action", label: `Delete ${m.name}`, detail: "Asks first", keywords: "destroy remove", icon: () => <I.Trash />, run: () => actions.confirmDestroy(m) });
+  if (all && capsFor(m)?.power.includes("destroy")) cmds.push({ id: `delete:${m.id}`, kind: "Action", label: `Delete ${m.name}`, detail: "Asks first", keywords: "destroy remove", icon: () => <I.Trash />, run: () => actions.confirmDestroy(m) });
   return cmds;
 }
 

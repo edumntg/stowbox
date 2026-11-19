@@ -101,6 +101,7 @@ pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind 
 pub fn capabilities() -> Capabilities {
     use PowerAction::*;
     Capabilities {
+        create: true,
         new_box_blurb: "A persistent Linux sandbox on Agent37, billed by the minute. Stowbox installs tmux, Claude Code and Codex in it, which adds about half a minute. With no activity it sleeps and bills only its disk; the next connection wakes it.".into(),
         free_sizes: Vec::new(),
         default_size: DEFAULT_SHAPE.id.into(),
@@ -293,6 +294,7 @@ impl Authorize for EdgeAuth<'_> {
             check: HostCheck::Edge,
             dial: Dial::WebSocket(vec![("X-Agent37-Key".into(), p.api.key().to_string())]),
             provider: "Agent37",
+            key_refused: "the key Stowbox linked may not have reached the instance yet".into(),
         })
     }
 }

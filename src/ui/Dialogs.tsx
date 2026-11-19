@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createMemo, createResource, createSignal, onC
 import { api } from "../bridge/api";
 import type { Editor, Harness, Preset, VariableValues } from "../bridge/types";
 import { presetVariables } from "../bridge/variables";
-import { GUARD_COUNTDOWN_MS, actions, capsFor, capsOf, connectedProviders, machineById, spendCurrency, state, type Dialog } from "../state/store";
+import { GUARD_COUNTDOWN_MS, actions, capsFor, capsOf, connectedProviders, creatableProviders, machineById, spendCurrency, state, type Dialog } from "../state/store";
 import * as I from "../icons";
 import { ProviderIcon, isWindows } from "./common";
 import { ProviderKeyForm } from "./Onboarding";
@@ -81,7 +81,7 @@ const AUTO_STOP = [
 ];
 
 const NewBox = () => {
-  const providers = connectedProviders;
+  const providers = creatableProviders;
   const [providerId, setProviderId] = createSignal(providers()[0]?.id ?? "");
   const caps = () => capsOf(providerId());
   const billing = () => state.accounts[providerId()]?.billing;
@@ -151,6 +151,8 @@ const NewBox = () => {
     }
   };
 
+  // Read once: the dialog opens fresh each time, and connecting a provider closes it.
+  if (providers().length === 0) return <NoBoxMaker />;
   return (
     <Modal title="New box" onClose={actions.closeDialog}>
       <Show when={providers().length > 1}>
@@ -298,6 +300,21 @@ const NewBox = () => {
     </Modal>
   );
 };
+
+/** New box when every connected provider only has boxes it cannot make, such as an SSH host. */
+const NoBoxMaker = () => (
+  <Modal title="New box" onClose={actions.closeDialog}>
+    <p>None of the connected providers can make a box. Connect one that can in Settings.</p>
+    <div class="dialog-actions">
+      <button class="btn" onClick={actions.closeDialog}>
+        Close
+      </button>
+      <button class="btn primary" onClick={() => actions.openDialog({ kind: "settings" })}>
+        Open Settings
+      </button>
+    </div>
+  </Modal>
+);
 
 /** Every option of a new agent. The Fleet composer opens it prefilled for
  * "More options". */

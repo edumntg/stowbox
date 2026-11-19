@@ -3,7 +3,7 @@ import type { AgentMeta, Machine } from "../bridge/types";
 import { actions, agentsForMachine, multiProvider, phaseOf, providerLabel, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot, ProviderIcon } from "./common";
-import { agentPhaseLabel, money, relTime, sizeLabel, statusLabel } from "./format";
+import { agentPhaseLabel, boxHourly, relTime, sizeLabel, statusLabel } from "./format";
 
 const AgentRow = (p: { agent: AgentMeta }) => {
   const selected = () => state.ui.selection.kind === "agent" && state.ui.selection.id === p.agent.id;
@@ -33,7 +33,7 @@ const BoxRow = (p: { machine: Machine; agents: AgentMeta[] }) => {
         </button>
         <span class="row-right">
           <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
-            {money(p.machine.estHourlyMicro, p.machine.currency)}/h
+            {boxHourly(p.machine)}
           </span>
           <button class="caret row-add" onClick={() => actions.openDialog({ kind: "new-agent", machineId: p.machine.id })} title={`New agent in ${p.machine.name}`} aria-label={`New agent in ${p.machine.name}`}>
             <I.Plus />

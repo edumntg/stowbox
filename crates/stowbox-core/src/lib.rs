@@ -6,6 +6,7 @@
 //! - `daytona`: Daytona, over its REST API, with exec over its SSH gateway.
 //! - `agent37`: Agent37, over its REST API, with exec over SSH through a
 //!   WebSocket at its edge.
+//! - `sshhost`: any machine reachable over SSH, with no lifecycle.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
 //! - `providers`: the list of providers, their credentials and how to connect.
@@ -50,6 +51,7 @@ pub mod provision;
 pub mod registry;
 pub mod ssh;
 pub mod sshexec;
+pub mod sshhost;
 pub mod store;
 #[cfg(test)]
 pub(crate) mod testing;

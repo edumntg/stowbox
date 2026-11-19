@@ -50,7 +50,7 @@ const AGENT37_SHAPES = [
 const agent37Hourly = (vcpu: number, mem: number, disk: number) => vcpu * AGENT37_RATES.vcpuHourMicro + mem * AGENT37_RATES.ramGibHourMicro + disk * AGENT37_RATES.diskGibHourMicro;
 
 // `?providers=boxd` or `?providers=boat,daytona` previews a subset of connected providers.
-const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37").split(",").filter((p) => p in CAPS));
+const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost").split(",").filter((p) => p in CAPS));
 
 /** Daytona's list prices per hour, as in core daytona::RATES. */
 const DAYTONA_RATES = { vcpuHourMicro: 50_400, ramGibHourMicro: 16_200, diskGibHourMicro: 108 };
@@ -128,6 +128,38 @@ function agent37Machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" 
   };
 }
 
+/** A host the person connected over SSH: one box, its name is the host, no price. */
+function sshHostMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
+  return {
+    vcpu: 0,
+    memoryBytes: 0,
+    diskBytes: 0,
+    publicIp: "",
+    accessDomain: "",
+    url: "",
+    desktopUrl: "",
+    sshPort: 22,
+    org: "",
+    billingOrg: "",
+    source: "",
+    isolated: false,
+    createdAt: 0,
+    hibernatedAtMs: 0,
+    bootTimeMs: 0,
+    lastConnectedMs: 0,
+    autoSuspendSecs: 0,
+    autoHibernateSecs: 0,
+    autoDestroySecs: 0,
+    idleStopSecs: 0,
+    ...partial,
+    currency: "",
+    provider: "sshhost",
+    size: "",
+    autoStopAt: 0,
+    estHourlyMicro: 0,
+  };
+}
+
 function boatMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
   const size = BOAT_SIZES.find((z) => z.id === (partial.size || "default")) ?? BOAT_SIZES[1];
   const live = partial.status === "running" || partial.status === "starting";
@@ -185,6 +217,7 @@ function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "stat
   if (partial.provider === "boat") return boatMachine(partial);
   if (partial.provider === "daytona") return daytonaMachine(partial);
   if (partial.provider === "agent37") return agent37Machine(partial);
+  if (partial.provider === "sshhost") return sshHostMachine(partial);
   const vcpu = partial.vcpu ?? 2;
   const memoryBytes = partial.memoryBytes ?? 8 * GIB;
   const running = partial.status === "running";
@@ -233,6 +266,7 @@ let machines: Machine[] = [
   machine({ id: "dt-mock-8", name: "daytona-eval", status: "running", provider: "daytona", vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 10 * GIB }),
   machine({ id: "a37mock009", name: "agent37-research", status: "running", provider: "agent37", size: "medium" }),
   machine({ id: "a37mock010", name: "agent37-nightly", status: "hibernated", provider: "agent37" }),
+  machine({ id: "build.example.com", name: "build.example.com", status: "running", provider: "sshhost" }),
 ].filter((m) => connected.has(m.provider));
 
 // Metrics drift a little per sample so the fleet view shows movement, and
@@ -308,7 +342,23 @@ const agent37Account: Account = {
     subscriptionStatus: "",
   },
 };
-const accounts: Record<string, Account> = { boxd: account, boat: boatAccount, daytona: daytonaAccount, agent37: agent37Account };
+const sshHostAccount: Account = {
+  userId: "ubuntu@build.example.com",
+  displayName: "ubuntu@build.example.com",
+  billing: {
+    mode: "",
+    currency: "",
+    balanceMicro: 0,
+    accruingMicro: null,
+    maxVms: 1,
+    defaultVcpu: 0,
+    defaultMemoryBytes: 0,
+    ceilingVcpu: 0,
+    ceilingMemoryBytes: 0,
+    subscriptionStatus: "",
+  },
+};
+const accounts: Record<string, Account> = { boxd: account, boat: boatAccount, daytona: daytonaAccount, agent37: agent37Account, sshhost: sshHostAccount };
 
 function ownerCaps(id: string): Capabilities {
   const m = machines.find((m) => m.id === id || m.name === id);
@@ -624,6 +674,7 @@ function observe() {
 function decide(m: Machine, policy: IdlePolicy, now: number): GuardVerdict {
   if (policy.idleMinutes <= 0) return { kind: "keep", reason: "guard-off" };
   if (m.status !== "running") return { kind: "keep", reason: "not-running" };
+  if (!ownerCaps(m.id).power.some((a) => a === "pause" || a === "hibernate" || a === "stop")) return { kind: "keep", reason: "cannot-stop" };
   if (policy.optedOut.includes(m.id)) return { kind: "keep", reason: "opted-out" };
   const mine = agents.filter((a) => a.machineId === m.id);
   if (mine.some((a) => live.get(a.id)?.running && live.get(a.id)?.state === "working")) return { kind: "keep", reason: "agent-working" };
@@ -933,6 +984,7 @@ export const mockApi: Api = {
     if (presetId) prepareMockSetup(presetId, variables ?? {});
     await sleep(800);
     const provider = spec.provider ?? [...connected][0] ?? "boxd";
+    if (!CAPS[provider]?.create) throw new Error(`Stowbox cannot make an ${CAPS[provider]?.label ?? provider}`);
     const m =
       provider === "boat"
         ? machine({ id: "sbx_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "boat-new", status: "running", provider, size: spec.size ?? "default", autoStopAt: spec.autoStopSecs ? Math.floor(Date.now() / 1000) + spec.autoStopSecs : 0 })
@@ -1027,13 +1079,16 @@ export const mockApi: Api = {
     const b = metricBase[m.id] ?? { cpu: 3, mem: 0.2, diskUsed: 0.1, up: 1800 };
     const diskTotal = 100 * GIB;
     const used = Math.round(b.diskUsed * diskTotal);
+    // Metrics are read inside the box, so a host whose provider reports no size still has one.
+    const vcpu = m.vcpu || 4;
+    const memTotal = m.memoryBytes || 16 * GIB;
     return {
       sampledAtMs: Date.now(),
       cpuPercent: Math.min(100, Math.max(0, Math.round(jitter(b.cpu) * 10) / 10)),
-      vcpu: m.vcpu,
-      load1: Math.round(jitter(b.cpu / 100 * m.vcpu) * 100) / 100,
-      memTotalBytes: m.memoryBytes,
-      memUsedBytes: Math.round(Math.min(0.99, jitter(b.mem)) * m.memoryBytes),
+      vcpu,
+      load1: Math.round(jitter(b.cpu / 100 * vcpu) * 100) / 100,
+      memTotalBytes: memTotal,
+      memUsedBytes: Math.round(Math.min(0.99, jitter(b.mem)) * memTotal),
       diskTotalBytes: diskTotal,
       diskUsedBytes: used,
       diskAvailBytes: diskTotal - used - 5 * GIB,
@@ -1041,6 +1096,7 @@ export const mockApi: Api = {
     };
   },
   async rates(provider) {
+    if (provider === "sshhost") return { currency: "", rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 }, sizes: [] };
     if (provider === "daytona") return { currency: "usd", rates: DAYTONA_RATES, sizes: [] };
     if (provider === "agent37") return { currency: "usd", rates: AGENT37_RATES, sizes: [] };
     if (provider === "boat") return { currency: "usd", rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 }, sizes: BOAT_SIZES.map((z) => ({ size: z.id, hourlyMicro: z.hourlyMicro })) };
@@ -1082,6 +1138,7 @@ export const mockApi: Api = {
     return { basis: "metered", totalMicro: 1_840_000, complete: false, ...amount(1_840_000) };
   },
   async orgBilling(provider) {
+    if (provider === "sshhost") throw new Error("an SSH host has no billing");
     if (provider === "daytona") throw new Error("Daytona's API does not report a balance");
     if (provider === "agent37") return { id: "", name: "Agent37 workspace", isAdmin: true, currency: "usd", mode: "wallet", balanceMicro: 5_000_000, accruingMicro: null, vmCount: machines.filter((m) => m.provider === "agent37" && m.status === "running").length, maxVms: 8 };
     if (provider === "boat") return { id: "team_mock", name: "", isAdmin: false, currency: "usd", mode: "wallet", balanceMicro: 18_500_000, accruingMicro: null, vmCount: machines.filter((m) => m.provider === "boat").length, maxVms: 10 };

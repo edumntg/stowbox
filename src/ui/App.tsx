@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
-import { actions, agentBoxGone, agentById, demo, machineById, selectedAgent, selectedMachine, spendCurrency, state, type TabGroup } from "../state/store";
+import { actions, agentBoxGone, agentById, demo, hasPrices, machineById, selectedAgent, selectedMachine, spendCurrency, state, type TabGroup } from "../state/store";
 import * as I from "../icons";
 import AgentView from "./AgentView";
 import BoxView from "./BoxView";
@@ -184,9 +184,11 @@ const Statusbar = () => {
         <span class="dot" data-state={running().length ? "running" : "stopped"} />
         {running().length} running or standby
       </span>
-      <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
-        {hourly()} est.
-      </span>
+      <Show when={hasPrices()}>
+        <span class="mono" style={{ "font-size": "var(--text-2xs)" }}>
+          {hourly()} est.
+        </span>
+      </Show>
     </footer>
   );
 };

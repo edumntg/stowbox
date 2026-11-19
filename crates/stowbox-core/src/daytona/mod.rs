@@ -61,6 +61,7 @@ pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind 
 pub fn capabilities() -> Capabilities {
     use PowerAction::*;
     Capabilities {
+        create: true,
         new_box_blurb: "A Daytona sandbox from the default image, up in about a second. Daytona stops it after a stretch with no activity, even with work running; Stowbox reports activity while a terminal or an agent is open.".into(),
         free_sizes: Vec::new(),
         default_size: SNAPSHOTS[0].0.into(),
@@ -182,6 +183,8 @@ impl Authorize for GatewayAuth<'_> {
             check: HostCheck::Remembered(self.known_hosts.clone()),
             dial: Dial::Tcp,
             provider: "Daytona",
+            // Daytona logs in with a token, never a key.
+            key_refused: String::new(),
         })
     }
 }
