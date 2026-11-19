@@ -224,7 +224,10 @@ pub struct ExecSpec {
 #[derive(Debug)]
 pub enum ExecInput {
     Data(Vec<u8>),
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     /// Closes stdin; the remote process sees EOF.
     Close,
 }

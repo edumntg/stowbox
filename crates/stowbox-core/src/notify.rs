@@ -53,7 +53,11 @@ fn clip(s: &str) -> String {
 
 fn agent_name(meta: &AgentMeta) -> String {
     let t = meta.title.trim();
-    if t.is_empty() { format!("{} agent", meta.harness.label()) } else { t.to_string() }
+    if t.is_empty() {
+        format!("{} agent", meta.harness.label())
+    } else {
+        t.to_string()
+    }
 }
 
 #[derive(Default)]
@@ -92,7 +96,11 @@ impl Notifier {
         let (kind, title, body) = match run.status {
             RunStatus::Done => {
                 let n = run.steps.len();
-                (NoticeKind::SetupDone, format!("Setup finished in {}", run.machine_name), format!("{}: {} command{} ran", run.preset_name, n, if n == 1 { "" } else { "s" }))
+                (
+                    NoticeKind::SetupDone,
+                    format!("Setup finished in {}", run.machine_name),
+                    format!("{}: {} command{} ran", run.preset_name, n, if n == 1 { "" } else { "s" }),
+                )
             }
             RunStatus::Failed => {
                 let why = run.error.as_deref().unwrap_or("it did not finish");

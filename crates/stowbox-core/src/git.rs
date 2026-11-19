@@ -381,7 +381,13 @@ pub fn parse_status(raw: &[u8], truncated: bool) -> (Branch, Vec<FileChange>) {
                 let xy: Vec<char> = parts[1].chars().collect();
                 let (x, y) = (xy.first().copied().unwrap_or('.'), xy.get(1).copied().unwrap_or('.'));
                 let orig_path = if kind == '2' { it.next() } else { None };
-                let code = if kind == '2' { x } else if y != '.' { y } else { x };
+                let code = if kind == '2' {
+                    x
+                } else if y != '.' {
+                    y
+                } else {
+                    x
+                };
                 files.push(FileChange { path: parts[fields - 1].to_string(), orig_path, code: code.to_string(), staged: x != '.' });
             }
             'u' => {
@@ -572,11 +578,7 @@ pub fn compare_url(remote_url: &str, base: Option<&str>, branch: &str) -> Option
 /// The last https URL `gh` printed (it prints the new pull request's URL,
 /// or names the existing one in its error).
 pub fn last_url(output: &str) -> Option<String> {
-    output
-        .split_whitespace()
-        .filter(|w| w.starts_with("https://"))
-        .last()
-        .map(|w| w.trim_end_matches(['.', ',', ')', '"', '\'']).to_string())
+    output.split_whitespace().filter(|w| w.starts_with("https://")).last().map(|w| w.trim_end_matches(['.', ',', ')', '"', '\'']).to_string())
 }
 
 /// What one script run left behind.
@@ -590,7 +592,14 @@ pub struct Captured {
 /// Runs `script` in the box, feeds `stdin` and closes it, and collects the
 /// output until the process exits or `deadline` passes. On timeout the
 /// stream is dropped, which kills the remote process group.
-pub async fn capture<P: Provider + ?Sized>(p: &P, machine_id: &str, script: String, stdin: Option<Vec<u8>>, deadline: Duration, what: &str) -> Result<Captured> {
+pub async fn capture<P: Provider + ?Sized>(
+    p: &P,
+    machine_id: &str,
+    script: String,
+    stdin: Option<Vec<u8>>,
+    deadline: Duration,
+    what: &str,
+) -> Result<Captured> {
     let mut h = p.exec(machine_id, ExecSpec { script, tty: false, cols: 0, rows: 0, env: vec![] }).await?;
     if let Some(data) = stdin {
         let _ = h.input.send(ExecInput::Data(data)).await;
@@ -763,10 +772,7 @@ fn pr_outcome(secs: &[(String, Vec<u8>)]) -> Result<PrOutcome> {
     }
     if let Some(out) = section(secs, "gh") {
         let out = String::from_utf8_lossy(out).trim().to_string();
-        let code: i32 = secs
-            .iter()
-            .find_map(|(n, _)| n.strip_prefix("exit ").and_then(|c| c.trim().parse().ok()))
-            .unwrap_or(-1);
+        let code: i32 = secs.iter().find_map(|(n, _)| n.strip_prefix("exit ").and_then(|c| c.trim().parse().ok())).unwrap_or(-1);
         if code == 0 {
             if let Some(url) = last_url(&out) {
                 return Ok(PrOutcome { url, via: PrVia::Gh, existing: false });
@@ -928,7 +934,10 @@ index 0000000..5555555
         assert_eq!(remote_web("/srv/git/r.git"), None);
         assert_eq!(remote_web("../r.git"), None);
 
-        assert_eq!(compare_url("git@github.com:o/r.git", Some("main"), "fix/login bug").as_deref(), Some("https://github.com/o/r/compare/main...fix/login%20bug?expand=1"));
+        assert_eq!(
+            compare_url("git@github.com:o/r.git", Some("main"), "fix/login bug").as_deref(),
+            Some("https://github.com/o/r/compare/main...fix/login%20bug?expand=1")
+        );
         assert_eq!(compare_url("https://github.com/o/r", None, "x").as_deref(), Some("https://github.com/o/r/compare/x?expand=1"));
         assert_eq!(
             compare_url("git@gitlab.com:g/p.git", Some("main"), "x").as_deref(),
@@ -964,7 +973,15 @@ index 0000000..5555555
         let home = temp_dir("stowbox-cred");
         let fill = |host: &str| {
             let script = format!("export GIT_TERMINAL_PROMPT=0\n{TOKEN_HELPER}printf 'protocol=https\\nhost={host}\\n\\n' | git \"${{stowbox_auth[@]}}\" credential fill 2>/dev/null");
-            let out = std::process::Command::new("bash").arg("-c").arg(script).env("HOME", &home).env("GIT_CONFIG_NOSYSTEM", "1").env_remove("GITHUB_TOKEN").env("GH_TOKEN", "tok-123").output().unwrap();
+            let out = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(script)
+                .env("HOME", &home)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env_remove("GITHUB_TOKEN")
+                .env("GH_TOKEN", "tok-123")
+                .output()
+                .unwrap();
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
         assert!(fill("github.com").contains("username=x-access-token\npassword=tok-123\n"));
@@ -1054,7 +1071,11 @@ index 0000000..5555555
         assert_eq!(r.branch.upstream.as_deref(), Some("origin/feature/x"));
 
         // Someone else pushes to main first: our push is rejected with git's words.
-        sh(&home, &home, "git clone -q remote.git other 2>/dev/null && cd other && echo theirs > t.txt && git add t.txt && git commit -qm theirs && git push -q 2>/dev/null");
+        sh(
+            &home,
+            &home,
+            "git clone -q remote.git other 2>/dev/null && cd other && echo theirs > t.txt && git add t.txt && git commit -qm theirs && git push -q 2>/dev/null",
+        );
         sh(&work, &home, "git switch -q main && echo ours > o.txt && git add o.txt && git commit -qm ours");
         let rejected = push(&p, "vm1", Some("~/work")).await.unwrap_err().to_string();
         assert!(rejected.contains("rejected"), "{rejected}");
@@ -1100,7 +1121,11 @@ index 0000000..5555555
             return;
         }
         let (home, work) = fixture();
-        sh(&work, &home, "git remote set-url origin git@github.com:o/r.git && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main && git switch -qc fix/it");
+        sh(
+            &work,
+            &home,
+            "git remote set-url origin git@github.com:o/r.git && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main && git switch -qc fix/it",
+        );
         // Stub gh binaries in front of PATH, so a real gh never runs here.
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();

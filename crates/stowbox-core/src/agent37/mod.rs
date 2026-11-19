@@ -110,7 +110,9 @@ pub fn capabilities() -> Capabilities {
     Capabilities {
         label: "agent37".into(),
         console_url: DEFAULT_CONSOLE_URL.into(),
-        key_hint: "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal.".into(),
+        key_hint:
+            "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal."
+                .into(),
         key_prefixes: vec!["sk_live_".into()],
         currency: "usd".into(),
         power: vec![Start, Stop, Reboot, Hibernate, Wake, Destroy],
@@ -249,7 +251,9 @@ impl Agent37 {
                 // Linked from another window in the meantime.
                 Err(Error::Provider(m)) if m.contains("ssh_key_exists") => None,
                 Err(Error::Provider(m)) if m.contains("invalid_request") => {
-                    return Err(Error::Provider(format!("Agent37 would not link Stowbox's SSH key: {m}. A workspace holds at most 20 keys; remove one on the dashboard")));
+                    return Err(Error::Provider(format!(
+                        "Agent37 would not link Stowbox's SSH key: {m}. A workspace holds at most 20 keys; remove one on the dashboard"
+                    )));
                 }
                 Err(e) => return Err(e),
             }
@@ -292,7 +296,9 @@ impl Authorize for EdgeAuth<'_> {
                 "sleeping" => {}
                 "waking" | "starting" | "restarting" | "provisioning" | "updating" => {}
                 "stopped" | "stopping" => return Err(Error::Provider("the instance is stopped; start it first".into())),
-                s => return Err(Error::Provider(format!("the instance is {}; it cannot take a terminal", if s.is_empty() { "in an unknown state" } else { s }))),
+                s => {
+                    return Err(Error::Provider(format!("the instance is {}; it cannot take a terminal", if s.is_empty() { "in an unknown state" } else { s })))
+                }
             }
             if Instant::now() > deadline {
                 return Err(Error::Network("the instance did not come up within two minutes".into()));
@@ -458,7 +464,11 @@ impl Provider for Agent37 {
     async fn rates(&self) -> Result<RateCard> {
         let sizes = TYPES
             .iter()
-            .flat_map(|(kind, multiple)| SHAPES.iter().map(move |s| SizeRate { size: convert::size_key(kind, s.cpu as i64, s.memory_gb as i64), hourly_micro: running_micro(s, *multiple) }))
+            .flat_map(|(kind, multiple)| {
+                SHAPES
+                    .iter()
+                    .map(move |s| SizeRate { size: convert::size_key(kind, s.cpu as i64, s.memory_gb as i64), hourly_micro: running_micro(s, *multiple) })
+            })
             .collect();
         Ok(RateCard { currency: "usd".into(), rates: RATES, sizes })
     }
@@ -479,7 +489,14 @@ impl Provider for Agent37 {
         };
         let url = r.get("url").and_then(Value::as_str).unwrap_or("").to_string();
         let domain = url.trim_start_matches("https://").split(['/', '?']).next().unwrap_or("").to_string();
-        let route = HttpsRoute { name: port.to_string(), domain, url: Some(url).filter(|u| !u.is_empty()), port: port as u32, port_mode: "locked".into(), is_default: false };
+        let route = HttpsRoute {
+            name: port.to_string(),
+            domain,
+            url: Some(url).filter(|u| !u.is_empty()),
+            port: port as u32,
+            port_mode: "locked".into(),
+            is_default: false,
+        };
         let mut links = self.links();
         let list = links.entry(id.to_string()).or_default();
         list.retain(|l| l.port != route.port);
@@ -551,7 +568,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs an Agent37 key and instance; run with --ignored"]
     async fn live_exec_over_the_edge() {
-        let (Ok(key), Ok(id)) = (std::env::var("AGENT37_API_KEY"), std::env::var("AGENT37_INSTANCE")) else { panic!("set AGENT37_API_KEY and AGENT37_INSTANCE") };
+        let (Ok(key), Ok(id)) = (std::env::var("AGENT37_API_KEY"), std::env::var("AGENT37_INSTANCE")) else {
+            panic!("set AGENT37_API_KEY and AGENT37_INSTANCE")
+        };
         let dir = std::env::temp_dir().join("stowbox-a37-live");
         let p = Agent37::new(key, Agent37Config::new(dir.join("agent37_ed25519"))).unwrap();
         assert!(p.list_machines().await.unwrap().iter().any(|m| m.id == id));

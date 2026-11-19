@@ -208,13 +208,23 @@ mod tests {
     const MIN: i64 = 60_000;
 
     fn idle_box(last: i64) -> BoxActivity {
-        BoxActivity { machine_id: "vm_1".into(), status: MachineStatus::Running, agents_busy: 0, setup_active: false, terminals_open: 0, last_activity_ms: last }
+        BoxActivity {
+            machine_id: "vm_1".into(),
+            status: MachineStatus::Running,
+            agents_busy: 0,
+            setup_active: false,
+            terminals_open: 0,
+            last_activity_ms: last,
+        }
     }
 
     #[test]
     fn combined_spend_is_metered_only_when_every_part_is() {
         let m = |t| SpendFigure::Metered { total_micro: t, complete: true };
-        assert_eq!(combine(vec![m(2_000_000), SpendFigure::Metered { total_micro: 1_000_000, complete: false }]), SpendFigure::Metered { total_micro: 3_000_000, complete: false });
+        assert_eq!(
+            combine(vec![m(2_000_000), SpendFigure::Metered { total_micro: 1_000_000, complete: false }]),
+            SpendFigure::Metered { total_micro: 3_000_000, complete: false }
+        );
         let p = combine(vec![m(2_400_000), SpendFigure::Projected { hourly_micro: 36_000, why: "boat does not report usage".into() }]);
         assert_eq!(p, SpendFigure::Projected { hourly_micro: 100_000 + 36_000, why: "boat does not report usage".into() });
         assert_eq!(combine(vec![]), SpendFigure::Metered { total_micro: 0, complete: true });

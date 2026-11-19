@@ -9,11 +9,7 @@ const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 /// boxd's published rate card (EUR, 2026-10): the fallback until the live
 /// rates have been fetched once.
-pub const BOXD_PUBLISHED_EUR: Rates = Rates {
-    vcpu_hour_micro: 39_000,
-    ram_gib_hour_micro: 12_000,
-    disk_gib_hour_micro: 80,
-};
+pub const BOXD_PUBLISHED_EUR: Rates = Rates { vcpu_hour_micro: 39_000, ram_gib_hour_micro: 12_000, disk_gib_hour_micro: 80 };
 
 /// A provider's prices: per resource (boxd) and, for providers that sell a
 /// fixed menu, per size (boat). `sizes` wins for a machine whose size it

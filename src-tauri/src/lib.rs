@@ -15,17 +15,17 @@ use stowbox_core::agent::{self, session, AgentMeta, Harness};
 use stowbox_core::agent37::{Agent37, Agent37Config};
 use stowbox_core::audit::{AuditLog, Event as AuditEvent};
 use stowbox_core::boat::{Boat, BoatConfig};
-use stowbox_core::daytona::{Daytona, DaytonaConfig};
 use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::capabilities::Capabilities;
 use stowbox_core::cost::{self, RateCard};
+use stowbox_core::daytona::{Daytona, DaytonaConfig};
 use stowbox_core::git::{self, GitReview, PrOutcome};
 use stowbox_core::guard::{self, BoxActivity, IdlePolicy, IdleWatch, SpendCheck, SpendFigure, Verdict};
 use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::ports;
 use stowbox_core::provider::Provider;
-use stowbox_core::provision::{self, Preset, Prepared, ProvisionRun, RunEvent, Variable};
+use stowbox_core::provision::{self, Prepared, Preset, ProvisionRun, RunEvent, Variable};
 use stowbox_core::registry::Registry;
 use stowbox_core::ssh;
 use stowbox_core::store::Store;
@@ -564,7 +564,15 @@ async fn guard_suspend(state: State<'_, AppState>, machine_id: String, policy: I
     } else {
         hourly_before_micro
     };
-    Ok(GuardOutcome { verdict, suspended, stopped: suspended && action == PowerAction::Stop, machine_name: m.name, hourly_before_micro, hourly_after_micro, currency: card.currency })
+    Ok(GuardOutcome {
+        verdict,
+        suspended,
+        stopped: suspended && action == PowerAction::Stop,
+        machine_name: m.name,
+        hourly_before_micro,
+        hourly_after_micro,
+        currency: card.currency,
+    })
 }
 
 /// Undo on the countdown: the box counts as used just now.
@@ -771,9 +779,7 @@ async fn open_in_editor(app: AppHandle, state: State<'_, AppState>, machine_id: 
         applied.changes.push(format!("Woke {}", m.name));
     }
     let url = ssh::editor_url(editor, &applied.alias, &ssh::remote_path(dir.as_deref()));
-    app.opener()
-        .open_url(&url, None::<&str>)
-        .map_err(|e| format!("Could not hand the link to {}: {e}. Is it installed?", editor.label()))?;
+    app.opener().open_url(&url, None::<&str>).map_err(|e| format!("Could not hand the link to {}: {e}. Is it installed?", editor.label()))?;
     Ok(EditorOpened { url, alias: applied.alias, changes: applied.changes })
 }
 
@@ -969,7 +975,8 @@ async fn apply_live(app: &AppHandle, state: &AppState, machine_id: &str, snap: s
         let mut live = state.live.lock().unwrap();
         let mut notifier = state.notifier.lock().unwrap_or_else(|e| e.into_inner());
         for a in &agents {
-            let l = snap.agents.iter().find(|l| l.id == a.id).cloned().unwrap_or(session::AgentLive { id: a.id.clone(), state: None, since: 0, running: false });
+            let l =
+                snap.agents.iter().find(|l| l.id == a.id).cloned().unwrap_or(session::AgentLive { id: a.id.clone(), state: None, since: 0, running: false });
             if let Some(n) = notifier.agent(a, &l) {
                 notices.push(n);
             }
@@ -1032,11 +1039,7 @@ struct SetupPush {
 fn preset_view(state: &AppState, p: &Preset) -> PresetView {
     let values = state.preset_secrets.load(&p.id);
     PresetView {
-        secrets: p
-            .secret_names
-            .iter()
-            .map(|n| SecretView { name: n.clone(), has_value: values.get(n).is_some_and(|v| !v.is_empty()) })
-            .collect(),
+        secrets: p.secret_names.iter().map(|n| SecretView { name: n.clone(), has_value: values.get(n).is_some_and(|v| !v.is_empty()) }).collect(),
         preset: p.clone(),
     }
 }
@@ -1050,8 +1053,7 @@ async fn list_presets(state: State<'_, AppState>) -> CmdResult<Vec<PresetView>> 
 #[tauri::command]
 async fn save_preset(state: State<'_, AppState>, input: PresetInput) -> CmdResult<PresetView> {
     let name = input.name.trim().to_string();
-    let commands: Vec<String> =
-        input.commands.iter().map(|c| c.trim_end().to_string()).filter(|c| !c.trim().is_empty()).collect();
+    let commands: Vec<String> = input.commands.iter().map(|c| c.trim_end().to_string()).filter(|c| !c.trim().is_empty()).collect();
     let secret_names: Vec<String> = input.secrets.iter().map(|s| s.name.trim().to_string()).collect();
     provision::validate(&name, &commands, &secret_names).map_err(err)?;
 
@@ -1160,7 +1162,12 @@ async fn apply_setup_event(app: &AppHandle, state: &AppState, run_id: &str, ev: 
     let notice = if done { state.notifier.lock().unwrap_or_else(|e| e.into_inner()).setup(&run) } else { None };
     let _ = app.emit("setup-event", SetupPush { run: ProvisionRun { output: String::new(), ..run.clone() }, append, notice });
     if done {
-        state.audit(AuditEvent::SetupEnded { run_id: run.id.clone(), machine_id: run.machine_id.clone(), status: run.status, secrets_written: run.secrets_written });
+        state.audit(AuditEvent::SetupEnded {
+            run_id: run.id.clone(),
+            machine_id: run.machine_id.clone(),
+            status: run.status,
+            secrets_written: run.secrets_written,
+        });
         let mut setups = state.setups.lock().await;
         if setups.get(&run.machine_id).is_some_and(|(id, _)| *id == run.id) {
             setups.remove(&run.machine_id);
@@ -1170,13 +1177,7 @@ async fn apply_setup_event(app: &AppHandle, state: &AppState, run_id: &str, ev: 
     }
 }
 
-async fn start_setup(
-    app: &AppHandle,
-    state: &AppState,
-    p: Arc<dyn Provider>,
-    machine: &Machine,
-    setup: Setup,
-) -> CmdResult<ProvisionRun> {
+async fn start_setup(app: &AppHandle, state: &AppState, p: Arc<dyn Provider>, machine: &Machine, setup: Setup) -> CmdResult<ProvisionRun> {
     let Setup { preset, prepared, secrets } = setup;
     let mut setups = state.setups.lock().await;
     if setups.contains_key(&machine.id) {

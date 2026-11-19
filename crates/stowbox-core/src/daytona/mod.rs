@@ -104,7 +104,12 @@ pub struct Daytona {
 
 impl Daytona {
     pub fn new(config: DaytonaConfig, api_key: String) -> Result<Self> {
-        Ok(Self { api: Arc::new(Api::new(&config.api, api_key)?), ssh: sshexec::Pool::without_key(), known_hosts: config.known_hosts, links: Default::default() })
+        Ok(Self {
+            api: Arc::new(Api::new(&config.api, api_key)?),
+            ssh: sshexec::Pool::without_key(),
+            known_hosts: config.known_hosts,
+            links: Default::default(),
+        })
     }
 
     async fn sandbox(&self, id: &str) -> Result<Value> {
@@ -138,9 +143,18 @@ impl Authorize for GatewayAuth<'_> {
             return Err(Error::Provider(format!("the sandbox is {}; start it first", if state.is_empty() { "not running" } else { state })));
         }
         let a = self.api.post(&format!("/sandbox/{}/ssh-access?expiresInMinutes={TOKEN_MINUTES}", seg(id)), None).await?;
-        let token = a.get("token").and_then(Value::as_str).filter(|t| !t.is_empty()).ok_or_else(|| Error::Provider("Daytona gave no SSH access token".into()))?;
+        let token =
+            a.get("token").and_then(Value::as_str).filter(|t| !t.is_empty()).ok_or_else(|| Error::Provider("Daytona gave no SSH access token".into()))?;
         let (host, port) = a.get("sshCommand").and_then(Value::as_str).and_then(convert::ssh_target).unwrap_or_else(|| ("ssh.app.daytona.io".into(), 22));
-        Ok(Endpoint { host, port, user: token.to_string(), login: Login::Token, check: HostCheck::Remembered(self.known_hosts.clone()), dial: Dial::Tcp, provider: "Daytona" })
+        Ok(Endpoint {
+            host,
+            port,
+            user: token.to_string(),
+            login: Login::Token,
+            check: HostCheck::Remembered(self.known_hosts.clone()),
+            dial: Dial::Tcp,
+            provider: "Daytona",
+        })
     }
 }
 
@@ -289,7 +303,14 @@ impl Provider for Daytona {
         let r = self.signed_link(id, port).await?;
         let url = r.get("url").and_then(Value::as_str).unwrap_or("").to_string();
         let domain = url.trim_start_matches("https://").split(['/', '?']).next().unwrap_or("").to_string();
-        let route = HttpsRoute { name: port.to_string(), domain, url: Some(url).filter(|u| !u.is_empty()), port: port as u32, port_mode: "locked".into(), is_default: false };
+        let route = HttpsRoute {
+            name: port.to_string(),
+            domain,
+            url: Some(url).filter(|u| !u.is_empty()),
+            port: port as u32,
+            port_mode: "locked".into(),
+            is_default: false,
+        };
         let mut links = self.links.lock().unwrap();
         let list = links.entry(id.to_string()).or_default();
         list.retain(|l| l.port != route.port);

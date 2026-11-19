@@ -147,7 +147,10 @@ mod tests {
     #[test]
     fn reads_nest_errors_with_one_or_many_messages() {
         assert_eq!(error_message(r#"{"statusCode":404,"message":"Sandbox with ID x not found","error":"Not Found"}"#), "Sandbox with ID x not found");
-        assert_eq!(error_message(r#"{"statusCode":400,"message":["cpu must be at most 4","memory must be an integer"],"error":"Bad Request"}"#), "cpu must be at most 4; memory must be an integer");
+        assert_eq!(
+            error_message(r#"{"statusCode":400,"message":["cpu must be at most 4","memory must be an integer"],"error":"Bad Request"}"#),
+            "cpu must be at most 4; memory must be an integer"
+        );
         assert_eq!(error_message(r#"{"statusCode":500,"error":"Internal Server Error"}"#), "Internal Server Error");
         assert_eq!(error_message("upstream timed out\n<html>"), "upstream timed out");
         assert!(matches!(into_error(401, "{}"), Error::Auth(_)));

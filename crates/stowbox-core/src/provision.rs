@@ -72,8 +72,7 @@ pub struct VariableValue {
 /// Environment variable names a POSIX shell accepts in `export`.
 pub fn valid_secret_name(name: &str) -> bool {
     let mut chars = name.chars();
-    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
-        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic()) && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
 /// Checks a preset before it is saved. Commands are trimmed and empty ones
@@ -83,16 +82,12 @@ pub fn validate(name: &str, commands: &[String], secret_names: &[String]) -> Res
         return Err(Error::Provider("give the preset a name".into()));
     }
     if commands.iter().all(|c| c.trim().is_empty()) && secret_names.is_empty() {
-        return Err(Error::Provider(
-            "add at least one command or one secret".into(),
-        ));
+        return Err(Error::Provider("add at least one command or one secret".into()));
     }
     let mut seen = std::collections::HashSet::new();
     for n in secret_names {
         if !valid_secret_name(n) {
-            return Err(Error::Provider(format!(
-                "\"{n}\" is not a valid variable name: use letters, digits and _, not starting with a digit"
-            )));
+            return Err(Error::Provider(format!("\"{n}\" is not a valid variable name: use letters, digits and _, not starting with a digit")));
         }
         if !seen.insert(n.as_str()) {
             return Err(Error::Provider(format!("the secret {n} is listed twice")));
@@ -212,10 +207,7 @@ pub fn runner_script(commands: &[String], secrets: &[(String, String)], nonce: &
     // delimiter can collide with a value.
     for (k, v) in secrets {
         let line = format!("export {k}={}\n", single_quote(v));
-        s.push_str(&format!(
-            "printf '%s' {} >> \"$STOWBOX_ENV\"\n",
-            single_quote(&line)
-        ));
+        s.push_str(&format!("printf '%s' {} >> \"$STOWBOX_ENV\"\n", single_quote(&line)));
     }
     s.push_str(concat!(
         "for rc in \"$HOME/.profile\" \"$HOME/.bashrc\"; do\n",
@@ -224,16 +216,11 @@ pub fn runner_script(commands: &[String], secrets: &[(String, String)], nonce: &
         ". \"$STOWBOX_ENV\"\n",
         "cd \"$HOME\"\n",
     ));
-    s.push_str(&format!(
-        "printf '{mark} secrets %d\\n' {}\n",
-        secrets.len()
-    ));
+    s.push_str(&format!("printf '{mark} secrets %d\\n' {}\n", secrets.len()));
     s.push_str("set +u\n");
     // A step that calls `exit` ends this shell; the trap still reports it.
     s.push_str("stowbox_step=-1\n");
-    s.push_str(&format!(
-        "trap 'stowbox_rc=$?; [ \"$stowbox_step\" -ge 0 ] && printf \"{mark} exit %d %d\\\\n\" \"$stowbox_step\" \"$stowbox_rc\"' EXIT\n"
-    ));
+    s.push_str(&format!("trap 'stowbox_rc=$?; [ \"$stowbox_step\" -ge 0 ] && printf \"{mark} exit %d %d\\\\n\" \"$stowbox_step\" \"$stowbox_rc\"' EXIT\n"));
     for (i, cmd) in commands.iter().enumerate() {
         s.push_str(&format!("stowbox_step={i}\nprintf '{mark} start {i}\\n'\n"));
         // A brace group, not a subshell, so `cd` and `export` carry over.
@@ -270,14 +257,8 @@ pub fn parse_line(line: &str, nonce: &str) -> Line {
     };
     let parts: Vec<&str> = rest.split_whitespace().collect();
     match parts.as_slice() {
-        ["secrets", n] => n
-            .parse()
-            .map(Line::Secrets)
-            .unwrap_or_else(|_| Line::Output(line.into())),
-        ["start", i] => i
-            .parse()
-            .map(Line::Start)
-            .unwrap_or_else(|_| Line::Output(line.into())),
+        ["secrets", n] => n.parse().map(Line::Secrets).unwrap_or_else(|_| Line::Output(line.into())),
+        ["start", i] => i.parse().map(Line::Start).unwrap_or_else(|_| Line::Output(line.into())),
         ["exit", i, c] => match (i.parse(), c.parse()) {
             (Ok(i), Ok(c)) => Line::Exit(i, c),
             _ => Line::Output(line.into()),
@@ -386,15 +367,7 @@ impl ProvisionRun {
             preset_name: preset.name.clone(),
             status: RunStatus::Waiting,
             error: None,
-            steps: prepared
-                .commands
-                .iter()
-                .map(|c| StepRun {
-                    command: c.clone(),
-                    state: StepState::Pending,
-                    exit_code: None,
-                })
-                .collect(),
+            steps: prepared.commands.iter().map(|c| StepRun { command: c.clone(), state: StepState::Pending, exit_code: None }).collect(),
             secret_names: preset.secret_names.clone(),
             variables: prepared.variables.clone(),
             secrets_written: false,
@@ -426,11 +399,7 @@ impl ProvisionRun {
             RunEvent::StepExit(i, code) => {
                 if let Some(s) = self.steps.get_mut(*i) {
                     s.exit_code = Some(*code);
-                    s.state = if *code == 0 {
-                        StepState::Ok
-                    } else {
-                        StepState::Failed
-                    };
+                    s.state = if *code == 0 { StepState::Ok } else { StepState::Failed };
                 }
             }
             RunEvent::Output(text) => {
@@ -450,16 +419,10 @@ impl ProvisionRun {
                 } else {
                     self.status = RunStatus::Failed;
                     if self.error.is_none() {
-                        self.error = Some(
-                            match self.steps.iter().position(|s| s.state == StepState::Failed) {
-                                Some(i) => format!(
-                                    "step {} exited with code {}",
-                                    i + 1,
-                                    self.steps[i].exit_code.unwrap_or(*code)
-                                ),
-                                None => format!("the setup script exited with code {code}"),
-                            },
-                        );
+                        self.error = Some(match self.steps.iter().position(|s| s.state == StepState::Failed) {
+                            Some(i) => format!("step {} exited with code {}", i + 1, self.steps[i].exit_code.unwrap_or(*code)),
+                            None => format!("the setup script exited with code {code}"),
+                        });
                     }
                 }
                 self.finish(now_ms);
@@ -492,13 +455,8 @@ pub const BOOT_DEADLINE: Duration = Duration::from_secs(180);
 /// Waits for the box, runs the preset in it and reports every change
 /// through `emit`. Returns once the remote process is gone. Dropping the
 /// future kills the remote process group (the exec stream closes).
-pub async fn run<P, F>(
-    p: &P,
-    machine_id: &str,
-    commands: &[String],
-    secrets: &[(String, String)],
-    mut emit: F,
-) where
+pub async fn run<P, F>(p: &P, machine_id: &str, commands: &[String], secrets: &[(String, String)], mut emit: F)
+where
     P: Provider + ?Sized,
     F: FnMut(RunEvent),
 {
@@ -512,42 +470,20 @@ pub async fn run<P, F>(
     // A box that just booted can refuse exec for a few seconds.
     let start = Instant::now();
     let mut handle = loop {
-        match p
-            .exec(
-                machine_id,
-                ExecSpec {
-                    script: "exec bash -s".into(),
-                    tty: false,
-                    cols: 0,
-                    rows: 0,
-                    env: vec![],
-                },
-            )
-            .await
-        {
+        match p.exec(machine_id, ExecSpec { script: "exec bash -s".into(), tty: false, cols: 0, rows: 0, env: vec![] }).await {
             Ok(h) => break h,
             Err(_) if start.elapsed() < Duration::from_secs(60) => {
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }
             Err(e) => {
-                emit(RunEvent::Failed(format!(
-                    "could not open a shell in the box: {e}"
-                )));
+                emit(RunEvent::Failed(format!("could not open a shell in the box: {e}")));
                 return;
             }
         }
     };
     emit(RunEvent::Running);
-    if handle
-        .input
-        .send(ExecInput::Data(script.into_bytes()))
-        .await
-        .is_err()
-        || handle.input.send(ExecInput::Close).await.is_err()
-    {
-        emit(RunEvent::Failed(
-            "the box closed the shell before the script was sent".into(),
-        ));
+    if handle.input.send(ExecInput::Data(script.into_bytes())).await.is_err() || handle.input.send(ExecInput::Close).await.is_err() {
+        emit(RunEvent::Failed("the box closed the shell before the script was sent".into()));
         return;
     }
 
@@ -569,14 +505,8 @@ pub async fn run<P, F>(
     };
     while let Some(chunk) = handle.output.recv().await {
         match chunk {
-            ExecOutput::Stdout(b) => out
-                .push(&b)
-                .into_iter()
-                .for_each(|l| handle_line(l, &mut emit)),
-            ExecOutput::Stderr(b) => err
-                .push(&b)
-                .into_iter()
-                .for_each(|l| handle_line(l, &mut emit)),
+            ExecOutput::Stdout(b) => out.push(&b).into_iter().for_each(|l| handle_line(l, &mut emit)),
+            ExecOutput::Stderr(b) => err.push(&b).into_iter().for_each(|l| handle_line(l, &mut emit)),
             ExecOutput::Exit(code) => {
                 for l in out.flush().into_iter().chain(err.flush()) {
                     handle_line(l, &mut emit);
@@ -590,9 +520,7 @@ pub async fn run<P, F>(
             }
         }
     }
-    emit(RunEvent::Failed(
-        "the exec stream ended without an exit code".into(),
-    ));
+    emit(RunEvent::Failed("the exec stream ended without an exit code".into()));
 }
 
 async fn wait_until_reachable<P: Provider + ?Sized>(p: &P, id: &str) -> Result<()> {
@@ -602,18 +530,12 @@ async fn wait_until_reachable<P: Provider + ?Sized>(p: &P, id: &str) -> Result<(
         match m.status {
             // exec wakes standby and hibernated boxes on its own.
             s if s.is_reachable() => return Ok(()),
-            MachineStatus::Stopped => {
-                return Err(Error::Provider(
-                    "the box is stopped; start it and run the preset again".into(),
-                ))
-            }
+            MachineStatus::Stopped => return Err(Error::Provider("the box is stopped; start it and run the preset again".into())),
             MachineStatus::Failed => return Err(Error::Provider("the box failed to boot".into())),
             _ => {}
         }
         if Instant::now() >= end {
-            return Err(Error::Provider(
-                "the box did not finish booting within 3 minutes".into(),
-            ));
+            return Err(Error::Provider("the box did not finish booting within 3 minutes".into()));
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
@@ -674,10 +596,7 @@ mod tests {
     #[test]
     fn script_quotes_values_and_marks_steps() {
         let s = runner_script(
-            &[
-                "git clone https://example.com/r.git\ncd r".into(),
-                "docker compose up -d".into(),
-            ],
+            &["git clone https://example.com/r.git\ncd r".into(), "docker compose up -d".into()],
             &[("TOKEN".into(), "it's $secret\nline2".into())],
             "n1",
         );
@@ -693,24 +612,13 @@ mod tests {
     #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
     fn script_runs_in_bash() {
         // Only where bash exists; proves quoting and step markers end to end.
-        if std::process::Command::new("bash")
-            .arg("-c")
-            .arg("true")
-            .status()
-            .is_err()
-        {
+        if std::process::Command::new("bash").arg("-c").arg("true").status().is_err() {
             return;
         }
-        let home =
-            std::env::temp_dir().join(format!("stowbox-prov-{}", uuid::Uuid::new_v4().simple()));
+        let home = std::env::temp_dir().join(format!("stowbox-prov-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&home).unwrap();
         let script = runner_script(
-            &[
-                "mkdir -p work && cd work".into(),
-                "echo \"[$PWD] $TOKEN\"".into(),
-                "exit 3".into(),
-                "echo never".into(),
-            ],
+            &["mkdir -p work && cd work".into(), "echo \"[$PWD] $TOKEN\"".into(), "exit 3".into(), "echo never".into()],
             &[("TOKEN".into(), "a'b $c\"d".into())],
             "t",
         );
@@ -750,11 +658,7 @@ mod tests {
         let env = std::fs::read_to_string(home.join(ENV_FILE)).unwrap();
         assert_eq!(env, "export TOKEN='a'\\''b $c\"d'\n");
         let profile = std::fs::read_to_string(home.join(".profile")).unwrap();
-        assert_eq!(
-            profile.matches("Added by Stowbox").count(),
-            1,
-            "the rc hook is added once"
-        );
+        assert_eq!(profile.matches("Added by Stowbox").count(), 1, "the rc hook is added once");
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -789,10 +693,7 @@ mod tests {
     #[test]
     fn preset_variables_keep_defaults_by_name() {
         let cmds = vec!["git checkout {{branch}} {{repo}}".to_string()];
-        let defaults = vec![
-            Variable { name: "repo".into(), default: "r".into() },
-            Variable { name: "gone".into(), default: "x".into() },
-        ];
+        let defaults = vec![Variable { name: "repo".into(), default: "r".into() }, Variable { name: "gone".into(), default: "x".into() }];
         assert_eq!(
             preset_variables(&cmds, &defaults),
             vec![Variable { name: "branch".into(), default: String::new() }, Variable { name: "repo".into(), default: "r".into() }]
@@ -802,7 +703,10 @@ mod tests {
     #[test]
     fn substitute_single_quotes_values() {
         let v = vec![VariableValue { name: "b".into(), value: "it's $(rm -rf ~); `x`".into() }];
-        assert_eq!(substitute("git checkout {{b}} && echo {{ b }}!", &v).unwrap(), r"git checkout 'it'\''s $(rm -rf ~); `x`' && echo 'it'\''s $(rm -rf ~); `x`'!");
+        assert_eq!(
+            substitute("git checkout {{b}} && echo {{ b }}!", &v).unwrap(),
+            r"git checkout 'it'\''s $(rm -rf ~); `x`' && echo 'it'\''s $(rm -rf ~); `x`'!"
+        );
         assert_eq!(substitute("echo '{{.Name}}' {{}}", &[]).unwrap(), "echo '{{.Name}}' {{}}");
         let e = substitute("echo {{missing}}", &v).unwrap_err().to_string();
         assert!(e.contains("{{missing}} has no value"), "{e}");
@@ -860,30 +764,15 @@ mod tests {
 
     #[test]
     fn markers_need_the_nonce() {
-        assert_eq!(
-            parse_line("::stowbox-abc:: exit 2 127", "abc"),
-            Line::Exit(2, 127)
-        );
-        assert_eq!(
-            parse_line("::stowbox-xyz:: exit 2 127", "abc"),
-            Line::Output("::stowbox-xyz:: exit 2 127".into())
-        );
-        assert_eq!(
-            parse_line("::stowbox-abc:: exit x", "abc"),
-            Line::Output("::stowbox-abc:: exit x".into())
-        );
+        assert_eq!(parse_line("::stowbox-abc:: exit 2 127", "abc"), Line::Exit(2, 127));
+        assert_eq!(parse_line("::stowbox-xyz:: exit 2 127", "abc"), Line::Output("::stowbox-xyz:: exit 2 127".into()));
+        assert_eq!(parse_line("::stowbox-abc:: exit x", "abc"), Line::Output("::stowbox-abc:: exit x".into()));
     }
 
     #[test]
     fn redact_masks_long_values_only() {
-        let s = vec![
-            ("TOKEN".to_string(), "ghp_abcdef".to_string()),
-            ("N".to_string(), "1".to_string()),
-        ];
-        assert_eq!(
-            redact("push with ghp_abcdef to 1 remote", &s),
-            "push with [TOKEN] to 1 remote"
-        );
+        let s = vec![("TOKEN".to_string(), "ghp_abcdef".to_string()), ("N".to_string(), "1".to_string())];
+        assert_eq!(redact("push with ghp_abcdef to 1 remote", &s), "push with [TOKEN] to 1 remote");
     }
 
     #[test]
@@ -960,10 +849,7 @@ mod tests {
         assert_eq!(r.status, RunStatus::Failed);
         assert!(r.secrets_written);
         assert_eq!(r.error.as_deref(), Some("step 2 exited with code 2"));
-        assert_eq!(
-            r.steps.iter().map(|s| s.state).collect::<Vec<_>>(),
-            vec![StepState::Ok, StepState::Failed, StepState::Skipped]
-        );
+        assert_eq!(r.steps.iter().map(|s| s.state).collect::<Vec<_>>(), vec![StepState::Ok, StepState::Failed, StepState::Skipped]);
         assert_eq!(r.finished_at, Some(99));
     }
 
@@ -990,7 +876,9 @@ mod tests {
         r.apply(&RunEvent::Cancelled, 7);
         let ended = r.clone();
         // What the runner reports as it is torn down after the cancel.
-        for ev in [RunEvent::StepExit(0, 143), RunEvent::StepStart(1), RunEvent::Output("late\n".into()), RunEvent::Failed("stopped".into()), RunEvent::Finished(143)] {
+        for ev in
+            [RunEvent::StepExit(0, 143), RunEvent::StepStart(1), RunEvent::Output("late\n".into()), RunEvent::Failed("stopped".into()), RunEvent::Finished(143)]
+        {
             r.apply(&ev, 50);
         }
         assert_eq!(r.status, RunStatus::Cancelled);
@@ -1014,10 +902,7 @@ mod tests {
         run(&p, "vm1", &commands, &secrets, |ev| events.push(ev)).await;
 
         let mut r = sample_run();
-        r.steps = commands
-            .iter()
-            .map(|c| StepRun { command: c.clone(), state: StepState::Pending, exit_code: None })
-            .collect();
+        r.steps = commands.iter().map(|c| StepRun { command: c.clone(), state: StepState::Pending, exit_code: None }).collect();
         for ev in &events {
             r.apply(ev, 1);
         }
@@ -1030,5 +915,4 @@ mod tests {
         assert!(!r.output.contains("never"));
         let _ = std::fs::remove_dir_all(&home);
     }
-
 }

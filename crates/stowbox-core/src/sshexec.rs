@@ -454,7 +454,6 @@ impl Marker {
         *self = Marker::Done;
         (id, Some(rest))
     }
-
 }
 
 /// Best effort: TERM, a second for it to land, then KILL.
@@ -509,7 +508,13 @@ mod tests {
 
     #[test]
     fn commands_quote_everything_and_only_detach_without_a_tty() {
-        let spec = ExecSpec { script: "echo 'hi' | wc -c".into(), tty: false, cols: 0, rows: 0, env: vec![("A".into(), "x y".into()), ("bad key".into(), "z".into())] };
+        let spec = ExecSpec {
+            script: "echo 'hi' | wc -c".into(),
+            tty: false,
+            cols: 0,
+            rows: 0,
+            env: vec![("A".into(), "x y".into()), ("bad key".into(), "z".into())],
+        };
         let c = remote_command(&spec);
         assert!(c.starts_with("setsid -w bash -c "));
         assert!(c.contains("export A="));
@@ -525,7 +530,8 @@ mod tests {
         if !crate::testing::has_bash() || std::process::Command::new("setsid").arg("--version").output().is_err() {
             return;
         }
-        let spec = ExecSpec { script: "read x; echo \"got $x $A\"; echo oops >&2; exit 3".into(), env: vec![("A".into(), "it's x y".into())], ..Default::default() };
+        let spec =
+            ExecSpec { script: "read x; echo \"got $x $A\"; echo oops >&2; exit 3".into(), env: vec![("A".into(), "it's x y".into())], ..Default::default() };
         let mut child = std::process::Command::new("bash")
             .arg("-c")
             .arg(remote_command(&spec))
@@ -609,7 +615,15 @@ mod tests {
             }
         }
         let host_key = parse_host_key(&std::fs::read_to_string(host.with_extension("pub")).unwrap()).unwrap();
-        let ep = Endpoint { host: "127.0.0.1".into(), port, user: user.clone(), login: Login::Key, check: HostCheck::Pinned(host_key), dial: Dial::Tcp, provider: "test" };
+        let ep = Endpoint {
+            host: "127.0.0.1".into(),
+            port,
+            user: user.clone(),
+            login: Login::Key,
+            check: HostCheck::Pinned(host_key),
+            dial: Dial::Tcp,
+            provider: "test",
+        };
         let auth = Local { ep, calls: AtomicUsize::new(0) };
 
         async fn collect(mut h: ExecHandle) -> (String, String, Option<i32>) {
@@ -626,7 +640,11 @@ mod tests {
         }
 
         // stdin in, stdout and stderr apart, the exit code back, env applied.
-        let spec = ExecSpec { script: "read x; echo \"got $x $GREETING\"; echo oops >&2; exit 7".into(), env: vec![("GREETING".into(), "it's me".into())], ..Default::default() };
+        let spec = ExecSpec {
+            script: "read x; echo \"got $x $GREETING\"; echo oops >&2; exit 7".into(),
+            env: vec![("GREETING".into(), "it's me".into())],
+            ..Default::default()
+        };
         let h = pool.exec(&auth, "bx_1", spec).await.unwrap();
         h.input.send(ExecInput::Data(b"ping\n".to_vec())).await.unwrap();
         h.input.send(ExecInput::Close).await.unwrap();

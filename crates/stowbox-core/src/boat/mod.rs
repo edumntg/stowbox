@@ -345,7 +345,10 @@ mod tests {
                         }
                         head.push_str(&line);
                     }
-                    let len = head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                    let len = head
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap()))
+                        .unwrap_or(0);
                     let mut body = vec![0; len];
                     reader.read_exact(&mut body).unwrap();
                     seen.push((head, body));
@@ -391,9 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_upload_says_why_without_the_url() {
-        let (base, server) = serve(vec![
-            json_reply("200 OK", &format!(r#"{{"url":"http://{}/upload/abc?sig=s3cr3t"}}"#, "127.0.0.1:1")),
-        ]);
+        let (base, server) = serve(vec![json_reply("200 OK", &format!(r#"{{"url":"http://{}/upload/abc?sig=s3cr3t"}}"#, "127.0.0.1:1"))]);
         let api = Api::new(&base, "boat_key".into()).unwrap();
         // Port 1 refuses the connection: a network error, which must not name the URL.
         let e = upload_signed(&api, "bx_1", "/tmp/f", b"x".to_vec()).await.unwrap_err().to_string();

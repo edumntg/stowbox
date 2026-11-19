@@ -58,12 +58,7 @@ pub async fn sample<P: Provider + ?Sized>(p: &P, id: &str) -> Result<Option<Mach
     if m.status != MachineStatus::Running {
         return Ok(None);
     }
-    let mut h = p
-        .exec(
-            &m.id,
-            ExecSpec { script: SCRIPT.into(), tty: false, cols: 0, rows: 0, env: vec![("LC_ALL".into(), "C".into())] },
-        )
-        .await?;
+    let mut h = p.exec(&m.id, ExecSpec { script: SCRIPT.into(), tty: false, cols: 0, rows: 0, env: vec![("LC_ALL".into(), "C".into())] }).await?;
     let _ = h.input.send(ExecInput::Close).await;
 
     let end = Instant::now() + DEADLINE;
@@ -86,10 +81,7 @@ pub async fn sample<P: Provider + ?Sized>(p: &P, id: &str) -> Result<Option<Mach
             Err(_) => return Err(Error::Provider("metrics sample timed out".into())),
         }
     }
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
     parse(&String::from_utf8_lossy(&stdout), now_ms).map(Some)
 }
 
@@ -164,8 +156,7 @@ pub fn parse(text: &str, sampled_at_ms: i64) -> Result<MachineMetrics> {
     }
 
     let (mem_total_bytes, mem_used_bytes) = mem.ok_or_else(|| Error::Provider("metrics: no memory line in the sample".into()))?;
-    let (disk_total_bytes, disk_used_bytes, disk_avail_bytes) =
-        disk.ok_or_else(|| Error::Provider("metrics: no disk line in the sample".into()))?;
+    let (disk_total_bytes, disk_used_bytes, disk_avail_bytes) = disk.ok_or_else(|| Error::Provider("metrics: no disk line in the sample".into()))?;
 
     let cpu_percent = match (stats.first(), stats.get(1)) {
         (Some(&(b1, a1)), Some(&(b2, a2))) if a2 > a1 => (b2.saturating_sub(b1)) as f64 * 100.0 / (a2 - a1) as f64,

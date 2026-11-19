@@ -73,11 +73,7 @@ pub struct BoxdConfig {
 
 impl Default for BoxdConfig {
     fn default() -> Self {
-        Self {
-            endpoint: DEFAULT_ENDPOINT.into(),
-            auth_url: DEFAULT_AUTH_URL.into(),
-            console_url: DEFAULT_CONSOLE_URL.into(),
-        }
+        Self { endpoint: DEFAULT_ENDPOINT.into(), auth_url: DEFAULT_AUTH_URL.into(), console_url: DEFAULT_CONSOLE_URL.into() }
     }
 }
 
@@ -104,10 +100,7 @@ impl Boxd {
     /// and binds to the runtime it is created in.
     pub fn new(api_key: String, config: BoxdConfig) -> Result<Self> {
         let tls = ClientTlsConfig::new().with_webpki_roots();
-        let channel = Channel::from_shared(config.endpoint.clone())
-            .map_err(|e| Error::Network(e.to_string()))?
-            .tls_config(tls)?
-            .connect_lazy();
+        let channel = Channel::from_shared(config.endpoint.clone()).map_err(|e| Error::Network(e.to_string()))?.tls_config(tls)?.connect_lazy();
         let auth = Arc::new(TokenExchange::new(api_key, config.auth_url.clone()));
         Ok(Self { channel, auth, config })
     }
@@ -118,9 +111,7 @@ impl Boxd {
 
     async fn api(&self) -> Result<Api> {
         let token = self.auth.token().await?;
-        let value: MetadataValue<Ascii> = format!("Bearer {token}")
-            .parse()
-            .map_err(|_| Error::Auth("token is not valid header text".into()))?;
+        let value: MetadataValue<Ascii> = format!("Bearer {token}").parse().map_err(|_| Error::Auth("token is not valid header text".into()))?;
         Ok(BoxdApiClient::with_interceptor(self.channel.clone(), AuthInterceptor(value)))
     }
 
@@ -145,22 +136,12 @@ impl Provider for Boxd {
     }
 
     async fn list_machines(&self) -> Result<Vec<Machine>> {
-        let r = self
-            .api()
-            .await?
-            .list_vms(pb::ListVmsRequest { org: String::new(), all_contexts: true })
-            .await?
-            .into_inner();
+        let r = self.api().await?.list_vms(pb::ListVmsRequest { org: String::new(), all_contexts: true }).await?.into_inner();
         Ok(r.vms.into_iter().map(|vm| convert::machine(vm, &self.desktop_url_fn())).collect())
     }
 
     async fn get_machine(&self, id_or_name: &str) -> Result<Machine> {
-        let r = self
-            .api()
-            .await?
-            .get_vm(pb::GetVmRequest { vm_id: id_or_name.into() })
-            .await?
-            .into_inner();
+        let r = self.api().await?.get_vm(pb::GetVmRequest { vm_id: id_or_name.into() }).await?.into_inner();
         Ok(convert::machine(r, &self.desktop_url_fn()))
     }
 
@@ -171,11 +152,7 @@ impl Provider for Boxd {
             None => api.suggest_vm_name(pb::SuggestVmNameRequest {}).await?.into_inner().name,
         };
         let config = if spec.vcpu.is_some() || spec.memory_bytes.is_some() {
-            Some(pb::VmConfig {
-                vcpu: spec.vcpu.unwrap_or(0),
-                memory_bytes: spec.memory_bytes.unwrap_or(0),
-                ..Default::default()
-            })
+            Some(pb::VmConfig { vcpu: spec.vcpu.unwrap_or(0), memory_bytes: spec.memory_bytes.unwrap_or(0), ..Default::default() })
         } else {
             None
         };
@@ -198,10 +175,7 @@ impl Provider for Boxd {
             Some(n) => n,
             None => api.suggest_vm_name(pb::SuggestVmNameRequest {}).await?.into_inner().name,
         };
-        let forked = api
-            .fork_vm(pb::ForkVmRequest { source_vm_id: source.into(), name, ..Default::default() })
-            .await?
-            .into_inner();
+        let forked = api.fork_vm(pb::ForkVmRequest { source_vm_id: source.into(), name, ..Default::default() }).await?.into_inner();
         self.get_machine(&forked.vm_id).await
     }
 
@@ -238,24 +212,12 @@ impl Provider for Boxd {
     }
 
     async fn set_auto_hibernate(&self, id: &str, secs: u32) -> Result<()> {
-        self.api()
-            .await?
-            .set_auto_hibernate_timeout(pb::SetAutoHibernateTimeoutRequest {
-                vm_id: id.into(),
-                timeout_secs: secs,
-            })
-            .await?;
+        self.api().await?.set_auto_hibernate_timeout(pb::SetAutoHibernateTimeoutRequest { vm_id: id.into(), timeout_secs: secs }).await?;
         Ok(())
     }
 
     async fn set_auto_suspend(&self, id: &str, secs: u32) -> Result<()> {
-        self.api()
-            .await?
-            .set_auto_suspend_timeout(pb::SetAutoSuspendTimeoutRequest {
-                vm_id: id.into(),
-                timeout_secs: secs,
-            })
-            .await?;
+        self.api().await?.set_auto_suspend_timeout(pb::SetAutoSuspendTimeoutRequest { vm_id: id.into(), timeout_secs: secs }).await?;
         Ok(())
     }
 
@@ -295,12 +257,7 @@ impl Provider for Boxd {
             while let Some(msg) = in_rx.recv().await {
                 let chunk = match msg {
                     ExecInput::Data(data) => pb::ExecChunk { data, stdin: true, ..Default::default() },
-                    ExecInput::Resize { cols, rows } => pb::ExecChunk {
-                        window_change: true,
-                        cols: cols as u32,
-                        rows: rows as u32,
-                        ..Default::default()
-                    },
+                    ExecInput::Resize { cols, rows } => pb::ExecChunk { window_change: true, cols: cols as u32, rows: rows as u32, ..Default::default() },
                     ExecInput::Close => break,
                 };
                 if wire_tx.send(chunk).await.is_err() {
@@ -353,40 +310,22 @@ impl Provider for Boxd {
     }
 
     async fn machine_usage(&self, id: &str) -> Result<Usage> {
-        let r = self
-            .api()
-            .await?
-            .get_vm_usage(pb::GetVmUsageRequest { vm_id: id.into(), ..Default::default() })
-            .await?
-            .into_inner();
+        let r = self.api().await?.get_vm_usage(pb::GetVmUsageRequest { vm_id: id.into(), ..Default::default() }).await?.into_inner();
         Ok(convert::usage(r))
     }
 
     async fn org_usage(&self, org: &str, since: i64, until: i64) -> Result<OrgUsage> {
-        let r = self
-            .api()
-            .await?
-            .get_org_usage(pb::GetOrgUsageRequest { org: org.into(), since, until })
-            .await?
-            .into_inner();
+        let r = self.api().await?.get_org_usage(pb::GetOrgUsageRequest { org: org.into(), since, until }).await?.into_inner();
         Ok(convert::org_usage(r))
     }
 
     async fn org_billing(&self, org: &str) -> Result<OrgBilling> {
-        let r = self
-            .api()
-            .await?
-            .get_org_billing(pb::GetOrgBillingRequest { org: org.into() })
-            .await?
-            .into_inner();
+        let r = self.api().await?.get_org_billing(pb::GetOrgBillingRequest { org: org.into() }).await?.into_inner();
         Ok(convert::org_billing(r))
     }
 
     async fn link_ssh_key(&self, pubkey: &str, device_id: &str, label: &str) -> Result<()> {
-        self.api()
-            .await?
-            .link_ssh_key(pb::LinkSshKeyRequest { pubkey: pubkey.into(), device_id: device_id.into(), label: label.into() })
-            .await?;
+        self.api().await?.link_ssh_key(pb::LinkSshKeyRequest { pubkey: pubkey.into(), device_id: device_id.into(), label: label.into() }).await?;
         Ok(())
     }
 
@@ -404,12 +343,7 @@ impl Provider for Boxd {
     async fn ssh_host_key(&self) -> Result<Option<String>> {
         // Every machine's SSH ends at the proxy, which presents one key; it
         // only travels with a machine listing.
-        let r = self
-            .api()
-            .await?
-            .list_vms(pb::ListVmsRequest { org: String::new(), all_contexts: false })
-            .await?
-            .into_inner();
+        let r = self.api().await?.list_vms(pb::ListVmsRequest { org: String::new(), all_contexts: false }).await?.into_inner();
         Ok(Some(r.ssh_host_key).filter(|k| !k.trim().is_empty()))
     }
 
@@ -465,16 +399,8 @@ impl Provider for Boxd {
     async fn rates(&self) -> Result<crate::cost::RateCard> {
         // The rate card only travels with a usage response. Ask for a window
         // that is cheap to compute: the last hour of the default org.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let r = self
-            .api()
-            .await?
-            .get_org_usage(pb::GetOrgUsageRequest { org: String::new(), since: now - 3600, until: 0 })
-            .await?
-            .into_inner();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let r = self.api().await?.get_org_usage(pb::GetOrgUsageRequest { org: String::new(), since: now - 3600, until: 0 }).await?.into_inner();
         Ok(crate::cost::RateCard::resources(&r.currency, convert::rates(r.rates)))
     }
 }
