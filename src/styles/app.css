@@ -1332,6 +1332,37 @@ select.input {
   font-size: var(--text-2xs);
 }
 
+.choice-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.provider-mark,
+.provider-mono {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+
+.provider-mark {
+  background: currentColor;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
+
+.provider-mono {
+  border: 1px solid currentColor;
+  font-size: 7px;
+  font-weight: 600;
+  line-height: 1;
+}
+
 .check {
   display: flex;
   gap: 8px;
@@ -2717,6 +2748,10 @@ select.input {
   text-decoration: underline;
   text-decoration-color: var(--ring);
   text-underline-offset: 2px;
+}
+
+.palette-label > :is(.provider-mark, .provider-mono) {
+  margin-right: 6px;
 }
 
 .palette-label mark {

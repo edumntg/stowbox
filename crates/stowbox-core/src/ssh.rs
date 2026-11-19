@@ -31,14 +31,13 @@ pub const USER: &str = "boxd";
 /// That user's home in the box, where a relative directory is resolved.
 pub const REMOTE_HOME: &str = "/home/boxd";
 
-const BLOCK_NOTE: &str = "# Managed by Stowbox: one Host per box opened in an editor. Edits between\n# these markers are replaced; everything outside them is left alone.";
+const BLOCK_NOTE: &str =
+    "# Managed by Stowbox: one Host per box opened in an editor. Edits between\n# these markers are replaced; everything outside them is left alone.";
 
 /// The `Host` alias Stowbox writes for a box.
 pub fn alias(machine_name: &str) -> String {
-    let clean: String = machine_name
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' { c.to_ascii_lowercase() } else { '-' })
-        .collect();
+    let clean: String =
+        machine_name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' { c.to_ascii_lowercase() } else { '-' }).collect();
     format!("stowbox-{clean}")
 }
 
@@ -222,11 +221,7 @@ pub fn merge(config: &str, alias: &str, stanza: &str) -> String {
 
 /// Stowbox's known_hosts with `key` recorded for `alias` (other lines kept).
 pub fn merge_known_hosts(existing: &str, alias: &str, key: &str) -> String {
-    let mut out: String = existing
-        .lines()
-        .filter(|l| !l.trim().is_empty() && l.split_whitespace().next() != Some(alias))
-        .map(|l| format!("{l}\n"))
-        .collect();
+    let mut out: String = existing.lines().filter(|l| !l.trim().is_empty() && l.split_whitespace().next() != Some(alias)).map(|l| format!("{l}\n")).collect();
     out.push_str(&format!("{alias} {}\n", key.trim()));
     out
 }
@@ -245,7 +240,11 @@ pub fn remote_path(dir: Option<&str>) -> String {
         format!("{REMOTE_HOME}/{d}")
     };
     let trimmed = p.trim_end_matches('/');
-    if trimmed.is_empty() { "/".into() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "/".into()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,7 +332,13 @@ pub fn plan(files: &Files, m: &Machine) -> Result<Plan> {
                 Some(_) => "update",
             }
         }
-        Err(_) => if hosts(&config_text).contains(&alias) { "update" } else { "add" },
+        Err(_) => {
+            if hosts(&config_text).contains(&alias) {
+                "update"
+            } else {
+                "add"
+            }
+        }
     };
     let direct = target.as_ref().map(Target::direct_command).unwrap_or_default();
     Ok(Plan {
@@ -466,7 +471,11 @@ pub fn ensure_key(files: &Files, keygen: &Path, comment: &str) -> Result<(String
         }
         let out = quiet_command(keygen).arg("-y").arg("-f").arg(&key).output().map_err(missing)?;
         if !out.status.success() {
-            return Err(Error::Provider(format!("{} exists but its public key could not be read: {}", files.show("stowbox/id_ed25519"), String::from_utf8_lossy(&out.stderr).trim())));
+            return Err(Error::Provider(format!(
+                "{} exists but its public key could not be read: {}",
+                files.show("stowbox/id_ed25519"),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
         }
         let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
         write_atomic(&pubkey, &format!("{line}\n"))?;
@@ -658,7 +667,8 @@ mod tests {
             String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n")
         };
         let ga = resolve("stowbox-api");
-        for want in ["hostname api.boxd.sh\n", "port 21843\n", "user boxd\n", "identitiesonly yes\n", "hostkeyalias stowbox-api\n", "serveraliveinterval 30\n"] {
+        for want in ["hostname api.boxd.sh\n", "port 21843\n", "user boxd\n", "identitiesonly yes\n", "hostkeyalias stowbox-api\n", "serveraliveinterval 30\n"]
+        {
             assert!(ga.contains(want), "missing {want:?} in\n{ga}");
         }
         assert!(ga.lines().any(|l| l.starts_with("identityfile ") && l.ends_with(".ssh/stowbox/id_ed25519")), "{ga}");
@@ -739,7 +749,10 @@ mod tests {
         assert_eq!(remote_path(Some("app")), "/home/boxd/app");
         assert_eq!(remote_path(Some("/srv/api-wt/fix-login")), "/srv/api-wt/fix-login");
         assert_eq!(remote_path(Some("/")), "/");
-        assert_eq!(editor_url(Editor::Vscode, "stowbox-api", "/home/boxd/my app"), "vscode://vscode-remote/ssh-remote+stowbox-api/home/boxd/my%20app?windowId=_blank");
+        assert_eq!(
+            editor_url(Editor::Vscode, "stowbox-api", "/home/boxd/my app"),
+            "vscode://vscode-remote/ssh-remote+stowbox-api/home/boxd/my%20app?windowId=_blank"
+        );
         assert_eq!(editor_url(Editor::Cursor, "stowbox-api", "/home/boxd"), "cursor://vscode-remote/ssh-remote+stowbox-api/home/boxd?windowId=_blank");
     }
 

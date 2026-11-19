@@ -18,7 +18,7 @@ use crate::boxd::shell_quote;
 use crate::types::{ExecHandle, ExecInput, ExecOutput, ExecSpec};
 use crate::{Error, Result};
 use russh::client;
-use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey};
+use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::ChannelMsg;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -130,7 +130,12 @@ struct Checker {
 impl client::Handler for Checker {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, key: &PublicKey) -> std::result::Result<bool, Self::Error> {
+    async fn check_server_key(&mut self, key: &PublicKeyOrCertificate) -> std::result::Result<bool, Self::Error> {
+        // No provider announces a certificate authority, so nothing vouches
+        // for a certificate; it must not be pinned or remembered as a key.
+        let PublicKeyOrCertificate::PublicKey { key, .. } = key else {
+            return Ok(self.check == HostCheck::Edge);
+        };
         Ok(match &self.check {
             HostCheck::Pinned(expected) => key.key_data() == expected.key_data(),
             HostCheck::Remembered(path) => remember_host_key(path, &self.at, key),
@@ -454,7 +459,6 @@ impl Marker {
         *self = Marker::Done;
         (id, Some(rest))
     }
-
 }
 
 /// Best effort: TERM, a second for it to land, then KILL.
@@ -490,6 +494,30 @@ fn signal_number(s: &russh::Sig) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use russh::client::Handler;
+
+    const HOST_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIBJTU59j3HRwRnqvcgkRZcLUm4HubVI5GWQ6LxuS8O8";
+    /// `HOST_KEY` signed by a throwaway certificate authority.
+    const HOST_CERT: &str = "ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIF1sYftjGlln+VgcRvZsKMUiaTDJYKZ2DlhWwYvLIcWjAAAAIIBJTU59j3HRwRnqvcgkRZcLUm4HubVI5GWQ6LxuS8O8AAAAAAAAAAAAAAACAAAAB2ZpeHR1cmUAAAAPAAAAC2JveC5leGFtcGxlAAAAAAAAAAD//////////wAAAAAAAAAAAAAAAAAAADMAAAALc3NoLWVkMjU1MTkAAAAgPqqyDemW/z0Qek3OWIw3yl4n35t1bx79cIN4gPoHOecAAABTAAAAC3NzaC1lZDI1NTE5AAAAQIFTld30CS7LMwA+MTEDlGtPrr0c6vw3a3HGZn2lqyw0mcrI3Nsfj4p+Y9k082lI9OFRycPjn/GIDt4hRQVnSAk= host";
+
+    async fn accepts(check: HostCheck, key: PublicKeyOrCertificate) -> bool {
+        Checker { check, at: "box.example:22".into() }.check_server_key(&key).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_certificate_is_never_taken_for_the_key_inside_it() {
+        let key = parse_host_key(HOST_KEY).unwrap();
+        let cert = || PublicKeyOrCertificate::from(russh::keys::Certificate::from_openssh(HOST_CERT).unwrap());
+        assert!(accepts(HostCheck::Pinned(key.clone()), key.clone().into()).await);
+        assert!(!accepts(HostCheck::Pinned(key), cert()).await);
+
+        let dir = crate::testing::temp_dir("stowbox-hostcert");
+        let known = dir.join("known_hosts");
+        assert!(!accepts(HostCheck::Remembered(known.clone()), cert()).await);
+        assert!(!known.exists(), "a refused certificate must not be remembered");
+        assert!(accepts(HostCheck::Edge, cert()).await);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn the_marker_yields_the_group_and_hides_itself() {
@@ -509,7 +537,13 @@ mod tests {
 
     #[test]
     fn commands_quote_everything_and_only_detach_without_a_tty() {
-        let spec = ExecSpec { script: "echo 'hi' | wc -c".into(), tty: false, cols: 0, rows: 0, env: vec![("A".into(), "x y".into()), ("bad key".into(), "z".into())] };
+        let spec = ExecSpec {
+            script: "echo 'hi' | wc -c".into(),
+            tty: false,
+            cols: 0,
+            rows: 0,
+            env: vec![("A".into(), "x y".into()), ("bad key".into(), "z".into())],
+        };
         let c = remote_command(&spec);
         assert!(c.starts_with("setsid -w bash -c "));
         assert!(c.contains("export A="));
@@ -525,7 +559,8 @@ mod tests {
         if !crate::testing::has_bash() || std::process::Command::new("setsid").arg("--version").output().is_err() {
             return;
         }
-        let spec = ExecSpec { script: "read x; echo \"got $x $A\"; echo oops >&2; exit 3".into(), env: vec![("A".into(), "it's x y".into())], ..Default::default() };
+        let spec =
+            ExecSpec { script: "read x; echo \"got $x $A\"; echo oops >&2; exit 3".into(), env: vec![("A".into(), "it's x y".into())], ..Default::default() };
         let mut child = std::process::Command::new("bash")
             .arg("-c")
             .arg(remote_command(&spec))
@@ -609,7 +644,15 @@ mod tests {
             }
         }
         let host_key = parse_host_key(&std::fs::read_to_string(host.with_extension("pub")).unwrap()).unwrap();
-        let ep = Endpoint { host: "127.0.0.1".into(), port, user: user.clone(), login: Login::Key, check: HostCheck::Pinned(host_key), dial: Dial::Tcp, provider: "test" };
+        let ep = Endpoint {
+            host: "127.0.0.1".into(),
+            port,
+            user: user.clone(),
+            login: Login::Key,
+            check: HostCheck::Pinned(host_key),
+            dial: Dial::Tcp,
+            provider: "test",
+        };
         let auth = Local { ep, calls: AtomicUsize::new(0) };
 
         async fn collect(mut h: ExecHandle) -> (String, String, Option<i32>) {
@@ -626,7 +669,11 @@ mod tests {
         }
 
         // stdin in, stdout and stderr apart, the exit code back, env applied.
-        let spec = ExecSpec { script: "read x; echo \"got $x $GREETING\"; echo oops >&2; exit 7".into(), env: vec![("GREETING".into(), "it's me".into())], ..Default::default() };
+        let spec = ExecSpec {
+            script: "read x; echo \"got $x $GREETING\"; echo oops >&2; exit 7".into(),
+            env: vec![("GREETING".into(), "it's me".into())],
+            ..Default::default()
+        };
         let h = pool.exec(&auth, "bx_1", spec).await.unwrap();
         h.input.send(ExecInput::Data(b"ping\n".to_vec())).await.unwrap();
         h.input.send(ExecInput::Close).await.unwrap();

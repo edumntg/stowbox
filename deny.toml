@@ -7,6 +7,15 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+# Unmaintained crates that no upgrade avoids yet. Each is pulled in by a
+# dependency Stowbox needs, and none has a known vulnerability.
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono: pulled in by russh-util, through russh" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: build-time only, pulled in by glib-macros, through Tauri's GTK stack on Linux" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: pulled in by zbus, through tauri-plugin-notification and tauri-plugin-opener" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: pulled in by zbus, through tauri-plugin-notification and tauri-plugin-opener" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: pulled in by zvariant, through zbus" },
+]
 
 [licenses]
 version = 2

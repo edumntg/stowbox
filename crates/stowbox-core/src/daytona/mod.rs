@@ -15,7 +15,7 @@
 pub mod api;
 pub mod convert;
 
-use crate::capabilities::Capabilities;
+use crate::capabilities::{Capabilities, SizeOption};
 use crate::cost::RateCard;
 use crate::ports::HttpsRoute;
 use crate::provider::Provider;
@@ -37,6 +37,10 @@ pub const DEFAULT_CONSOLE_URL: &str = "https://app.daytona.io/dashboard";
 /// memory, $0.000108 a GiB of disk (the first 5 GiB are free, which the
 /// estimate does not take off).
 const RATES: Rates = Rates { vcpu_hour_micro: 50_400, ram_gib_hour_micro: 16_200, disk_gib_hour_micro: 108 };
+/// Daytona's default snapshots: (name, vCPU, GiB of memory, GiB of disk).
+/// A sandbox's size comes from its snapshot; the API refuses `cpu` and
+/// `memory` next to one, and a create without a snapshot uses the first.
+const SNAPSHOTS: [(&str, u32, u64, u64); 3] = [("daytona-small", 1, 1, 3), ("daytona-medium", 2, 4, 8), ("daytona-large", 4, 8, 10)];
 /// How often an open exec tells Daytona the sandbox is in use.
 const ACTIVITY_EVERY: Duration = Duration::from_secs(4 * 60);
 /// The auto-stop interval of a sandbox made without one.
@@ -46,12 +50,26 @@ const TOKEN_MINUTES: u32 = 1440;
 /// Signed preview links last this long.
 const LINK_SECS: u32 = 24 * 3600;
 
+const KEY_HINT: &str = "Make one on the Daytona dashboard under Keys, with permission to write and delete sandboxes. Keys are fenced to one organization.";
+
+pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind {
+    id: "daytona",
+    capabilities,
+    connect: |credentials, context| Ok(Arc::new(Daytona::new(DaytonaConfig::new(context.ssh_file("daytona_known_hosts")), credentials.api_key()?)?)),
+};
+
 pub fn capabilities() -> Capabilities {
     use PowerAction::*;
     Capabilities {
+        new_box_blurb: "A Daytona sandbox from the default image, up in about a second. Daytona stops it after a stretch with no activity, even with work running; Stowbox reports activity while a terminal or an agent is open.".into(),
+        free_sizes: Vec::new(),
+        default_size: SNAPSHOTS[0].0.into(),
+        default_disk_gib: 3,
+        ssh_hint: "daytona ssh {id}".into(),
+        credential_fields: vec![crate::capabilities::CredentialField::api_key(KEY_HINT)],
+        icon: "DT".into(),
         label: "daytona".into(),
         console_url: DEFAULT_CONSOLE_URL.into(),
-        key_hint: "Make one on the Daytona dashboard under Keys, with permission to write and delete sandboxes. Keys are fenced to one organization.".into(),
         key_prefixes: vec!["dtn_".into()],
         currency: "usd".into(),
         // Pause and fork exist only for VM-class sandboxes; the default
@@ -63,8 +81,18 @@ pub fn capabilities() -> Capabilities {
         auto_hibernate: false,
         auto_stop: false,
         idle_stop: true,
-        custom_size: true,
-        sizes: Vec::new(),
+        custom_size: false,
+        sizes: SNAPSHOTS
+            .iter()
+            .map(|&(id, vcpu, memory_gib, disk_gib)| SizeOption {
+                id: id.into(),
+                vcpu,
+                memory_bytes: memory_gib << 30,
+                disk_bytes: disk_gib << 30,
+                hourly_micro: i64::from(vcpu) * RATES.vcpu_hour_micro + memory_gib as i64 * RATES.ram_gib_hour_micro + disk_gib as i64 * RATES.disk_gib_hour_micro,
+                note: String::new(),
+            })
+            .collect(),
         https_links: true,
         https_named: false,
         https_list: false,
@@ -104,7 +132,12 @@ pub struct Daytona {
 
 impl Daytona {
     pub fn new(config: DaytonaConfig, api_key: String) -> Result<Self> {
-        Ok(Self { api: Arc::new(Api::new(&config.api, api_key)?), ssh: sshexec::Pool::without_key(), known_hosts: config.known_hosts, links: Default::default() })
+        Ok(Self {
+            api: Arc::new(Api::new(&config.api, api_key)?),
+            ssh: sshexec::Pool::without_key(),
+            known_hosts: config.known_hosts,
+            links: Default::default(),
+        })
     }
 
     async fn sandbox(&self, id: &str) -> Result<Value> {
@@ -138,9 +171,18 @@ impl Authorize for GatewayAuth<'_> {
             return Err(Error::Provider(format!("the sandbox is {}; start it first", if state.is_empty() { "not running" } else { state })));
         }
         let a = self.api.post(&format!("/sandbox/{}/ssh-access?expiresInMinutes={TOKEN_MINUTES}", seg(id)), None).await?;
-        let token = a.get("token").and_then(Value::as_str).filter(|t| !t.is_empty()).ok_or_else(|| Error::Provider("Daytona gave no SSH access token".into()))?;
+        let token =
+            a.get("token").and_then(Value::as_str).filter(|t| !t.is_empty()).ok_or_else(|| Error::Provider("Daytona gave no SSH access token".into()))?;
         let (host, port) = a.get("sshCommand").and_then(Value::as_str).and_then(convert::ssh_target).unwrap_or_else(|| ("ssh.app.daytona.io".into(), 22));
-        Ok(Endpoint { host, port, user: token.to_string(), login: Login::Token, check: HostCheck::Remembered(self.known_hosts.clone()), dial: Dial::Tcp, provider: "Daytona" })
+        Ok(Endpoint {
+            host,
+            port,
+            user: token.to_string(),
+            login: Login::Token,
+            check: HostCheck::Remembered(self.known_hosts.clone()),
+            dial: Dial::Tcp,
+            provider: "Daytona",
+        })
     }
 }
 
@@ -175,12 +217,11 @@ impl Provider for Daytona {
         if let Some(n) = spec.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
             body.insert("name".into(), json!(n));
         }
-        if let Some(c) = spec.vcpu.filter(|c| *c > 0) {
-            body.insert("cpu".into(), json!(c));
-        }
-        if let Some(m) = spec.memory_bytes.filter(|m| *m > 0) {
-            // Whole GiB, rounded up so a request is never smaller than asked.
-            body.insert("memory".into(), json!(m.div_ceil(1024 * 1024 * 1024)));
+        if let Some(size) = spec.size.filter(|s| !s.is_empty()) {
+            if !SNAPSHOTS.iter().any(|s| s.0 == size) {
+                return Err(Error::Provider(format!("Daytona has no size {size}")));
+            }
+            body.insert("snapshot".into(), json!(size));
         }
         // Daytona's own default is 15 minutes, short for an agent's turn.
         let idle = spec.auto_stop_secs.unwrap_or(DEFAULT_IDLE_STOP_SECS);
@@ -289,7 +330,14 @@ impl Provider for Daytona {
         let r = self.signed_link(id, port).await?;
         let url = r.get("url").and_then(Value::as_str).unwrap_or("").to_string();
         let domain = url.trim_start_matches("https://").split(['/', '?']).next().unwrap_or("").to_string();
-        let route = HttpsRoute { name: port.to_string(), domain, url: Some(url).filter(|u| !u.is_empty()), port: port as u32, port_mode: "locked".into(), is_default: false };
+        let route = HttpsRoute {
+            name: port.to_string(),
+            domain,
+            url: Some(url).filter(|u| !u.is_empty()),
+            port: port as u32,
+            port_mode: "locked".into(),
+            is_default: false,
+        };
         let mut links = self.links.lock().unwrap();
         let list = links.entry(id.to_string()).or_default();
         list.retain(|l| l.port != route.port);

@@ -740,8 +740,8 @@ export const actions = {
   },
 
   /** Connects `provider`; the others stay connected. */
-  async saveKey(provider: string, key: string) {
-    const account = await api.setApiKey(provider, key);
+  async saveCredentials(provider: string, values: Record<string, string>) {
+    const account = await api.setCredentials(provider, values);
     setState("accounts", provider, account);
     setState("providers", await api.providerStatus());
     setState("rateCards", provider, undefined!);

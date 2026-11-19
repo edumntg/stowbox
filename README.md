@@ -197,7 +197,7 @@ not take updates from the status bar; installing a release over it does.
 
 ## Build from source
 
-Rust 1.80+ ([rustup](https://rustup.rs)), Node 22+ with pnpm, and the
+Rust 1.89+ ([rustup](https://rustup.rs)), Node 22+ with pnpm, and the
 [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your OS.
 
 ```sh

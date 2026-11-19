@@ -1,5 +1,8 @@
 //! Test doubles shared by the modules that drive a box over exec.
 
+mod conformance;
+mod live;
+
 use crate::provider::Provider;
 use crate::types::*;
 use crate::Result;
@@ -55,14 +58,7 @@ pub fn temp_dir(prefix: &str) -> std::path::PathBuf {
 
 /// Runs `cmd` with local bash in `dir`, with `home` as `$HOME`; panics on failure.
 pub fn sh(dir: &std::path::Path, home: &std::path::Path, cmd: &str) -> String {
-    let out = std::process::Command::new("bash")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .env("HOME", home)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
+    let out = std::process::Command::new("bash").arg("-c").arg(cmd).current_dir(dir).env("HOME", home).env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
     assert!(out.status.success(), "{cmd}: {}", String::from_utf8_lossy(&out.stderr));
     String::from_utf8_lossy(&out.stdout).into_owned()
 }

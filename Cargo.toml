@@ -5,7 +5,7 @@ members = ["crates/stowbox-core", "src-tauri"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.89"
 
 # Stricter than rustc's defaults: no unsafe anywhere, and the calls that can
 # panic on bad input warn so new code avoids them. Tests may still unwrap

@@ -10,7 +10,7 @@ sees is a sandbox of that organization.
 | | Daytona |
 | - | - |
 | API | REST + JSON at `https://app.daytona.io/api`, `dtn_` key as bearer |
-| Create | any vCPU, memory and disk up to the organization's limit (4 vCPU, 8 GiB, 10 GiB by default) |
+| Create | a size from a snapshot; the default ones are `daytona-small` (1 vCPU, 1 GiB, 3 GiB), `daytona-medium` (2, 4, 8) and `daytona-large` (4, 8, 10). `cpu` and `memory` are refused next to a snapshot |
 | Stop and start | yes; a stopped sandbox keeps its disk and costs only the disk |
 | Standby, hibernate, reboot | no |
 | Pause and fork | only for VM-class sandboxes; Stowbox creates the default class, so not offered |
@@ -40,6 +40,12 @@ sees is a sandbox of that organization.
   minutes. Stowbox creates sandboxes with a one-hour auto-stop unless
   another is picked, and the box's Details change it
   (`POST /sandbox/{id}/autostop/{minutes}`).
+- **Sizes.** New box offers the three default snapshots as a menu and sends
+  the chosen one as `snapshot`; no choice is Daytona's default,
+  `daytona-small`. Sizing with `cpu` and `memory` needs a sandbox built from
+  an image, which takes a build, so Stowbox does not offer it.
+- **List.** A sandbox shows up in `GET /sandbox` a few seconds after its
+  create returns.
 - **Lifecycle.** Start is `POST /start`, stop is `POST /stop`, delete is
   `DELETE /sandbox/{id}`. States map onto Stowbox's: `started` is running;
   `creating`, `starting`, `restoring`, `pulling_snapshot` and the build
@@ -61,5 +67,6 @@ sees is a sandbox of that organization.
 ## What is not there yet
 
 - VM-class sandboxes, and with them pause and fork.
-- Snapshots other than the default, volumes, and the target region.
+- Snapshots other than the three default ones, sandboxes built from an image,
+  volumes, and the target region.
 - Opening a box in an editor over Remote-SSH.

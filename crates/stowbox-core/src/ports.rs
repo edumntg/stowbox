@@ -112,7 +112,9 @@ pub fn validate_route_name(name: &str) -> Result<()> {
     if ok {
         Ok(())
     } else {
-        Err(Error::Provider(format!("\"{name}\" cannot be a link name: use lowercase letters, digits and hyphens, up to 63, not starting or ending with a hyphen")))
+        Err(Error::Provider(format!(
+            "\"{name}\" cannot be a link name: use lowercase letters, digits and hyphens, up to 63, not starting or ending with a hyphen"
+        )))
     }
 }
 

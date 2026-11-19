@@ -45,12 +45,7 @@ pub struct Added {
 /// case, joined by dashes, then six characters of the agent id so two
 /// agents with the same task never collide.
 pub fn slug(hint: &str, agent_id: &str) -> String {
-    let words: Vec<String> = hint
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .take(5)
-        .map(|w| w.to_ascii_lowercase())
-        .collect();
+    let words: Vec<String> = hint.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).take(5).map(|w| w.to_ascii_lowercase()).collect();
     let mut head = String::new();
     for w in words {
         if head.len() + w.len() + 1 > 32 {
@@ -232,7 +227,10 @@ mod tests {
         // From a subdirectory: the agent works in the same subdirectory of its worktree.
         let a = add(&p, "vm1", Some("~/work/web"), "fix-login-ab12cd").await.unwrap();
         let wt_dir = home.join("work-wt/fix-login-ab12cd");
-        assert_eq!(a.worktree, Worktree { path: wt_dir.to_str().unwrap().into(), branch: "stowbox/fix-login-ab12cd".into(), repo: work.to_str().unwrap().into() });
+        assert_eq!(
+            a.worktree,
+            Worktree { path: wt_dir.to_str().unwrap().into(), branch: "stowbox/fix-login-ab12cd".into(), repo: work.to_str().unwrap().into() }
+        );
         assert_eq!(a.cwd, format!("{}/web", wt_dir.display()));
         assert!(wt_dir.join("web/w.txt").exists());
 

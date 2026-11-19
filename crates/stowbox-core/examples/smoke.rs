@@ -70,9 +70,7 @@ struct Run {
 
 /// Runs a non-tty script and collects everything, with a deadline.
 async fn run(p: &dyn Provider, id: &str, script: &str, deadline: Duration) -> stowbox_core::Result<Run> {
-    let mut h = p
-        .exec(id, ExecSpec { script: script.into(), tty: false, cols: 0, rows: 0, env: vec![("TERM".into(), "dumb".into())] })
-        .await?;
+    let mut h = p.exec(id, ExecSpec { script: script.into(), tty: false, cols: 0, rows: 0, env: vec![("TERM".into(), "dumb".into())] }).await?;
     let _ = h.input.send(ExecInput::Close).await;
     let mut out = Run { stdout: String::new(), stderr: String::new(), exit: None, error: None };
     let end = Instant::now() + deadline;
@@ -182,7 +180,11 @@ async fn main() {
     // keys ("requires an interactive session"). The app never needs it; the
     // sidebar balance comes from Whoami. Recorded here so the limit stays known.
     match p.org_billing("").await {
-        Ok(b) => r.pass("org_billing", format!("{} · {} vms of {} · balance {}", b.name, b.vm_count, b.max_vms, cost::money(b.balance_micro, &b.currency)), Duration::ZERO),
+        Ok(b) => r.pass(
+            "org_billing",
+            format!("{} · {} vms of {} · balance {}", b.name, b.vm_count, b.max_vms, cost::money(b.balance_micro, &b.currency)),
+            Duration::ZERO,
+        ),
         Err(e) if e.to_string().contains("interactive session") => r.skip("org_billing", "not available to API keys, as documented by boxd"),
         Err(e) => r.fail("org_billing", e.to_string(), Duration::ZERO),
     }
@@ -244,7 +246,11 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
         Ok(o) => {
             let ok = o.stdout.contains("out-") && o.stderr.contains("err") && o.exit == Some(7);
             let d = format!("exit {:?} stdout {:?} stderr {:?} {}", o.exit, short(&o.stdout, 60), short(&o.stderr, 30), o.error.unwrap_or_default());
-            if ok { r.pass("exec_basic", d, t.elapsed()) } else { r.fail("exec_basic", d, t.elapsed()) }
+            if ok {
+                r.pass("exec_basic", d, t.elapsed())
+            } else {
+                r.fail("exec_basic", d, t.elapsed())
+            }
         }
         Err(e) => r.fail("exec_basic", e.to_string(), t.elapsed()),
     }
@@ -254,7 +260,11 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
     match run(p, id, "printf hello", Duration::from_secs(60)).await {
         Ok(o) => {
             let d = format!("exit {:?} stdout {:?} {}", o.exit, short(&o.stdout, 40), o.error.clone().unwrap_or_default());
-            if o.stdout == "hello" && o.error.is_none() { r.pass("exec_exit0_ends", d, t.elapsed()) } else { r.fail("exec_exit0_ends", d, t.elapsed()) }
+            if o.stdout == "hello" && o.error.is_none() {
+                r.pass("exec_exit0_ends", d, t.elapsed())
+            } else {
+                r.fail("exec_exit0_ends", d, t.elapsed())
+            }
         }
         Err(e) => r.fail("exec_exit0_ends", e.to_string(), t.elapsed()),
     }
@@ -272,7 +282,11 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
                 m.disk_avail_bytes >> 30,
                 m.uptime_secs
             );
-            if m.mem_total_bytes > 0 && m.disk_total_bytes > 0 { r.pass("metrics_sample", d, t.elapsed()) } else { r.fail("metrics_sample", d, t.elapsed()) }
+            if m.mem_total_bytes > 0 && m.disk_total_bytes > 0 {
+                r.pass("metrics_sample", d, t.elapsed())
+            } else {
+                r.fail("metrics_sample", d, t.elapsed())
+            }
         }
         Ok(None) => r.fail("metrics_sample", "box reported as not running", t.elapsed()),
         Err(e) => r.fail("metrics_sample", e.to_string(), t.elapsed()),
@@ -281,7 +295,16 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
     // Env vars passed through the wrapper, plus quoting with spaces and quotes.
     let t = Instant::now();
     let mut h = p
-        .exec(id, ExecSpec { script: "echo \"[$STOWBOX_T]\" && cd /tmp && pwd".into(), tty: false, cols: 0, rows: 0, env: vec![("STOWBOX_T".into(), "it's a \"test\" $HOME".into())] })
+        .exec(
+            id,
+            ExecSpec {
+                script: "echo \"[$STOWBOX_T]\" && cd /tmp && pwd".into(),
+                tty: false,
+                cols: 0,
+                rows: 0,
+                env: vec![("STOWBOX_T".into(), "it's a \"test\" $HOME".into())],
+            },
+        )
         .await
         .map_err(|e| e.to_string())?;
     let _ = h.input.send(ExecInput::Close).await;
@@ -352,7 +375,10 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
     // Cancellation: drop the handle, the remote process must die.
     let t = Instant::now();
     let h = p
-        .exec(id, ExecSpec { script: "sleep 600 & echo started; wait".into(), tty: false, cols: 0, rows: 0, env: vec![("STOWBOX_MARK".into(), "cancel-me".into())] })
+        .exec(
+            id,
+            ExecSpec { script: "sleep 600 & echo started; wait".into(), tty: false, cols: 0, rows: 0, env: vec![("STOWBOX_MARK".into(), "cancel-me".into())] },
+        )
         .await
         .map_err(|e| e.to_string())?;
     tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -363,7 +389,11 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
     match run(p, id, "pgrep -fc 'sleep 60[0]' || true", Duration::from_secs(30)).await {
         Ok(o) => {
             let n: i32 = o.stdout.trim().parse().unwrap_or(-1);
-            if n == 0 { r.pass("exec_cancel_kills", "no sleep 600 left", t.elapsed()) } else { r.fail("exec_cancel_kills", format!("{n} sleep process(es) still alive"), t.elapsed()) }
+            if n == 0 {
+                r.pass("exec_cancel_kills", "no sleep 600 left", t.elapsed())
+            } else {
+                r.fail("exec_cancel_kills", format!("{n} sleep process(es) still alive"), t.elapsed())
+            }
         }
         Err(e) => r.fail("exec_cancel_kills", e.to_string(), t.elapsed()),
     }
@@ -434,7 +464,14 @@ async fn machine_steps(p: &dyn Provider, id: &str, name: &str, r: &mut Report) -
     match p.machine_usage(id).await {
         Ok(u) => r.pass(
             "machine_usage",
-            format!("cost {} · running {}s standby {}s hibernated {}s · complete {}", cost::money(u.cost_micro, &u.currency), u.seconds.running, u.seconds.standby, u.seconds.hibernated, u.complete),
+            format!(
+                "cost {} · running {}s standby {}s hibernated {}s · complete {}",
+                cost::money(u.cost_micro, &u.currency),
+                u.seconds.running,
+                u.seconds.standby,
+                u.seconds.hibernated,
+                u.complete
+            ),
             t.elapsed(),
         ),
         Err(e) => r.fail("machine_usage", e.to_string(), t.elapsed()),

@@ -41,7 +41,7 @@ async function overlayBadge(n: number): Promise<Image> {
 
 export const tauriApi: Api = {
   providerStatus: () => invoke("provider_status"),
-  setApiKey: (provider, key) => invoke("set_api_key", { provider, key }),
+  setCredentials: (provider, values) => invoke("set_credentials", { provider, values }),
   clearApiKey: (provider) => invoke("clear_api_key", { provider }),
   whoami: (provider) => invoke("whoami", { provider }),
   listMachines: () => invoke("list_machines"),

@@ -1,10 +1,10 @@
-import { For, Match, Show, Switch, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { api } from "../bridge/api";
 import type { Editor, Harness, Preset, VariableValues } from "../bridge/types";
 import { presetVariables } from "../bridge/variables";
 import { GUARD_COUNTDOWN_MS, actions, capsFor, capsOf, connectedProviders, machineById, spendCurrency, state, type Dialog } from "../state/store";
 import * as I from "../icons";
-import { isWindows } from "./common";
+import { ProviderIcon, isWindows } from "./common";
 import { ProviderKeyForm } from "./Onboarding";
 import { IDLE_STOP, currencySymbol, firstLine, money, spendLine } from "./format";
 
@@ -80,46 +80,27 @@ const AUTO_STOP = [
   { secs: 0, label: "Never" },
 ];
 
-/** What a new box is, in the provider's own terms. */
-const newBoxBlurb: Record<string, string> = {
-  boxd: "A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.",
-  boat: "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.",
-  daytona:
-    "A Daytona sandbox from the default image, up in about a second. Daytona stops it after a stretch with no activity, even with work running; Stowbox reports activity while a terminal or an agent is open.",
-  agent37:
-    "A persistent Linux sandbox on Agent37, billed by the minute. Stowbox installs tmux, Claude Code and Codex in it, which adds about half a minute. With no activity it sleeps and bills only its disk; the next connection wakes it.",
-};
-
-/** Free vCPU and memory choices; Daytona's default ceiling is 4 vCPU and 8 GiB. */
-const FREE_SIZES: Record<string, { vcpu: number; mem: number }[]> = {
-  daytona: [
-    { vcpu: 1, mem: 1 },
-    { vcpu: 2, mem: 4 },
-    { vcpu: 4, mem: 8 },
-  ],
-};
-const DEFAULT_FREE_SIZES = [
-  { vcpu: 1, mem: 4 },
-  { vcpu: 2, mem: 8 },
-  { vcpu: 4, mem: 16 },
-];
-/** The disk a new box gets, in GiB, for the running estimate. */
-const ESTIMATE_DISK: Record<string, number> = { daytona: 3 };
-
 const NewBox = () => {
   const providers = connectedProviders;
   const [providerId, setProviderId] = createSignal(providers()[0]?.id ?? "");
   const caps = () => capsOf(providerId());
   const billing = () => state.accounts[providerId()]?.billing;
   const rates = () => state.rateCards[providerId()];
-  // boxd: free vCPU and memory, capped by the plan. Fixed menus come from the provider.
-  const freeSizes = () =>
-    (FREE_SIZES[providerId()] ?? DEFAULT_FREE_SIZES).filter(
-      (s) => !billing() || ((billing()!.ceilingVcpu === 0 || s.vcpu <= billing()!.ceilingVcpu) && (billing()!.ceilingMemoryBytes === 0 || s.mem * GIB <= billing()!.ceilingMemoryBytes)),
-    );
+  // Free vCPU and memory, capped by the plan, or a fixed menu; both come from the provider.
+  const freeSizes = createMemo(() => {
+    const b = billing();
+    return (caps()?.freeSizes ?? [])
+      .map((s) => ({ vcpu: s.vcpu, mem: s.memoryGib }))
+      .filter((s) => !b || ((b.ceilingVcpu === 0 || s.vcpu <= b.ceilingVcpu) && (b.ceilingMemoryBytes === 0 || s.mem * GIB <= b.ceilingMemoryBytes)));
+  });
   const [name, setName] = createSignal("");
   const [vcpu, setVcpu] = createSignal(billing()?.defaultVcpu || 2);
-  const [sizeId, setSizeId] = createSignal("default");
+  const [pickedSize, setSizeId] = createSignal("");
+  // A pick from another provider's menu does not carry over.
+  const sizeId = createMemo(() => {
+    const c = caps();
+    return c?.sizes.some((z) => z.id === pickedSize()) ? pickedSize() : (c?.defaultSize ?? "");
+  });
   const [autoStop, setAutoStop] = createSignal(4 * 3600);
   const [idleStop, setIdleStop] = createSignal(3600);
   const [isolated, setIsolated] = createSignal(false);
@@ -136,7 +117,7 @@ const NewBox = () => {
   const estimate = (s: { vcpu: number; mem: number }) => {
     const r = rates();
     if (!r || !r.rates.vcpuHourMicro) return "";
-    const micro = s.vcpu * r.rates.vcpuHourMicro + s.mem * r.rates.ramGibHourMicro + (ESTIMATE_DISK[providerId()] ?? 100) * r.rates.diskGibHourMicro;
+    const micro = s.vcpu * r.rates.vcpuHourMicro + s.mem * r.rates.ramGibHourMicro + (caps()?.defaultDiskGib ?? 0) * r.rates.diskGibHourMicro;
     return money(micro, r.currency) + "/h running";
   };
 
@@ -155,7 +136,7 @@ const NewBox = () => {
           name: name().trim() || null,
           vcpu: c.customSize ? (size?.vcpu ?? null) : null,
           memoryBytes: c.customSize && size ? size.mem * GIB : null,
-          size: c.customSize ? null : sizeId(),
+          size: c.customSize ? null : sizeId() || null,
           autoStopSecs: c.autoStop ? autoStop() : c.idleStop ? idleStop() : null,
           isolated: c.isolated && isolated(),
         },
@@ -179,7 +160,9 @@ const NewBox = () => {
             <For each={providers()}>
               {(p) => (
                 <button class="choice" aria-pressed={providerId() === p.id} onClick={() => setProviderId(p.id)}>
-                  <span>{p.capabilities.label}</span>
+                  <span class="choice-name">
+                    <ProviderIcon provider={p.id} /> {p.capabilities.label}
+                  </span>
                   <span class="faint">{p.capabilities.currency.toUpperCase()}</span>
                 </button>
               )}
@@ -187,7 +170,7 @@ const NewBox = () => {
           </div>
         </div>
       </Show>
-      <p>{newBoxBlurb[providerId()] ?? ""}</p>
+      <p>{caps()?.newBoxBlurb ?? ""}</p>
       <div class="field">
         <label for="nb-name">Name</label>
         <input id="nb-name" class="input mono" placeholder="leave empty for a suggested name" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
@@ -459,6 +442,7 @@ const Settings = () => {
             {(p) => (
               <div class="provider-row">
                 <span class="sq" data-state={p.connected ? "running" : "idle"} title={p.connected ? "Connected" : "Not connected"} />
+                <ProviderIcon provider={p.id} />
                 <span class="provider-name">{p.capabilities.label}</span>
                 <Show
                   when={p.connected}

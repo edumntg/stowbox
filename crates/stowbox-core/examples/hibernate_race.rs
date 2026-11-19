@@ -9,10 +9,7 @@ use stowbox_core::provider::Provider;
 use stowbox_core::types::*;
 
 async fn run(p: &dyn Provider, id: &str, script: &str) -> Result<(String, Option<i32>), String> {
-    let mut h = p
-        .exec(id, ExecSpec { script: script.into(), tty: false, cols: 0, rows: 0, env: vec![] })
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut h = p.exec(id, ExecSpec { script: script.into(), tty: false, cols: 0, rows: 0, env: vec![] }).await.map_err(|e| e.to_string())?;
     let _ = h.input.send(ExecInput::Close).await;
     let mut out = String::new();
     let mut exit = None;
@@ -102,7 +99,13 @@ async fn main() {
             "n/a".to_string()
         };
         let survived = match run(p, &id, "pgrep -fc 'sleep 360[0]' || true").await {
-            Ok((o, _)) => if o.trim() == "1" { "yes".to_string() } else { format!("no ({})", o.trim()) },
+            Ok((o, _)) => {
+                if o.trim() == "1" {
+                    "yes".to_string()
+                } else {
+                    format!("no ({})", o.trim())
+                }
+            }
             Err(e) => format!("? {e}"),
         };
         println!(

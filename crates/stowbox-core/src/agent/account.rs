@@ -31,10 +31,7 @@ pub const DEADLINE: Duration = Duration::from_secs(20);
 /// Shell that goes in front of every Claude Code command Stowbox runs in a
 /// box: switches to the box's own login when it has one.
 pub fn prelude() -> String {
-    format!(
-        "if [ -d \"$HOME/{OWN_DIR}\" ]; then export CLAUDE_CONFIG_DIR=\"$HOME/{OWN_DIR}\"; unset {}; fi;",
-        TOKEN_VARS.join(" ")
-    )
+    format!("if [ -d \"$HOME/{OWN_DIR}\" ]; then export CLAUDE_CONFIG_DIR=\"$HOME/{OWN_DIR}\"; unset {}; fi;", TOKEN_VARS.join(" "))
 }
 
 /// Claude Code's own sign-in, for a terminal in the box.
@@ -201,9 +198,16 @@ mod tests {
         assert_eq!(a, ClaudeAccount { own: true, ..Default::default() });
         assert!(home.join(".stowbox/claude/projects/-work/s1.jsonl").exists());
         // What a turn would see.
-        let c = capture(&p, "vm", format!("CLAUDE_CODE_OAUTH_TOKEN=t; export CLAUDE_CODE_OAUTH_TOKEN; {} echo \"$CLAUDE_CONFIG_DIR|${{CLAUDE_CODE_OAUTH_TOKEN:-}}\"", prelude()), None, DEADLINE, "t")
-            .await
-            .unwrap();
+        let c = capture(
+            &p,
+            "vm",
+            format!("CLAUDE_CODE_OAUTH_TOKEN=t; export CLAUDE_CODE_OAUTH_TOKEN; {} echo \"$CLAUDE_CONFIG_DIR|${{CLAUDE_CODE_OAUTH_TOKEN:-}}\"", prelude()),
+            None,
+            DEADLINE,
+            "t",
+        )
+        .await
+        .unwrap();
         assert_eq!(String::from_utf8_lossy(&c.stdout).trim(), format!("{}/.stowbox/claude|", home.display()));
 
         std::fs::write(home.join(".stowbox/claude/.credentials.json"), "{}").unwrap();

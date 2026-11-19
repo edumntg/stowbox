@@ -58,7 +58,8 @@ async fn main() {
     // Marker pattern with the bracket trick must not match its own wrapper.
     let h = p.exec(&m.id, ExecSpec { script: "exec -a stowbox-agent-zz sleep 604".into(), tty: false, cols: 0, rows: 0, env: vec![] }).await.unwrap();
     tokio::time::sleep(Duration::from_millis(1000)).await;
-    let out = run(p, &m.id, "pkill -TERM -f 'stowbox-agent-[z]z'; echo pkill=$?; sleep 0.5; ps -eo pid,cmd | grep -F 'sleep 604' | grep -v -F grep | wc -l").await;
+    let out =
+        run(p, &m.id, "pkill -TERM -f 'stowbox-agent-[z]z'; echo pkill=$?; sleep 0.5; ps -eo pid,cmd | grep -F 'sleep 604' | grep -v -F grep | wc -l").await;
     println!("E pkill by bracketed marker: {}", out.trim().replace('\n', " | "));
     drop(h);
 

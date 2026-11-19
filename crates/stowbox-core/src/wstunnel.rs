@@ -61,7 +61,8 @@ where
     let mut nonce = [0u8; 16];
     getrandom::getrandom(&mut nonce).map_err(|e| Error::Network(format!("no randomness for the WebSocket key: {e}")))?;
     let key = base64::engine::general_purpose::STANDARD.encode(nonce);
-    let mut req = format!("GET / HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n");
+    let mut req =
+        format!("GET / HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n");
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -118,7 +119,8 @@ fn check_answer(head: &str, key: &str, host: &str) -> Result<()> {
         "404" => return Err(Error::NotFound(format!("{host} has no box behind it ({status})"))),
         _ => return Err(Error::Network(format!("{host} refused the tunnel: {}", if status.is_empty() { "no answer" } else { status }))),
     }
-    let accept = lines.find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case("sec-websocket-accept")).map(|(_, v)| v.trim().to_string()));
+    let accept =
+        lines.find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case("sec-websocket-accept")).map(|(_, v)| v.trim().to_string()));
     if accept.as_deref() != Some(accept_for(key).as_str()) {
         return Err(Error::Network(format!("{host} answered the WebSocket upgrade with the wrong accept key")));
     }
@@ -370,7 +372,9 @@ mod tests {
             let head = String::from_utf8(head).unwrap();
             assert!(head.contains("X-Agent37-Key: sk_live_test\r\n"), "{head}");
             let key = head.lines().find_map(|l| l.strip_prefix("Sec-WebSocket-Key: ")).unwrap().trim().to_string();
-            let mut answer = format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n", accept_for(&key)).into_bytes();
+            let mut answer =
+                format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n", accept_for(&key))
+                    .into_bytes();
             // Server frames are unmasked; one rides in with the answer.
             answer.extend_from_slice(&[0x82, 6]);
             answer.extend_from_slice(b"SSH-2.");

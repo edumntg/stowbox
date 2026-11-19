@@ -57,12 +57,7 @@ impl TokenExchange {
     }
 
     async fn exchange(&self) -> Result<Cached> {
-        let resp = self
-            .http
-            .post(&self.auth_url)
-            .json(&serde_json::json!({ "api_key": self.api_key }))
-            .send()
-            .await?;
+        let resp = self.http.post(&self.auth_url).json(&serde_json::json!({ "api_key": self.api_key })).send().await?;
         let status = resp.status();
         if status.as_u16() == 401 || status.as_u16() == 403 {
             return Err(Error::Auth("boxd rejected the API key".into()));
@@ -75,9 +70,8 @@ impl TokenExchange {
             return Err(Error::Auth(format!("token exchange failed ({status}): {}", body.trim())));
         }
         let body: TokenResponse = resp.json().await?;
-        let expires_at = jwt_exp(&body.token)
-            .or_else(|| body.expires_at.as_ref().and_then(parse_expires))
-            .unwrap_or_else(|| SystemTime::now() + ASSUMED_LIFETIME);
+        let expires_at =
+            jwt_exp(&body.token).or_else(|| body.expires_at.as_ref().and_then(parse_expires)).unwrap_or_else(|| SystemTime::now() + ASSUMED_LIFETIME);
         Ok(Cached { token: body.token, expires_at })
     }
 }
@@ -94,10 +88,8 @@ fn parse_expires(v: &serde_json::Value) -> Option<SystemTime> {
 /// decide when to refresh; the server does the verification.
 pub fn jwt_exp(token: &str) -> Option<SystemTime> {
     let payload = token.split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload)
-        .ok()
-        .or_else(|| base64::engine::general_purpose::URL_SAFE.decode(payload).ok())?;
+    let bytes =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload).ok().or_else(|| base64::engine::general_purpose::URL_SAFE.decode(payload).ok())?;
     let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let exp = claims.get("exp")?.as_i64()?;
     Some(UNIX_EPOCH + Duration::from_secs(exp.max(0) as u64))

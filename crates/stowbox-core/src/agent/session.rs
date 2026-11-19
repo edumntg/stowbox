@@ -175,19 +175,12 @@ pub fn open_script(a: &AgentMeta, input: Option<&str>) -> String {
     let inner = format!("bash -lc {}", shell_quote(&harness_command(a, input)));
     let mut s = String::from("if command -v tmux >/dev/null 2>&1; then\n");
     s.push_str("  mkdir -p \"$HOME/.stowbox\"\n");
-    s.push_str(&format!(
-        "  printf '%s\\n' {} > \"$HOME/.stowbox/tmux.conf\"\n",
-        TMUX_CONF.iter().map(|l| shell_quote(l)).collect::<Vec<_>>().join(" ")
-    ));
+    s.push_str(&format!("  printf '%s\\n' {} > \"$HOME/.stowbox/tmux.conf\"\n", TMUX_CONF.iter().map(|l| shell_quote(l)).collect::<Vec<_>>().join(" ")));
     // The config is read when the server starts; a server already running
     // (older agents still open) gets the hyperlink setting here. Fails
     // quietly on a tmux too old for it, or when no server runs yet.
     s.push_str(&format!("  tmux -L {TMUX_SOCKET} {HYPERLINKS} 2>/dev/null\n"));
-    s.push_str(&format!(
-        "  exec tmux -L {TMUX_SOCKET} -f \"$HOME/.stowbox/tmux.conf\" new-session -A -s {} {}\n",
-        tmux_name(&a.id),
-        shell_quote(&inner)
-    ));
+    s.push_str(&format!("  exec tmux -L {TMUX_SOCKET} -f \"$HOME/.stowbox/tmux.conf\" new-session -A -s {} {}\n", tmux_name(&a.id), shell_quote(&inner)));
     s.push_str("fi\n");
     s.push_str(&format!("exec {inner}\n"));
     s
@@ -216,7 +209,9 @@ pub fn watch_script(nonce: &str) -> String {
     s.push_str("while :; do\n");
     s.push_str("  cur=$(\n");
     s.push_str("    if command -v tmux >/dev/null 2>&1; then echo tmux; tmux -L stowbox ls -F 'running #S' 2>/dev/null; fi\n");
-    s.push_str("    for f in \"$d\"/*/state; do [ -f \"$f\" ] && printf 'state %s %s\\n' \"$(basename \"$(dirname \"$f\")\")\" \"$(cat \"$f\")\"; done 2>/dev/null\n");
+    s.push_str(
+        "    for f in \"$d\"/*/state; do [ -f \"$f\" ] && printf 'state %s %s\\n' \"$(basename \"$(dirname \"$f\")\")\" \"$(cat \"$f\")\"; done 2>/dev/null\n",
+    );
     s.push_str("  )\n");
     s.push_str(&format!("  if [ \"$cur\" != \"$last\" ]; then printf '%s\\n{m} end\\n' \"$cur\"; last=$cur; fi\n"));
     s.push_str("  sleep 1\n");

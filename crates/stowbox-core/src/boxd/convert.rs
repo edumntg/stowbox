@@ -5,11 +5,7 @@ use crate::ports::{forward_address, https_url, HttpsRoute, PortForward};
 use crate::types::*;
 
 pub fn machine(vm: pb::GetVmResponse, desktop_url: &dyn Fn(&str) -> String) -> Machine {
-    let host = if vm.access_domain.is_empty() {
-        format!("{}.boxd.sh", vm.name)
-    } else {
-        format!("{}.{}", vm.name, vm.access_domain)
-    };
+    let host = if vm.access_domain.is_empty() { format!("{}.boxd.sh", vm.name) } else { format!("{}.{}", vm.name, vm.access_domain) };
     Machine {
         desktop_url: desktop_url(&vm.name),
         url: format!("https://{host}"),
@@ -62,11 +58,7 @@ pub fn account(r: pb::WhoamiResponse) -> Account {
 
 pub fn rates(r: Option<pb::UsageRates>) -> Rates {
     let r = r.unwrap_or_default();
-    Rates {
-        vcpu_hour_micro: r.vcpu_hour_micro,
-        ram_gib_hour_micro: r.ram_gib_hour_micro,
-        disk_gib_hour_micro: r.disk_gib_hour_micro,
-    }
+    Rates { vcpu_hour_micro: r.vcpu_hour_micro, ram_gib_hour_micro: r.ram_gib_hour_micro, disk_gib_hour_micro: r.disk_gib_hour_micro }
 }
 
 pub fn usage(r: pb::GetVmUsageResponse) -> Usage {
@@ -81,12 +73,7 @@ pub fn usage(r: pb::GetVmUsageResponse) -> Usage {
         ram_gib_hours: u.ram_gib_hours,
         disk_gib_hours: u.disk_gib_hours,
         cost_micro: u.cost_micro,
-        seconds: StateSeconds {
-            running: s.running,
-            standby: s.standby,
-            hibernated: s.hibernated,
-            stopped: s.stopped,
-        },
+        seconds: StateSeconds { running: s.running, standby: s.standby, hibernated: s.hibernated, stopped: s.stopped },
         complete: u.complete,
     }
 }
@@ -135,7 +122,15 @@ mod tests {
 
     #[test]
     fn routes_take_the_effective_port_and_boxd_domain() {
-        let r = route(pb::ProxyInfo { name: "default".into(), domain: "mock-api.boxd.sh".into(), port: 0, is_default: true, port_mode: "auto".into(), effective_port: 3000, ..Default::default() });
+        let r = route(pb::ProxyInfo {
+            name: "default".into(),
+            domain: "mock-api.boxd.sh".into(),
+            port: 0,
+            is_default: true,
+            port_mode: "auto".into(),
+            effective_port: 3000,
+            ..Default::default()
+        });
         assert_eq!((r.url.as_deref(), r.port, r.is_default, r.port_mode.as_str()), (Some("https://mock-api.boxd.sh"), 3000, true, "auto"));
         // An older server without `effective_port`, and one with no domain: no link is invented.
         let r = route(pb::ProxyInfo { name: "api".into(), port: 8080, ..Default::default() });
@@ -144,7 +139,14 @@ mod tests {
 
     #[test]
     fn forwards_keep_what_boxd_returned() {
-        let f = forward(pb::ExposePortResponse { vm_name: "mock-api".into(), dns: "mock-api.boxd.sh".into(), public_port: 48211, vm_port: 5432, protocol: "tcp".into(), vm_id: "vm_1".into() });
+        let f = forward(pb::ExposePortResponse {
+            vm_name: "mock-api".into(),
+            dns: "mock-api.boxd.sh".into(),
+            public_port: 48211,
+            vm_port: 5432,
+            protocol: "tcp".into(),
+            vm_id: "vm_1".into(),
+        });
         assert_eq!((f.address.as_deref(), f.vm_port, f.protocol.as_str()), (Some("mock-api.boxd.sh:48211"), 5432, "tcp"));
     }
 }

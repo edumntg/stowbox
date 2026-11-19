@@ -4,7 +4,7 @@ Installers come from the release workflow ([releasing.md](releasing.md)).
 To run the app from this repo:
 
 1. Install the toolchain:
-   - Rust 1.80+ via [rustup](https://rustup.rs).
+   - Rust 1.89+ via [rustup](https://rustup.rs).
    - Node 22+ and pnpm (`npm install -g pnpm`); pnpm switches itself to the
      version pinned in `package.json`.
    - The Tauri 2 system packages for your OS: on macOS,
@@ -52,8 +52,21 @@ Rust side:
 cargo test -p stowbox-core   # parsers, cost math, auth helpers
 cargo test -p stowbox-core sshexec -- --ignored   # the SSH exec (boat, Daytona) against a local sshd
 cargo check --workspace
+STOWBOX_LIVE_BOAT_KEY=boat_… cargo test -p stowbox-core testing::live -- --ignored --nocapture   # conformance against the real service
 BOXD_API_KEY=bxd_… cargo run -p stowbox-core --example smoke   # against a real account
 ```
+
+The browser mock reads the providers from `src/bridge/providers.generated.json`.
+A test fails when it no longer matches core; `STOWBOX_REGENERATE=1 cargo test
+-p stowbox-core the_mock_gets_the_descriptors` writes the new one.
+
+The live conformance run covers each provider whose
+`STOWBOX_LIVE_<ID>_KEY` (`BOXD`, `BOAT`, `DAYTONA`, `AGENT37`) is set and
+skips the rest. For each one it makes a `stowbox-live-*` box in the size New
+box starts on (`STOWBOX_LIVE_<ID>_SIZE` picks another), checks exec with
+stdin and a TTY, an upload, every power action and fork the provider claims,
+and HTTPS links, then deletes every box it made, also when a step fails. It
+costs a few minutes of that size, and never runs in CI.
 
 The smoke example makes read-only calls, then creates one `stowbox-smoke-*`
 machine, runs every provider operation on it (exec, tty, cancel, standby,

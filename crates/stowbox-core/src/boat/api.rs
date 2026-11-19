@@ -55,7 +55,13 @@ impl Refusal {
     }
 
     pub fn into_error(self) -> Error {
-        let what = if self.code.is_empty() { self.message.clone() } else if self.message.is_empty() { self.code.clone() } else { format!("{} ({})", self.message, self.code) };
+        let what = if self.code.is_empty() {
+            self.message.clone()
+        } else if self.message.is_empty() {
+            self.code.clone()
+        } else {
+            format!("{} ({})", self.message, self.code)
+        };
         match self.status {
             401 => Error::Auth(what),
             403 => Error::Auth(format!("refused: {what}")),
@@ -118,14 +124,7 @@ impl Api {
     /// has it can write the file until it expires.
     pub async fn put_signed(&self, url: &str, data: Vec<u8>) -> Result<()> {
         let size = data.len() as u64;
-        let resp = self
-            .http
-            .put(url)
-            .header("Content-Type", "application/octet-stream")
-            .timeout(transfer_timeout(size))
-            .body(data)
-            .send()
-            .await?;
+        let resp = self.http.put(url).header("Content-Type", "application/octet-stream").timeout(transfer_timeout(size)).body(data).send().await?;
         let status = resp.status();
         if status.is_success() {
             return Ok(());

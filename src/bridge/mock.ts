@@ -7,6 +7,7 @@ import type {
   AgentLive,
   AgentMeta,
   ClaudeAccount,
+  CreateSpec,
   Api,
   Capabilities,
   GitDiffFile,
@@ -29,102 +30,15 @@ import type {
   TermEvent,
   VariableValues,
 } from "./types";
+import descriptors from "./providers.generated.json";
 import { substitute, variablesIn } from "./variables";
 
 const GIB = 1024 ** 3;
 let nextSshPort = 21843;
 
-// Mirrors core boxd::capabilities, boat::capabilities, daytona::capabilities and agent37::capabilities.
-const BOXD_CAPS: Capabilities = {
-  label: "boxd",
-  consoleUrl: "https://app.boxd.sh",
-  keyHint: "Make one at app.boxd.sh or with `boxd auth keys create stowbox`. Keys are fenced to one organization.",
-  keyPrefixes: ["bxd_"],
-  currency: "eur",
-  power: ["start", "stop", "reboot", "pause", "resume", "hibernate", "wake", "destroy"],
-  fork: true,
-  isolated: true,
-  autoSuspend: true,
-  autoHibernate: true,
-  autoStop: false,
-  idleStop: false,
-  customSize: true,
-  sizes: [],
-  httpsLinks: true,
-  httpsNamed: true,
-  httpsList: true,
-  httpsRemove: true,
-  httpsDefaultRoute: true,
-  portForwards: true,
-  editorSsh: true,
-  maxUploadBytes: 20 * 1024 * 1024,
-  remoteUser: "boxd",
-  remoteHome: "/home/boxd",
-  meteringNote: "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.",
-  meteredUsage: true,
-};
-const BOAT_SIZES = [
-  { id: "small", vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 51e9, hourlyMicro: 18_000, note: "" },
-  { id: "default", vcpu: 4, memoryBytes: 8 * GIB, diskBytes: 51e9, hourlyMicro: 36_000, note: "" },
-  { id: "large", vcpu: 8, memoryBytes: 16 * GIB, diskBytes: 111e9, hourlyMicro: 72_000, note: "not on the free trial" },
-  { id: "xlarge", vcpu: 16, memoryBytes: 32 * GIB, diskBytes: 251e9, hourlyMicro: 200_000, note: "needs the $100 plan or higher" },
-];
-const BOAT_CAPS: Capabilities = {
-  label: "boat",
-  consoleUrl: "https://boat.dev/dashboard",
-  keyHint: "Make one with `boat api-key create stowbox` or on the boat dashboard. It needs the ssh action: Stowbox runs every command over SSH.",
-  keyPrefixes: ["boat_", "box_"],
-  currency: "usd",
-  power: ["start", "stop", "destroy"],
-  fork: true,
-  isolated: false,
-  autoSuspend: false,
-  autoHibernate: false,
-  autoStop: true,
-  idleStop: false,
-  customSize: false,
-  sizes: BOAT_SIZES,
-  httpsLinks: true,
-  httpsNamed: false,
-  httpsList: false,
-  httpsRemove: false,
-  httpsDefaultRoute: false,
-  portForwards: false,
-  editorSsh: false,
-  maxUploadBytes: 512 * 1024 * 1024,
-  remoteUser: "user",
-  remoteHome: "/home/user",
-  meteringNote: "boat counts by the second at list price; time included in the plan is not taken off here.",
-  meteredUsage: true,
-};
-const DAYTONA_CAPS: Capabilities = {
-  label: "daytona",
-  consoleUrl: "https://app.daytona.io/dashboard",
-  keyHint: "Make one on the Daytona dashboard under Keys, with permission to write and delete sandboxes. Keys are fenced to one organization.",
-  keyPrefixes: ["dtn_"],
-  currency: "usd",
-  power: ["start", "stop", "destroy"],
-  fork: false,
-  isolated: false,
-  autoSuspend: false,
-  autoHibernate: false,
-  autoStop: false,
-  idleStop: true,
-  customSize: true,
-  sizes: [],
-  httpsLinks: true,
-  httpsNamed: false,
-  httpsList: false,
-  httpsRemove: false,
-  httpsDefaultRoute: false,
-  portForwards: false,
-  editorSsh: false,
-  maxUploadBytes: 20 * 1024 * 1024,
-  remoteUser: "daytona",
-  remoteHome: "/home/daytona",
-  meteringNote: "Daytona's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.",
-  meteredUsage: false,
-};
+// Written by a test in core's `providers` module from `providers::ALL`.
+const CAPS: Record<string, Capabilities> = Object.fromEntries(descriptors.map((d) => [d.id, d.capabilities as unknown as Capabilities]));
+const BOAT_SIZES = CAPS.boat.sizes;
 /** Agent37's list prices per hour, as in core agent37::RATES. */
 const AGENT37_RATES = { vcpuHourMicro: 1_096, ramGibHourMicro: 959, diskGibHourMicro: 123 };
 const AGENT37_SHAPES = [
@@ -134,35 +48,6 @@ const AGENT37_SHAPES = [
   { id: "xlarge", vcpu: 4, mem: 32, disk: 24 },
 ];
 const agent37Hourly = (vcpu: number, mem: number, disk: number) => vcpu * AGENT37_RATES.vcpuHourMicro + mem * AGENT37_RATES.ramGibHourMicro + disk * AGENT37_RATES.diskGibHourMicro;
-const AGENT37_CAPS: Capabilities = {
-  label: "agent37",
-  consoleUrl: "https://www.agent37.com/dashboard/cloud",
-  keyHint: "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal.",
-  keyPrefixes: ["sk_live_"],
-  currency: "usd",
-  power: ["start", "stop", "reboot", "hibernate", "wake", "destroy"],
-  fork: true,
-  isolated: false,
-  autoSuspend: false,
-  autoHibernate: false,
-  autoStop: false,
-  idleStop: true,
-  customSize: false,
-  sizes: AGENT37_SHAPES.map((z) => ({ id: z.id, vcpu: z.vcpu, memoryBytes: z.mem * GIB, diskBytes: z.disk * GIB, hourlyMicro: agent37Hourly(z.vcpu, z.mem, z.disk), note: "" })),
-  httpsLinks: true,
-  httpsNamed: false,
-  httpsList: false,
-  httpsRemove: false,
-  httpsDefaultRoute: false,
-  portForwards: false,
-  editorSsh: false,
-  maxUploadBytes: 20 * 1024 * 1024,
-  remoteUser: "node",
-  remoteHome: "/home/node",
-  meteringNote: "Agent37 settles metered minutes at least hourly and reports them by UTC day; managed model spend is not counted here.",
-  meteredUsage: true,
-};
-const CAPS: Record<string, Capabilities> = { boxd: BOXD_CAPS, boat: BOAT_CAPS, daytona: DAYTONA_CAPS, agent37: AGENT37_CAPS };
 
 // `?providers=boxd` or `?providers=boat,daytona` previews a subset of connected providers.
 const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37").split(",").filter((p) => p in CAPS));
@@ -274,6 +159,26 @@ function boatMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "
     autoStopAt: live ? partial.autoStopAt || Math.floor(Date.now() / 1000) + 4 * 3600 : 0,
     estHourlyMicro: live ? size.hourlyMicro : 0,
   };
+}
+
+/** A Daytona box takes its size from a default snapshot, as core does. */
+function newDaytonaBox(spec: CreateSpec): Machine {
+  const caps = CAPS.daytona;
+  const size = caps?.sizes.find((z) => z.id === (spec.size ?? caps.defaultSize));
+  if (!size) throw new Error(`Daytona has no size ${spec.size}`);
+  const now = Date.now();
+  return machine({
+    id: "dt-mock-" + now,
+    createdAt: Math.floor(now / 1000),
+    lastConnectedMs: now,
+    name: spec.name || "daytona-new",
+    status: "running",
+    provider: "daytona",
+    vcpu: size.vcpu,
+    memoryBytes: size.memoryBytes,
+    diskBytes: size.diskBytes,
+    idleStopSecs: spec.autoStopSecs ?? 3_600,
+  });
 }
 
 function machine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status">): Machine {
@@ -989,13 +894,20 @@ export const mockApi: Api = {
     const providers = Object.entries(CAPS).map(([id, capabilities]) => ({ id, connected: connected.has(id), secretBackend: connected.has(id) ? ("file" as const) : null, capabilities }));
     return { configured: connected.size > 0, providers };
   },
-  async setApiKey(provider, key) {
-    // The same shape check as the desktop shell's set_api_key.
+  async setCredentials(provider, values) {
+    // The same checks as core's Credentials::validate.
     const caps = CAPS[provider];
     if (!caps) throw new Error(`unknown provider ${provider}`);
-    const k = key.trim();
-    if (!caps.keyPrefixes.some((p) => k.startsWith(p)) || k.length < 20)
-      throw new Error(`That does not look like a ${caps.label} API key. Keys start with ${caps.keyPrefixes.join(" or ")}.`);
+    const extra = Object.keys(values).find((name) => !caps.credentialFields.some((f) => f.name === name));
+    if (extra !== undefined) throw new Error(`${caps.label} does not take a field named ${extra}`);
+    for (const f of caps.credentialFields) {
+      const v = values[f.name]?.trim();
+      if (!v) throw new Error(`${caps.label} needs its ${f.label}`);
+      if (v.length > 4096) throw new Error(`That ${caps.label} ${f.label} is too long`);
+    }
+    const k = values.api_key?.trim();
+    if (k !== undefined && (!caps.keyPrefixes.some((p) => k.startsWith(p)) || k.length < 20))
+      throw new Error(`That does not look like a ${caps.label} API key. Keys start with ${caps.keyPrefixes.join(" or ")}. ${caps.credentialFields.find((f) => f.name === "api_key")?.hint ?? ""}`);
     connected.add(provider);
     return accounts[provider];
   },
@@ -1025,7 +937,7 @@ export const mockApi: Api = {
       provider === "boat"
         ? machine({ id: "sbx_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "boat-new", status: "running", provider, size: spec.size ?? "default", autoStopAt: spec.autoStopSecs ? Math.floor(Date.now() / 1000) + spec.autoStopSecs : 0 })
         : provider === "daytona"
-          ? machine({ id: "dt-mock-" + Date.now(), createdAt: Math.floor(Date.now() / 1000), lastConnectedMs: Date.now(), name: spec.name || "daytona-new", status: "running", provider, vcpu: spec.vcpu ?? 1, memoryBytes: spec.memoryBytes ?? GIB, idleStopSecs: spec.autoStopSecs ?? 3_600 })
+          ? newDaytonaBox(spec)
           : provider === "agent37"
             ? machine({ id: "a37" + Date.now().toString(36).slice(-7), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "agent37-new", status: "running", provider, size: spec.size ?? "default", idleStopSecs: spec.autoStopSecs ?? 3_600 })
             : machine({ id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });

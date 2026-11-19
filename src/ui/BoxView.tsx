@@ -4,7 +4,7 @@ import { api } from "../bridge/api";
 import { actions, agentsForMachine, capsFor, multiProvider, phaseOf, providerLabel, setupActive, setupRunFor, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot, PowerActions } from "./common";
-import { agentPhaseLabel, gib, hours, IDLE_STOP, money, relTime, sizeLabel, statusLabel, until } from "./format";
+import { agentPhaseLabel, gib, hours, IDLE_STOP, money, relTime, sizeLabel, sshHint, statusLabel, until } from "./format";
 import { boxTerminalKey } from "./termSessions";
 
 const Terminal = lazy(() => import("./Terminal"));
@@ -12,10 +12,7 @@ const ClaudeLogin = lazy(() => import("./ClaudeAccount"));
 const Changes = lazy(() => import("./Changes"));
 const Ports = lazy(() => import("./Ports"));
 
-/** boxd: works with any key linked to the account, and "Open in editor" sets
- * up the `stowbox-<name>` alias. boat: its own CLI links a key on the way. */
-const sshCommand = (m: Machine) =>
-  m.provider === "boat" ? `boat ssh ${m.id}` : m.provider === "daytona" ? `daytona ssh ${m.id}` : m.provider === "agent37" ? `npx agent37 ssh ${m.id}` : m.sshPort ? `ssh -p ${m.sshPort} boxd@${m.name}.${m.accessDomain || "boxd.sh"}` : "";
+const sshCommand = (m: Machine) => sshHint(capsFor(m)?.sshHint ?? "", m);
 
 /** The directories this box's agents work in, most recently active first. */
 const repoDirs = (id: string) => [...new Set(agentsForMachine(id).sort((a, b) => b.updatedAt - a.updatedAt).map((a) => a.cwd ?? "~"))];

@@ -2,7 +2,7 @@ import { For, Show, createMemo } from "solid-js";
 import type { AgentMeta, Machine } from "../bridge/types";
 import { actions, agentsForMachine, multiProvider, phaseOf, providerLabel, state } from "../state/store";
 import * as I from "../icons";
-import { AgentDot, Dot } from "./common";
+import { AgentDot, Dot, ProviderIcon } from "./common";
 import { agentPhaseLabel, money, relTime, sizeLabel, statusLabel } from "./format";
 
 const AgentRow = (p: { agent: AgentMeta }) => {
@@ -51,7 +51,7 @@ const BoxRow = (p: { machine: Machine; agents: AgentMeta[] }) => {
           </Show>
         </span>
         <span class="row-sub">
-          {statusLabel[p.machine.status]} · {sizeLabel(p.machine)}
+          <ProviderIcon provider={p.machine.provider} /> {statusLabel[p.machine.status]} · {sizeLabel(p.machine)}
           {multiProvider() ? ` · ${providerLabel(p.machine.provider)}` : ""}
         </span>
       </div>

@@ -19,16 +19,52 @@ pub const MAX_BYTES: u64 = 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum Event {
-    KeySaved { provider: String, backend: String },
-    KeyCleared { provider: String },
+    KeySaved {
+        provider: String,
+        backend: String,
+    },
+    KeyCleared {
+        provider: String,
+    },
     /// `changed` holds the secrets that got a new value in this save.
-    PresetSaved { preset_id: String, preset_name: String, secret_names: Vec<String>, changed: Vec<String> },
-    PresetDeleted { preset_id: String, preset_name: String },
-    SetupStarted { run_id: String, machine_id: String, machine_name: String, preset_id: String, preset_name: String, secret_names: Vec<String> },
-    SetupEnded { run_id: String, machine_id: String, status: RunStatus, secrets_written: bool },
-    BoxCreated { provider: String, machine_id: String, machine_name: String },
-    BoxForked { source: String, machine_id: String, machine_name: String },
-    Power { machine_id: String, power: PowerAction },
+    PresetSaved {
+        preset_id: String,
+        preset_name: String,
+        secret_names: Vec<String>,
+        changed: Vec<String>,
+    },
+    PresetDeleted {
+        preset_id: String,
+        preset_name: String,
+    },
+    SetupStarted {
+        run_id: String,
+        machine_id: String,
+        machine_name: String,
+        preset_id: String,
+        preset_name: String,
+        secret_names: Vec<String>,
+    },
+    SetupEnded {
+        run_id: String,
+        machine_id: String,
+        status: RunStatus,
+        secrets_written: bool,
+    },
+    BoxCreated {
+        provider: String,
+        machine_id: String,
+        machine_name: String,
+    },
+    BoxForked {
+        source: String,
+        machine_id: String,
+        machine_name: String,
+    },
+    Power {
+        machine_id: String,
+        power: PowerAction,
+    },
 }
 
 #[derive(Serialize)]

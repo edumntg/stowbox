@@ -39,6 +39,7 @@ pub enum Backend {
     File,
 }
 
+#[derive(Clone)]
 pub struct Secrets {
     account: String,
     file: PathBuf,
@@ -60,11 +61,7 @@ impl Secrets {
                 }
             }
         }
-        std::fs::read_to_string(&self.file)
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .map(|s| (s, Backend::File))
+        std::fs::read_to_string(&self.file).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).map(|s| (s, Backend::File))
     }
 
     pub fn save(&self, value: &str) -> std::io::Result<Backend> {
