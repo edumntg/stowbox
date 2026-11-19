@@ -211,7 +211,8 @@ mod tests {
         let all: Vec<_> = ALL.iter().map(|k| serde_json::json!({ "id": k.id, "capabilities": (k.capabilities)() })).collect();
         let text = serde_json::to_string_pretty(&all).unwrap() + "\n";
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/bridge/providers.generated.json");
-        if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
+        // A Windows checkout may turn the file's line ends into CRLF.
+        if std::fs::read_to_string(&path).ok().map(|t| t.replace("\r\n", "\n")).as_deref() == Some(text.as_str()) {
             return;
         }
         if std::env::var_os("STOWBOX_REGENERATE").is_some() {

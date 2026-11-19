@@ -190,7 +190,7 @@ try {
   await page.send("Runtime.enable");
 
   try {
-    await until("the onboarding key field", () => exists("#key-boxd"), 60000);
+    await until("the onboarding key field", () => exists("#key-boxd-api_key"), 60000);
   } catch (e) {
     await describe("page while waiting for the onboarding");
     throw e;
@@ -209,13 +209,13 @@ try {
   await shot("1-onboarding");
 
   // A key that is not even shaped like one: the app's own message.
-  await type("#key-boxd", "bxd_short");
+  await type("#key-boxd-api_key", "bxd_short");
   await click("button[type=submit]");
   const local = await until("the validation error", () => text(".form-error"), 15000);
   check("malformed key gets the validation error", local.includes("does not look like a boxd API key"), local);
 
   // Shaped like a key, but not one: boxd answers and the app shows it.
-  await type("#key-boxd", "bxd_stowboxsmoke_not_a_real_key_0000000000");
+  await type("#key-boxd-api_key", "bxd_stowboxsmoke_not_a_real_key_0000000000");
   await click("button[type=submit]");
   let remote;
   try {
@@ -233,14 +233,14 @@ try {
     throw e;
   }
   check("invalid key gets boxd's refusal", remote.length > 0, remote);
-  check("still on onboarding after the refusal", (await count("#key-boxd")) === 1);
+  check("still on onboarding after the refusal", (await count("#key-boxd-api_key")) === 1);
   await shot("2-refused");
 
   // The dark theme is the default; the light one through the same path as
   // the Settings switch, so the native title bar can be compared.
   await page.eval("localStorage.setItem('stowbox.theme', 'light'); location.reload(); true");
   await sleep(1000);
-  await until("the onboarding after reload", () => exists("#key-boxd"), 30000);
+  await until("the onboarding after reload", () => exists("#key-boxd-api_key"), 30000);
   await sleep(1000);
   check("light theme applied", (await page.eval("document.documentElement.dataset.theme")) === "light");
   await shot("3-light");

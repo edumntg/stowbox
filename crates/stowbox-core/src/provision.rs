@@ -658,7 +658,8 @@ mod tests {
 
         let none = bootstrap_script(&BootstrapFlags { tmux: false, claude_code: false, codex: false, ..node_flags() });
         assert!(!none.contains("apt-get") && !none.contains("npm install"));
-        if crate::testing::has_bash() {
+        // Box-side bash only on Linux and macOS; see testing.rs.
+        if cfg!(unix) && crate::testing::has_bash() {
             for script in [all, none] {
                 let ok = std::process::Command::new("bash").arg("-n").arg("-c").arg(&script).status().unwrap().success();
                 assert!(ok, "{script}");
