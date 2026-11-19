@@ -44,12 +44,26 @@ pub const SIZES: &[Size] = &[
     Size { id: "xlarge", vcpu: 16, memory_gib: 32, disk_gb: 251, hourly_micro_usd: 200_000, note: "needs the $100 plan or higher" },
 ];
 
+const KEY_HINT: &str = "Make one with `boat api-key create stowbox` or on the boat dashboard. It needs the ssh action: Stowbox runs every command over SSH.";
+
+pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind {
+    id: "boat",
+    capabilities,
+    connect: |credentials, context| Ok(std::sync::Arc::new(Boat::new(credentials.api_key()?, BoatConfig::new(context.ssh_file("boat_ed25519")))?)),
+};
+
 pub fn capabilities() -> Capabilities {
     use PowerAction::*;
     Capabilities {
+        new_box_blurb: "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.".into(),
+        free_sizes: Vec::new(),
+        default_size: "default".into(),
+        default_disk_gib: 51,
+        ssh_hint: "boat ssh {id}".into(),
+        credential_fields: vec![crate::capabilities::CredentialField::api_key(KEY_HINT)],
+        icon: "BT".into(),
         label: "boat".into(),
         console_url: DEFAULT_CONSOLE_URL.into(),
-        key_hint: "Make one with `boat api-key create stowbox` or on the boat dashboard. It needs the ssh action: Stowbox runs every command over SSH.".into(),
         key_prefixes: vec!["boat_".into(), "box_".into()],
         currency: "usd".into(),
         power: vec![Start, Stop, Destroy],

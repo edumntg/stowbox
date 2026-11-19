@@ -39,6 +39,7 @@ pub enum Backend {
     File,
 }
 
+#[derive(Clone)]
 pub struct Secrets {
     account: String,
     file: PathBuf,

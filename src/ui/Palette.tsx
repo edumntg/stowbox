@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, on, onMount, type JS
 import type { Machine } from "../bridge/types";
 import { actions, machineById, phaseOf, selectedAgent, selectedMachine, state } from "../state/store";
 import * as I from "../icons";
-import { dotState, isMac, phaseDot, powerButtons } from "./common";
+import { ProviderIcon, dotState, isMac, phaseDot, powerButtons } from "./common";
 import { agentPhaseLabel, sizeLabel, statusLabel } from "./format";
 import { highlight, rank, type Match } from "./fuzzy";
 
@@ -15,6 +15,8 @@ interface Command {
   keywords?: string;
   detail?: string;
   icon: () => JSX.Element;
+  /** The provider of a box, next to its status. */
+  mark?: () => JSX.Element;
   run: () => void;
 }
 
@@ -99,6 +101,7 @@ function commands(query: boolean): Command[] {
       detail: `${statusLabel[m.status]} · ${sizeLabel(m)}`,
       keywords: "box",
       icon: () => <Sq state={dotState(m.status)} />,
+      mark: () => <ProviderIcon provider={m.provider} />,
       run: () => actions.select({ kind: "box", id: m.id }),
     });
   }
@@ -240,6 +243,7 @@ export default function Palette() {
                 >
                   <span class="palette-icon">{r.cmd.icon()}</span>
                   <span class="palette-label">
+                    {r.cmd.mark?.()}
                     <Label text={r.cmd.label} match={r.match} />
                   </span>
                   <span class="palette-detail">{r.cmd.detail}</span>

@@ -27,13 +27,27 @@ use tonic::{Request, Status};
 
 pub use auth::TokenExchange;
 
+const KEY_HINT: &str = "Make one at app.boxd.sh or with `boxd auth keys create stowbox`. Keys are fenced to one organization.";
+
+pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind {
+    id: "boxd",
+    capabilities,
+    connect: |credentials, _| Ok(std::sync::Arc::new(Boxd::new(credentials.api_key()?, BoxdConfig::default())?)),
+};
+
 /// What boxd offers, for the UI. Everything Stowbox was first built on.
 pub fn capabilities() -> crate::capabilities::Capabilities {
     use PowerAction::*;
     crate::capabilities::Capabilities {
+        new_box_blurb: "A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.".into(),
+        free_sizes: [(1, 4), (2, 8), (4, 16)].into_iter().map(|(vcpu, memory_gib)| crate::capabilities::FreeSize { vcpu, memory_gib }).collect(),
+        default_size: String::new(),
+        default_disk_gib: 100,
+        ssh_hint: "ssh -p {sshPort} boxd@{name}.{accessDomain|boxd.sh}".into(),
+        credential_fields: vec![crate::capabilities::CredentialField::api_key(KEY_HINT)],
+        icon: "BX".into(),
         label: "boxd".into(),
         console_url: DEFAULT_CONSOLE_URL.into(),
-        key_hint: "Make one at app.boxd.sh or with `boxd auth keys create stowbox`. Keys are fenced to one organization.".into(),
         key_prefixes: vec!["bxd_".into()],
         currency: "eur".into(),
         power: vec![Start, Stop, Reboot, Pause, Resume, Hibernate, Wake, Destroy],

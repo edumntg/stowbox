@@ -12,19 +12,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stowbox_core::agent::{self, session, AgentMeta, Harness};
-use stowbox_core::agent37::{Agent37, Agent37Config};
 use stowbox_core::audit::{AuditLog, Event as AuditEvent};
-use stowbox_core::boat::{Boat, BoatConfig};
-use stowbox_core::boxd::{Boxd, BoxdConfig};
 use stowbox_core::capabilities::Capabilities;
 use stowbox_core::cost::{self, RateCard};
-use stowbox_core::daytona::{Daytona, DaytonaConfig};
 use stowbox_core::git::{self, GitReview, PrOutcome};
 use stowbox_core::guard::{self, BoxActivity, IdlePolicy, IdleWatch, SpendCheck, SpendFigure, Verdict};
 use stowbox_core::metrics::MachineMetrics;
 use stowbox_core::notify::{Notice, Notifier};
 use stowbox_core::ports;
 use stowbox_core::provider::Provider;
+use stowbox_core::providers::{self, ConnectContext, Credentials};
 use stowbox_core::provision::{self, Prepared, Preset, ProvisionRun, RunEvent, Variable};
 use stowbox_core::registry::Registry;
 use stowbox_core::ssh;
@@ -46,34 +43,9 @@ struct RunHandle {
     abort: AbortHandle,
 }
 
-/// Every provider Stowbox can drive, in the order the UI lists them.
-const PROVIDERS: &[&str] = &["boxd", "boat", "daytona", "agent37"];
-
-fn capabilities_of(id: &str) -> Option<Capabilities> {
-    match id {
-        "boxd" => Some(stowbox_core::boxd::capabilities()),
-        "boat" => Some(stowbox_core::boat::capabilities()),
-        "daytona" => Some(stowbox_core::daytona::capabilities()),
-        "agent37" => Some(stowbox_core::agent37::capabilities()),
-        _ => None,
-    }
-}
-
-/// A client for `id` with `key`. Must run inside the Tokio runtime: boxd's
-/// lazy gRPC channel binds to the runtime it is made in.
-fn make_provider(id: &str, key: String, data_dir: &std::path::Path) -> CmdResult<Arc<dyn Provider>> {
-    Ok(match id {
-        "boxd" => Arc::new(Boxd::new(key, BoxdConfig::default()).map_err(err)?),
-        "boat" => Arc::new(Boat::new(key, BoatConfig::new(data_dir.join("ssh").join("boat_ed25519"))).map_err(err)?),
-        "daytona" => Arc::new(Daytona::new(DaytonaConfig::new(data_dir.join("ssh").join("daytona_known_hosts")), key).map_err(err)?),
-        "agent37" => Arc::new(Agent37::new(key, Agent37Config::new(data_dir.join("ssh").join("agent37_ed25519"))).map_err(err)?),
-        other => return Err(format!("Stowbox does not know the provider {other}")),
-    })
-}
-
 struct AppState {
     providers: Registry,
-    /// The API key store of each provider in `PROVIDERS`.
+    /// The credential store of each provider in `providers::ALL`.
     secrets: HashMap<&'static str, secrets::Secrets>,
     secret_backend: RwLock<HashMap<String, secrets::Backend>>,
     store: Store,
@@ -312,32 +284,33 @@ fn yes() -> bool {
 #[tauri::command]
 async fn provider_status(state: State<'_, AppState>) -> CmdResult<ProviderStatus> {
     let backends = state.secret_backend.read().await.clone();
-    let providers = PROVIDERS
+    let providers = providers::ALL
         .iter()
-        .map(|id| ProviderInfo {
-            id,
-            connected: state.providers.get(id).is_some(),
-            secret_backend: backends.get(*id).copied(),
-            capabilities: capabilities_of(id).expect("every listed provider has capabilities"),
+        .map(|kind| ProviderInfo {
+            id: kind.id,
+            connected: state.providers.get(kind.id).is_some(),
+            secret_backend: backends.get(kind.id).copied(),
+            capabilities: (kind.capabilities)(),
         })
         .collect();
     Ok(ProviderStatus { configured: state.configured().await, providers })
 }
 
-/// Checks the key with the provider, then keeps it. Connecting a second
-/// provider leaves the first one connected.
+/// Checks the credentials with the provider, then keeps them. Connecting a
+/// second provider leaves the first one connected.
 #[tauri::command]
-async fn set_api_key(state: State<'_, AppState>, provider: Option<String>, key: String) -> CmdResult<Account> {
-    let id = provider.unwrap_or_else(|| "boxd".into());
-    let caps = capabilities_of(&id).ok_or_else(|| format!("Stowbox does not know the provider {id}"))?;
-    let key = key.trim().to_string();
-    if !caps.key_prefixes.iter().any(|p| key.starts_with(p.as_str())) || key.len() < 20 {
-        return Err(format!("That does not look like a {} API key. Keys start with {}. {}", caps.label, caps.key_prefixes.join(" or "), caps.key_hint));
-    }
-    let p = make_provider(&id, key.clone(), &state.data_dir)?;
+async fn set_credentials(state: State<'_, AppState>, provider: String, values: HashMap<String, String>) -> CmdResult<Account> {
+    let kind = providers::find(&provider).map_err(err)?;
+    let id = kind.id.to_string();
+    let credentials = Credentials::new(values);
+    credentials.validate(&(kind.capabilities)()).map_err(err)?;
+    let encoded = credentials.encode().map_err(err)?;
+    let p = (kind.connect)(credentials, &ConnectContext::new(&state.data_dir)).map_err(err)?;
     let account = p.whoami().await.map_err(err)?;
-    let store = state.secrets.get(id.as_str()).ok_or("no key store for this provider")?;
-    let backend = store.save(&key).map_err(|e| format!("could not store the key: {e}"))?;
+    let store = state.secrets.get(kind.id).ok_or("no key store for this provider")?.clone();
+    // The keychain can block on the OS, for a prompt or a locked session.
+    let backend =
+        tauri::async_runtime::spawn_blocking(move || store.save(&encoded)).await.map_err(err)?.map_err(|e| format!("could not store the key: {e}"))?;
     state.secret_backend.write().await.insert(id.clone(), backend);
     state.audit(AuditEvent::KeySaved { provider: id.clone(), backend: format!("{backend:?}").to_lowercase() });
     state.providers.set(p);
@@ -350,7 +323,7 @@ async fn set_api_key(state: State<'_, AppState>, provider: Option<String>, key: 
 async fn clear_api_key(state: State<'_, AppState>, provider: Option<String>) -> CmdResult<()> {
     let ids: Vec<String> = match provider {
         Some(id) => vec![id],
-        None => PROVIDERS.iter().map(|s| s.to_string()).collect(),
+        None => providers::ALL.iter().map(|k| k.id.to_string()).collect(),
     };
     for id in ids {
         if let Some(s) = state.secrets.get(id.as_str()) {
@@ -1382,7 +1355,7 @@ async fn terminal_close(state: State<'_, AppState>, id: String) -> CmdResult<()>
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
@@ -1391,7 +1364,8 @@ pub fn run() {
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             let home = app.path().home_dir().ok();
-            let secrets: HashMap<&'static str, secrets::Secrets> = PROVIDERS.iter().map(|id| (*id, secrets::Secrets::new(data.join("secrets"), id))).collect();
+            let secrets: HashMap<&'static str, secrets::Secrets> =
+                providers::ALL.iter().map(|k| (k.id, secrets::Secrets::new(data.join("secrets"), k.id))).collect();
             let store = Store::new(data.join("state"));
             let preset_secrets = secrets::PresetSecrets::new(data.join("secrets"));
 
@@ -1400,12 +1374,13 @@ pub fn run() {
             let _runtime = tauri::async_runtime::handle().inner().enter();
             let providers = Registry::new();
             let mut backends = HashMap::new();
-            for id in PROVIDERS {
-                let Some((key, backend)) = secrets[id].load() else { continue };
-                backends.insert(id.to_string(), backend);
-                match make_provider(id, key, &data) {
+            let context = ConnectContext::new(&data);
+            for kind in providers::ALL {
+                let Some((stored, backend)) = secrets.get(kind.id).and_then(secrets::Secrets::load) else { continue };
+                backends.insert(kind.id.to_string(), backend);
+                match (kind.connect)(Credentials::decode(&stored), &context) {
                     Ok(p) => providers.set(p),
-                    Err(e) => eprintln!("stowbox: could not initialise the {id} client: {e}"),
+                    Err(e) => eprintln!("stowbox: could not initialise the {} client: {e}", kind.id),
                 }
             }
             let agents = tauri::async_runtime::block_on(store.load_agents()).unwrap_or_else(|e| {
@@ -1453,7 +1428,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             provider_status,
-            set_api_key,
+            set_credentials,
             clear_api_key,
             whoami,
             list_machines,
@@ -1504,6 +1479,9 @@ pub fn run() {
             terminal_resize,
             terminal_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running stowbox");
+        .run(tauri::generate_context!());
+    if let Err(e) = app {
+        eprintln!("stowbox: could not run: {e}");
+        std::process::exit(1);
+    }
 }

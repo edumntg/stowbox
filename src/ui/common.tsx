@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js";
 import type { AgentMeta, Machine, MachineStatus, PowerAction } from "../bridge/types";
-import { actions, capsFor, state } from "../state/store";
+import { actions, capsFor, capsOf, state } from "../state/store";
 import * as I from "../icons";
 import { agentPhase, agentPhaseLabel, statusLabel, type AgentPhase } from "./format";
 
@@ -40,6 +40,20 @@ export const BoxState = (p: { status: MachineStatus; always?: boolean }) => (
 export const AgentDot = (p: { agent: AgentMeta }) => {
   const phase = () => agentPhase(state.live[p.agent.id]);
   return <span class="dot" data-state={phaseDot[phase()]} title={agentPhaseLabel[phase()]} />;
+};
+
+// Bundled at build time, so no request reveals which providers someone uses.
+const providerMarks = import.meta.glob<string>("../assets/providers/*.svg", { eager: true, query: "?url", import: "default" });
+
+/** A provider's mark in the text colour of its row, or its monogram in a
+ * square when no mark is bundled. */
+export const ProviderIcon = (p: { provider: string }) => {
+  const mark = () => providerMarks[`../assets/providers/${p.provider}.svg`];
+  return (
+    <Show when={mark()} fallback={<span class="provider-mono" aria-hidden="true">{capsOf(p.provider)?.icon ?? ""}</span>}>
+      {(url) => <span class="provider-mark" aria-hidden="true" style={{ "mask-image": `url("${url()}")`, "-webkit-mask-image": `url("${url()}")` }} />}
+    </Show>
+  );
 };
 
 /** The app mark: one cube, one stroke. */

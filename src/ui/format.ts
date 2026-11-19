@@ -2,6 +2,19 @@ import type { AgentLive, Machine, MachineStatus, SpendCheck } from "../bridge/ty
 
 const GIB = 1024 ** 3;
 
+/** Fills a provider's SSH template. "" hides the line: a field is missing, or
+ * holds something unsafe to offer as a command the person will paste. */
+export function sshHint(template: string, m: Pick<Machine, "id" | "name" | "sshPort" | "accessDomain">): string {
+  const values: Record<string, string> = { id: m.id, name: m.name, sshPort: m.sshPort ? String(m.sshPort) : "", accessDomain: m.accessDomain };
+  let usable = true;
+  const filled = template.replace(/\{(\w+)(?:\|([^}]*))?\}/g, (_, field: string, fallback?: string) => {
+    const value = values[field] || fallback || "";
+    if (!/^[\w.-]+$/.test(value)) usable = false;
+    return value;
+  });
+  return usable ? filled : "";
+}
+
 export function money(micro: number, currency: string): string {
   const symbol = currency === "eur" ? "€" : currency === "usd" ? "$" : currency.toUpperCase() + " ";
   const units = micro / 1_000_000;

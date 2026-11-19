@@ -31,6 +31,7 @@ use crate::capabilities::{Capabilities, SizeOption};
 use crate::cost::{RateCard, SizeRate};
 use crate::ports::HttpsRoute;
 use crate::provider::Provider;
+use crate::provision::BootstrapFlags;
 use crate::sshexec::{self, Authorize, Dial, Endpoint, HostCheck, Login};
 use crate::types::*;
 use crate::{Error, Result};
@@ -52,23 +53,6 @@ const SSH_PORT: u16 = 22022;
 const USER: &str = "node";
 /// A plain Linux sandbox with Node, Python, git and build tools.
 const TEMPLATE: &str = "agent37-base";
-/// Where the install's log and exit code land, in the user's home.
-const BOOTSTRAP_DIR: &str = "/home/node/.stowbox";
-/// Run as root in a new instance: what agents need that the image lacks.
-///
-/// The container's env (npm's prefix in the user's home, and its `bin` on
-/// PATH) is not what an SSH login gets, so a profile.d script puts it back
-/// for the `bash -lc` every exec runs in.
-const BOOTSTRAP: &str = "mkdir -p /home/node/.stowbox && chown node:node /home/node/.stowbox && \
-    printf '%s\\n' 'export NPM_CONFIG_PREFIX=\"$HOME/.npm-global\"' \
-      'case \":$PATH:\" in *\":$HOME/.npm-global/bin:\"*) ;; *) PATH=\"$HOME/.local/bin:$HOME/.npm-global/bin:$PATH\" ;; esac' \
-      > /etc/profile.d/agent37-npm.sh && \
-    ( export DEBIAN_FRONTEND=noninteractive; \
-      (command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)) && \
-      runuser -u node -- npm install -g --no-fund --no-audit @anthropic-ai/claude-code @openai/codex \
-    ) > /home/node/.stowbox/bootstrap.log 2>&1; echo $? > /home/node/.stowbox/bootstrap.exit";
-/// How long the install may take before the create returns without it.
-const BOOTSTRAP_WAIT: Duration = Duration::from_secs(300);
 /// The idle timeout of an instance made without one; Agent37 takes 5 min to a day.
 const DEFAULT_IDLE_SECS: u32 = 3600;
 const IDLE_RANGE: (u32, u32) = (300, 86_400);
@@ -105,14 +89,27 @@ fn running_micro(s: &Shape, multiple: f64) -> i64 {
     compute.round() as i64 + s.disk_gb as i64 * RATES.disk_gib_hour_micro
 }
 
+const KEY_HINT: &str =
+    "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal.";
+
+pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind {
+    id: "agent37",
+    capabilities,
+    connect: |credentials, context| Ok(Arc::new(Agent37::new(credentials.api_key()?, Agent37Config::new(context.ssh_file("agent37_ed25519")))?)),
+};
+
 pub fn capabilities() -> Capabilities {
     use PowerAction::*;
     Capabilities {
+        new_box_blurb: "A persistent Linux sandbox on Agent37, billed by the minute. Stowbox installs tmux, Claude Code and Codex in it, which adds about half a minute. With no activity it sleeps and bills only its disk; the next connection wakes it.".into(),
+        free_sizes: Vec::new(),
+        default_size: DEFAULT_SHAPE.id.into(),
+        default_disk_gib: DEFAULT_SHAPE.disk_gb,
+        ssh_hint: "npx agent37 ssh {id}".into(),
+        credential_fields: vec![crate::capabilities::CredentialField::api_key(KEY_HINT)],
+        icon: "A3".into(),
         label: "agent37".into(),
         console_url: DEFAULT_CONSOLE_URL.into(),
-        key_hint:
-            "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal."
-                .into(),
         key_prefixes: vec!["sk_live_".into()],
         currency: "usd".into(),
         power: vec![Start, Stop, Reboot, Hibernate, Wake, Destroy],
@@ -210,24 +207,6 @@ impl Agent37 {
     /// held leaves the map as it was, which is still a valid cache.
     fn links(&self) -> MutexGuard<'_, HashMap<String, Vec<HttpsRoute>>> {
         self.links.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Installs what agents need in a new instance and waits for it. The
-    /// exit code of the install, or an error when it could not be started
-    /// or did not end in time.
-    async fn bootstrap(&self, id: &str) -> Result<i64> {
-        self.api.exec(id, BOOTSTRAP, true, true).await?;
-        let deadline = Instant::now() + BOOTSTRAP_WAIT;
-        while Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            // A poll that fails (the instance settling) is tried again.
-            if let Ok(v) = self.api.exec(id, &format!("cat {BOOTSTRAP_DIR}/bootstrap.exit 2>/dev/null"), false, false).await {
-                if let Ok(code) = v.get("stdout").and_then(Value::as_str).unwrap_or("").trim().parse::<i64>() {
-                    return Ok(code);
-                }
-            }
-        }
-        Err(Error::Network(format!("installing tmux and the agents in {id} did not finish within five minutes")))
     }
 
     async fn instance(&self, id: &str) -> Result<Value> {
@@ -366,7 +345,8 @@ impl Provider for Agent37 {
         let m = convert::machine(&i);
         // The box is made either way; without the tools an agent's terminal
         // says what is missing, and the log is in ~/.stowbox/bootstrap.log.
-        let _ = self.bootstrap(&m.id).await;
+        let flags = BootstrapFlags { user: USER.into(), home: format!("/home/{USER}"), tmux: true, claude_code: true, codex: true };
+        let _ = crate::provision::ensure_agent_tools(self, &m.id, &flags).await;
         Ok(m)
     }
 
@@ -421,6 +401,12 @@ impl Provider for Agent37 {
         let body = if secs == 0 { json!({ "auto_sleep": false }) } else { json!({ "auto_sleep": true, "idle_timeout_seconds": idle_secs(secs) }) };
         self.api.patch(&format!("/instances/{}", seg(id)), body).await?;
         Ok(())
+    }
+
+    async fn admin_exec(&self, id: &str, script: &str, root: bool, background: bool) -> Result<String> {
+        check_id(id)?;
+        let answer = self.api.exec(id, script, root, background).await?;
+        Ok(answer.get("stdout").and_then(Value::as_str).unwrap_or("").to_string())
     }
 
     async fn exec(&self, id: &str, spec: ExecSpec) -> Result<ExecHandle> {

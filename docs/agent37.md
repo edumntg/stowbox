@@ -41,7 +41,7 @@ is an instance of that workspace.
   Python and git but no tmux, no harness and no sudo. Before the create
   returns, a background REST exec as root installs tmux, then Claude Code
   and Codex as `node` into its own npm prefix (so they update themselves),
-  and writes `/etc/profile.d/agent37-npm.sh` so SSH logins have that prefix
+  and writes `/etc/profile.d/stowbox-npm.sh` so SSH logins have that prefix
   on PATH. Stowbox polls `~/.stowbox/bootstrap.exit` with short calls rather
   than holding one request open, which can be dropped while the command
   carries on. It takes about half a minute; the log is

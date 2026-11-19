@@ -127,11 +127,30 @@ export interface UpdateInfo {
   date: string;
 }
 
+/** One value a provider needs to connect. */
+export interface CredentialField {
+  name: string;
+  label: string;
+  secret: boolean;
+  hint: string;
+}
+
 /** What a provider supports. Mirrors core capabilities::Capabilities. */
 export interface Capabilities {
+  newBoxBlurb: string;
+  /** Free-size choices in New box, for providers with `customSize`. */
+  freeSizes: { vcpu: number; memoryGib: number }[];
+  /** The `sizes` entry New box starts on, without `customSize`. */
+  defaultSize: string;
+  /** The disk a new box gets, for the running estimate. */
+  defaultDiskGib: number;
+  /** The SSH command as a template; see `sshHint` in ui/format.ts. */
+  sshHint: string;
+  credentialFields: CredentialField[];
+  /** The monogram shown when the provider has no bundled mark. */
+  icon: string;
   label: string;
   consoleUrl: string;
-  keyHint: string;
   keyPrefixes: string[];
   currency: string;
   power: PowerAction[];
@@ -529,8 +548,8 @@ export interface Listening {
 
 export interface Api {
   providerStatus(): Promise<ProviderStatus>;
-  /** Checks the key with the provider and keeps it; other providers stay connected. */
-  setApiKey(provider: string, key: string): Promise<Account>;
+  /** Checks the credentials with the provider and keeps them; other providers stay connected. */
+  setCredentials(provider: string, values: Record<string, string>): Promise<Account>;
   /** Forgets one provider's key, or every key when `provider` is null. */
   clearApiKey(provider: string | null): Promise<void>;
   whoami(provider: string): Promise<Account>;

@@ -1,5 +1,8 @@
 //! Test doubles shared by the modules that drive a box over exec.
 
+mod conformance;
+mod live;
+
 use crate::provider::Provider;
 use crate::types::*;
 use crate::Result;

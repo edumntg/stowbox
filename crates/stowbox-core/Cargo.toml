@@ -22,11 +22,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 thiserror = "2"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
-# boat.dev's command API has no stdin or TTY, so boat execs run over SSH.
-# 0.54 is the newest that builds on the workspace's Rust 1.80; ring keeps one
-# crypto backend with tonic's TLS.
 getrandom = "0.2"
-russh = { version = "0.54", default-features = false, features = ["ring", "rsa"] }
+# boat.dev's command API has no stdin or TTY, so boat execs run over SSH.
+# ring keeps one crypto backend with tonic's TLS.
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
 # Agent37 boxes take SSH only through a WebSocket at its edge (wstunnel.rs).
 # The same rustls and ring as reqwest and tonic.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

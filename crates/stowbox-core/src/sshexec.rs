@@ -18,7 +18,7 @@ use crate::boxd::shell_quote;
 use crate::types::{ExecHandle, ExecInput, ExecOutput, ExecSpec};
 use crate::{Error, Result};
 use russh::client;
-use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey};
+use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::ChannelMsg;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -130,7 +130,12 @@ struct Checker {
 impl client::Handler for Checker {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, key: &PublicKey) -> std::result::Result<bool, Self::Error> {
+    async fn check_server_key(&mut self, key: &PublicKeyOrCertificate) -> std::result::Result<bool, Self::Error> {
+        // No provider announces a certificate authority, so nothing vouches
+        // for a certificate; it must not be pinned or remembered as a key.
+        let PublicKeyOrCertificate::PublicKey { key, .. } = key else {
+            return Ok(self.check == HostCheck::Edge);
+        };
         Ok(match &self.check {
             HostCheck::Pinned(expected) => key.key_data() == expected.key_data(),
             HostCheck::Remembered(path) => remember_host_key(path, &self.at, key),
@@ -489,6 +494,30 @@ fn signal_number(s: &russh::Sig) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use russh::client::Handler;
+
+    const HOST_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIBJTU59j3HRwRnqvcgkRZcLUm4HubVI5GWQ6LxuS8O8";
+    /// `HOST_KEY` signed by a throwaway certificate authority.
+    const HOST_CERT: &str = "ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIF1sYftjGlln+VgcRvZsKMUiaTDJYKZ2DlhWwYvLIcWjAAAAIIBJTU59j3HRwRnqvcgkRZcLUm4HubVI5GWQ6LxuS8O8AAAAAAAAAAAAAAACAAAAB2ZpeHR1cmUAAAAPAAAAC2JveC5leGFtcGxlAAAAAAAAAAD//////////wAAAAAAAAAAAAAAAAAAADMAAAALc3NoLWVkMjU1MTkAAAAgPqqyDemW/z0Qek3OWIw3yl4n35t1bx79cIN4gPoHOecAAABTAAAAC3NzaC1lZDI1NTE5AAAAQIFTld30CS7LMwA+MTEDlGtPrr0c6vw3a3HGZn2lqyw0mcrI3Nsfj4p+Y9k082lI9OFRycPjn/GIDt4hRQVnSAk= host";
+
+    async fn accepts(check: HostCheck, key: PublicKeyOrCertificate) -> bool {
+        Checker { check, at: "box.example:22".into() }.check_server_key(&key).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_certificate_is_never_taken_for_the_key_inside_it() {
+        let key = parse_host_key(HOST_KEY).unwrap();
+        let cert = || PublicKeyOrCertificate::from(russh::keys::Certificate::from_openssh(HOST_CERT).unwrap());
+        assert!(accepts(HostCheck::Pinned(key.clone()), key.clone().into()).await);
+        assert!(!accepts(HostCheck::Pinned(key), cert()).await);
+
+        let dir = crate::testing::temp_dir("stowbox-hostcert");
+        let known = dir.join("known_hosts");
+        assert!(!accepts(HostCheck::Remembered(known.clone()), cert()).await);
+        assert!(!known.exists(), "a refused certificate must not be remembered");
+        assert!(accepts(HostCheck::Edge, cert()).await);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn the_marker_yields_the_group_and_hides_itself() {

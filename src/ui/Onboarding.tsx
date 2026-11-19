@@ -2,7 +2,7 @@ import { For, Show, createSignal } from "solid-js";
 import type { ProviderInfo } from "../bridge/types";
 import { actions, demo, state } from "../state/store";
 import * as I from "../icons";
-import { BrandMark } from "./common";
+import { BrandMark, ProviderIcon } from "./common";
 
 function errorText(e: unknown): string {
   return typeof e === "string" ? e : e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
@@ -14,20 +14,21 @@ const host = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/.*$/, "
 /** One provider's API key field, its hint and Connect. Used by onboarding
  * and by Settings for a provider that is not connected yet. */
 export function ProviderKeyForm(p: { provider: ProviderInfo; onDone?: () => void }) {
-  const [key, setKey] = createSignal("");
+  const [values, setValues] = createSignal<Record<string, string>>({});
   const [reveal, setReveal] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const caps = () => p.provider.capabilities;
-  const inputId = () => `key-${p.provider.id}`;
+  const inputId = (field: string) => `key-${p.provider.id}-${field}`;
+  const complete = () => caps().credentialFields.every((f) => values()[f.name]?.trim());
 
   const connect = async () => {
-    if (!key().trim() || busy()) return;
+    if (!complete() || busy()) return;
     setBusy(true);
     setError("");
     try {
-      await actions.saveKey(p.provider.id, key());
-      setKey("");
+      await actions.saveCredentials(p.provider.id, values());
+      setValues({});
       p.onDone?.();
     } catch (e) {
       setError(errorText(e));
@@ -44,37 +45,47 @@ export function ProviderKeyForm(p: { provider: ProviderInfo; onDone?: () => void
         void connect();
       }}
     >
-      <div class="field">
-        <label for={inputId()}>{caps().label} API key</label>
-        <div class="input-row">
-          <input
-            id={inputId()}
-            class="input mono"
-            type={reveal() ? "text" : "password"}
-            placeholder={`${caps().keyPrefixes[0] ?? ""}…`}
-            autocomplete="off"
-            spellcheck={false}
-            value={key()}
-            onInput={(e) => setKey(e.currentTarget.value)}
-          />
-          <button type="button" class="icon-btn" title={reveal() ? "Hide" : "Show"} aria-label="Toggle key visibility" onClick={() => setReveal(!reveal())}>
-            <Show when={reveal()} fallback={<I.Eye />}>
-              <I.EyeOff />
-            </Show>
-          </button>
-        </div>
-      </div>
-      <p class="hint">
-        {caps().keyHint}{" "}
-        <button type="button" class="link" onClick={() => void actions.open(caps().consoleUrl)}>
-          {host(caps().consoleUrl)}
-        </button>
-      </p>
+      <For each={caps().credentialFields}>
+        {(f) => (
+          <>
+            <div class="field">
+              <label for={inputId(f.name)}>
+                {caps().label} {f.label}
+              </label>
+              <div class="input-row">
+                <input
+                  id={inputId(f.name)}
+                  class="input mono"
+                  type={f.secret && !reveal() ? "password" : "text"}
+                  placeholder={f.name === "api_key" ? `${caps().keyPrefixes[0] ?? ""}…` : ""}
+                  autocomplete="off"
+                  spellcheck={false}
+                  value={values()[f.name] ?? ""}
+                  onInput={(e) => setValues({ ...values(), [f.name]: e.currentTarget.value })}
+                />
+                <Show when={f.secret}>
+                  <button type="button" class="icon-btn" title={reveal() ? "Hide" : "Show"} aria-label="Toggle key visibility" onClick={() => setReveal(!reveal())}>
+                    <Show when={reveal()} fallback={<I.Eye />}>
+                      <I.EyeOff />
+                    </Show>
+                  </button>
+                </Show>
+              </div>
+            </div>
+            <p class="hint">
+              {f.hint}{" "}
+              <button type="button" class="link" onClick={() => void actions.open(caps().consoleUrl)}>
+                {host(caps().consoleUrl)}
+              </button>
+            </p>
+          </>
+        )}
+      </For>
       <Show when={error()}>
         <div class="form-error">{error()}</div>
       </Show>
       <div class="dialog-actions" style={{ "justify-content": "flex-start" }}>
-        <button type="submit" class="btn primary" disabled={!key().trim() || busy()}>
+        <button type="submit" class="btn primary" disabled={!complete() || busy()}>
           <I.Key /> {busy() ? `Checking with ${caps().label}…` : `Connect ${caps().label}`}
         </button>
       </div>
@@ -103,7 +114,9 @@ export default function Onboarding() {
           <For each={providers()}>
             {(p) => (
               <button type="button" class="choice" aria-pressed={chosen()?.id === p.id} onClick={() => setPick(p.id)}>
-                <span>{p.capabilities.label}</span>
+                <span class="choice-name">
+                  <ProviderIcon provider={p.id} /> {p.capabilities.label}
+                </span>
                 <span class="faint">{p.capabilities.currency.toUpperCase()} · {p.capabilities.customSize ? "any size" : `${p.capabilities.sizes.length} sizes`}</span>
               </button>
             )}

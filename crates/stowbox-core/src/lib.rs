@@ -8,6 +8,7 @@
 //!   WebSocket at its edge.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
+//! - `providers`: the list of providers, their credentials and how to connect.
 //! - `registry`: the connected providers, and which one owns each box.
 //! - `agent`: a coding agent's interactive session inside a box, its state,
 //!   and the Claude Code login the box uses.
@@ -44,6 +45,7 @@ pub mod metrics;
 pub mod notify;
 pub mod ports;
 pub mod provider;
+pub mod providers;
 pub mod provision;
 pub mod registry;
 pub mod ssh;

@@ -20,15 +20,59 @@ pub struct SizeOption {
     pub note: String,
 }
 
+/// One free-size choice in New box, for providers with `custom_size`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreeSize {
+    pub vcpu: u32,
+    pub memory_gib: u32,
+}
+
+/// One value a provider needs to connect. The values are stored together in
+/// the OS keychain, never in the store file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialField {
+    /// The value's key in [`crate::providers::Credentials`].
+    pub name: String,
+    pub label: String,
+    /// Masked while typed.
+    pub secret: bool,
+    /// Where to find the value, in the words of the onboarding screen.
+    pub hint: String,
+}
+
+impl CredentialField {
+    /// The single API key most providers connect with.
+    pub fn api_key(hint: &str) -> Self {
+        Self { name: crate::providers::API_KEY.into(), label: "API key".into(), secret: true, hint: hint.into() }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
+    /// What a new box is, in the provider's own terms, for the New box dialog.
+    pub new_box_blurb: String,
+    /// The free-size choices in New box, for providers with `custom_size`.
+    pub free_sizes: Vec<FreeSize>,
+    /// The `sizes` entry New box starts on, for providers without
+    /// `custom_size`.
+    pub default_size: String,
+    /// The disk a new box gets, in GiB, for the running estimate only.
+    pub default_disk_gib: u32,
+    /// The SSH command shown for a box, as a template over `{id}`, `{name}`,
+    /// `{sshPort}` and `{accessDomain}`, where `{field|text}` falls back to
+    /// `text`. A field with no value hides the line, and so does "".
+    pub ssh_hint: String,
+    /// What the person enters to connect.
+    pub credential_fields: Vec<CredentialField>,
+    /// The monogram shown when `src/assets/providers/<id>.svg` does not exist.
+    pub icon: String,
     /// Short name shown next to boxes and in Settings: "boxd", "boat".
     pub label: String,
     /// The provider's web console, opened from Settings.
     pub console_url: String,
-    /// Where keys are made, in the words of the onboarding screen.
-    pub key_hint: String,
     /// Accepted key prefixes, for a quick check before the network.
     pub key_prefixes: Vec<String>,
     /// Lower-case ISO 4217 of prices and balances.

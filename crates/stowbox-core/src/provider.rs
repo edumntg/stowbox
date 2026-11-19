@@ -27,6 +27,12 @@ pub trait Provider: Send + Sync {
         Err(crate::Error::Provider(format!("{} has no auto-stop", self.id())))
     }
     async fn exec(&self, id: &str, spec: ExecSpec) -> Result<ExecHandle>;
+    /// Runs `script` through the provider's own command API, which works
+    /// before SSH does and can be root, and returns its stdout. `background`
+    /// returns as soon as the script has started.
+    async fn admin_exec(&self, _id: &str, _script: &str, _root: bool, _background: bool) -> Result<String> {
+        Err(crate::Error::Provider(format!("{} has no command API", self.id())))
+    }
 
     async fn machine_usage(&self, id: &str) -> Result<Usage>;
     async fn org_billing(&self, org: &str) -> Result<OrgBilling>;

@@ -33,6 +33,78 @@ use std::time::{Duration, Instant};
 /// Where the secrets file lives inside the box, relative to `$HOME`.
 pub const ENV_FILE: &str = ".config/stowbox/env.sh";
 
+/// How long installing the agent tools may take before the create returns
+/// without them.
+const BOOTSTRAP_WAIT: Duration = Duration::from_secs(300);
+const BOOTSTRAP_POLL: Duration = Duration::from_secs(3);
+
+/// What a new box needs installed for agents to run in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootstrapFlags {
+    /// The box's own user, who owns the npm prefix so the agents can update
+    /// themselves.
+    pub user: String,
+    pub home: String,
+    pub tmux: bool,
+    pub claude_code: bool,
+    pub codex: bool,
+}
+
+/// The install, run as root. An SSH login does not get the container's env,
+/// so a profile.d script puts npm's prefix on PATH for the `bash -lc` every
+/// exec runs in.
+fn bootstrap_script(flags: &BootstrapFlags) -> String {
+    use crate::boxd::shell_quote;
+    let dir = format!("{}/.stowbox", flags.home);
+    let (quoted_dir, user) = (shell_quote(&dir), shell_quote(&flags.user));
+    let mut steps = Vec::new();
+    if flags.tmux {
+        steps.push("(command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux))".to_string());
+    }
+    let packages: Vec<&str> = [(flags.claude_code, "@anthropic-ai/claude-code"), (flags.codex, "@openai/codex")]
+        .into_iter()
+        .filter(|(wanted, _)| *wanted)
+        .map(|(_, name)| name)
+        .collect();
+    if !packages.is_empty() {
+        steps.push(format!("runuser -u {user} -- npm install -g --no-fund --no-audit {}", packages.join(" ")));
+    }
+    if steps.is_empty() {
+        steps.push("true".to_string());
+    }
+    format!(
+        "mkdir -p {quoted_dir} && chown {user}:{user} {quoted_dir} && \
+         printf '%s\\n' 'export NPM_CONFIG_PREFIX=\"$HOME/.npm-global\"' \
+           'case \":$PATH:\" in *\":$HOME/.npm-global/bin:\"*) ;; *) PATH=\"$HOME/.local/bin:$HOME/.npm-global/bin:$PATH\" ;; esac' \
+           > /etc/profile.d/stowbox-npm.sh && \
+         ( export DEBIAN_FRONTEND=noninteractive; {} ) > {quoted_dir}/bootstrap.log 2>&1; echo $? > {quoted_dir}/bootstrap.exit",
+        steps.join(" && ")
+    )
+}
+
+/// Installs what agents need in a new box and waits for it, returning the
+/// install's exit code. It runs in the background and is polled for: one
+/// request held open that long can be dropped while the command carries on.
+pub async fn ensure_agent_tools(p: &dyn Provider, id: &str, flags: &BootstrapFlags) -> Result<i64> {
+    wait_for_agent_tools(p, id, flags, BOOTSTRAP_POLL, BOOTSTRAP_WAIT).await
+}
+
+async fn wait_for_agent_tools(p: &dyn Provider, id: &str, flags: &BootstrapFlags, poll: Duration, wait: Duration) -> Result<i64> {
+    p.admin_exec(id, &bootstrap_script(flags), true, true).await?;
+    let read_exit = format!("cat {} 2>/dev/null", crate::boxd::shell_quote(&format!("{}/.stowbox/bootstrap.exit", flags.home)));
+    let deadline = Instant::now() + wait;
+    while Instant::now() < deadline {
+        tokio::time::sleep(poll).await;
+        // A poll that fails (the box settling) is tried again.
+        if let Ok(stdout) = p.admin_exec(id, &read_exit, false, false).await {
+            if let Ok(code) = stdout.trim().parse::<i64>() {
+                return Ok(code);
+            }
+        }
+    }
+    Err(Error::Network(format!("installing the agent tools in {id} did not finish within {} seconds", wait.as_secs())))
+}
+
 /// Kept in the run record; older output is dropped from the front.
 pub const OUTPUT_CAP: usize = 256 * 1024;
 
@@ -572,6 +644,112 @@ impl LineBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn node_flags() -> BootstrapFlags {
+        BootstrapFlags { user: "node".into(), home: "/home/node".into(), tmux: true, claude_code: true, codex: true }
+    }
+
+    #[test]
+    fn the_bootstrap_installs_only_what_is_asked_for() {
+        let all = bootstrap_script(&node_flags());
+        assert!(all.contains("apt-get install -y -qq tmux"));
+        assert!(all.contains("runuser -u node -- npm install -g --no-fund --no-audit @anthropic-ai/claude-code @openai/codex"));
+        assert!(all.ends_with("echo $? > /home/node/.stowbox/bootstrap.exit"));
+
+        let none = bootstrap_script(&BootstrapFlags { tmux: false, claude_code: false, codex: false, ..node_flags() });
+        assert!(!none.contains("apt-get") && !none.contains("npm install"));
+        if crate::testing::has_bash() {
+            for script in [all, none] {
+                let ok = std::process::Command::new("bash").arg("-n").arg("-c").arg(&script).status().unwrap().success();
+                assert!(ok, "{script}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_hostile_user_name_stays_one_shell_word() {
+        let script = bootstrap_script(&BootstrapFlags { user: "x; rm -rf /".into(), ..node_flags() });
+        assert!(script.contains("runuser -u 'x; rm -rf /' --"));
+    }
+
+    /// Answers the install, fails the first poll, then reports `exit`.
+    struct Installing {
+        calls: std::sync::Mutex<Vec<(String, bool, bool)>>,
+        exit: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for Installing {
+        fn id(&self) -> &'static str {
+            "installing"
+        }
+        fn capabilities(&self) -> crate::capabilities::Capabilities {
+            crate::boxd::capabilities()
+        }
+        async fn admin_exec(&self, _: &str, script: &str, root: bool, background: bool) -> Result<String> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push((script.to_string(), root, background));
+            match calls.len() {
+                1 => Ok(String::new()),
+                2 => Err(Error::Network("settling".into())),
+                _ => Ok(self.exit.to_string()),
+            }
+        }
+        async fn whoami(&self) -> Result<Account> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn list_machines(&self) -> Result<Vec<Machine>> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn get_machine(&self, _: &str) -> Result<Machine> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn create_machine(&self, _: CreateSpec) -> Result<Machine> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn fork_machine(&self, _: &str, _: Option<String>) -> Result<Machine> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn power(&self, _: &str, _: PowerAction) -> Result<()> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn set_auto_hibernate(&self, _: &str, _: u32) -> Result<()> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn set_auto_suspend(&self, _: &str, _: u32) -> Result<()> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn exec(&self, _: &str, _: ExecSpec) -> Result<ExecHandle> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn machine_usage(&self, _: &str) -> Result<Usage> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn org_billing(&self, _: &str) -> Result<OrgBilling> {
+            Err(Error::Provider("not used here".into()))
+        }
+        async fn rates(&self) -> Result<crate::cost::RateCard> {
+            Err(Error::Provider("not used here".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_install_runs_as_root_in_the_background_and_is_polled() {
+        let p = Installing { calls: Default::default(), exit: "0\n" };
+        let code = wait_for_agent_tools(&p, "b1", &node_flags(), Duration::from_millis(1), Duration::from_secs(5)).await.unwrap();
+        assert_eq!(code, 0);
+        let calls = p.calls.lock().unwrap();
+        assert_eq!((calls[0].1, calls[0].2), (true, true));
+        assert_eq!((calls[2].1, calls[2].2), (false, false));
+        assert_eq!(calls[2].0, "cat /home/node/.stowbox/bootstrap.exit 2>/dev/null");
+    }
+
+    #[tokio::test]
+    async fn an_install_that_never_reports_is_an_error() {
+        let p = Installing { calls: Default::default(), exit: "not a number" };
+        let waited = wait_for_agent_tools(&p, "b1", &node_flags(), Duration::from_millis(1), Duration::from_millis(20)).await;
+        assert!(matches!(waited, Err(Error::Network(_))));
+    }
 
     #[test]
     fn secret_names() {

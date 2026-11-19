@@ -1,0 +1,315 @@
+[
+  {
+    "capabilities": {
+      "autoHibernate": true,
+      "autoStop": false,
+      "autoSuspend": true,
+      "consoleUrl": "https://app.boxd.sh",
+      "credentialFields": [
+        {
+          "hint": "Make one at app.boxd.sh or with `boxd auth keys create stowbox`. Keys are fenced to one organization.",
+          "label": "API key",
+          "name": "api_key",
+          "secret": true
+        }
+      ],
+      "currency": "eur",
+      "customSize": true,
+      "defaultDiskGib": 100,
+      "defaultSize": "",
+      "editorSsh": true,
+      "fork": true,
+      "freeSizes": [
+        {
+          "memoryGib": 4,
+          "vcpu": 1
+        },
+        {
+          "memoryGib": 8,
+          "vcpu": 2
+        },
+        {
+          "memoryGib": 16,
+          "vcpu": 4
+        }
+      ],
+      "httpsDefaultRoute": true,
+      "httpsLinks": true,
+      "httpsList": true,
+      "httpsNamed": true,
+      "httpsRemove": true,
+      "icon": "BX",
+      "idleStop": false,
+      "isolated": true,
+      "keyPrefixes": [
+        "bxd_"
+      ],
+      "label": "boxd",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": true,
+      "meteringNote": "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.",
+      "newBoxBlurb": "A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.",
+      "portForwards": true,
+      "power": [
+        "start",
+        "stop",
+        "reboot",
+        "pause",
+        "resume",
+        "hibernate",
+        "wake",
+        "destroy"
+      ],
+      "remoteHome": "/home/boxd",
+      "remoteUser": "boxd",
+      "sizes": [],
+      "sshHint": "ssh -p {sshPort} boxd@{name}.{accessDomain|boxd.sh}"
+    },
+    "id": "boxd"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": true,
+      "autoSuspend": false,
+      "consoleUrl": "https://boat.dev/dashboard",
+      "credentialFields": [
+        {
+          "hint": "Make one with `boat api-key create stowbox` or on the boat dashboard. It needs the ssh action: Stowbox runs every command over SSH.",
+          "label": "API key",
+          "name": "api_key",
+          "secret": true
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 51,
+      "defaultSize": "default",
+      "editorSsh": false,
+      "fork": true,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": true,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "BT",
+      "idleStop": false,
+      "isolated": false,
+      "keyPrefixes": [
+        "boat_",
+        "box_"
+      ],
+      "label": "boat",
+      "maxUploadBytes": 536870912,
+      "meteredUsage": true,
+      "meteringNote": "boat counts by the second at list price; time included in the plan is not taken off here.",
+      "newBoxBlurb": "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.",
+      "portForwards": false,
+      "power": [
+        "start",
+        "stop",
+        "destroy"
+      ],
+      "remoteHome": "/home/user",
+      "remoteUser": "user",
+      "sizes": [
+        {
+          "diskBytes": 51000000000,
+          "hourlyMicro": 18000,
+          "id": "small",
+          "memoryBytes": 4294967296,
+          "note": "",
+          "vcpu": 2
+        },
+        {
+          "diskBytes": 51000000000,
+          "hourlyMicro": 36000,
+          "id": "default",
+          "memoryBytes": 8589934592,
+          "note": "",
+          "vcpu": 4
+        },
+        {
+          "diskBytes": 111000000000,
+          "hourlyMicro": 72000,
+          "id": "large",
+          "memoryBytes": 17179869184,
+          "note": "not on the free trial",
+          "vcpu": 8
+        },
+        {
+          "diskBytes": 251000000000,
+          "hourlyMicro": 200000,
+          "id": "xlarge",
+          "memoryBytes": 34359738368,
+          "note": "needs the $100 plan or higher",
+          "vcpu": 16
+        }
+      ],
+      "sshHint": "boat ssh {id}"
+    },
+    "id": "boat"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
+      "consoleUrl": "https://app.daytona.io/dashboard",
+      "credentialFields": [
+        {
+          "hint": "Make one on the Daytona dashboard under Keys, with permission to write and delete sandboxes. Keys are fenced to one organization.",
+          "label": "API key",
+          "name": "api_key",
+          "secret": true
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 3,
+      "defaultSize": "daytona-small",
+      "editorSsh": false,
+      "fork": false,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": true,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "DT",
+      "idleStop": true,
+      "isolated": false,
+      "keyPrefixes": [
+        "dtn_"
+      ],
+      "label": "daytona",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": false,
+      "meteringNote": "Daytona's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.",
+      "newBoxBlurb": "A Daytona sandbox from the default image, up in about a second. Daytona stops it after a stretch with no activity, even with work running; Stowbox reports activity while a terminal or an agent is open.",
+      "portForwards": false,
+      "power": [
+        "start",
+        "stop",
+        "destroy"
+      ],
+      "remoteHome": "/home/daytona",
+      "remoteUser": "daytona",
+      "sizes": [
+        {
+          "diskBytes": 3221225472,
+          "hourlyMicro": 66924,
+          "id": "daytona-small",
+          "memoryBytes": 1073741824,
+          "note": "",
+          "vcpu": 1
+        },
+        {
+          "diskBytes": 8589934592,
+          "hourlyMicro": 166464,
+          "id": "daytona-medium",
+          "memoryBytes": 4294967296,
+          "note": "",
+          "vcpu": 2
+        },
+        {
+          "diskBytes": 10737418240,
+          "hourlyMicro": 332280,
+          "id": "daytona-large",
+          "memoryBytes": 8589934592,
+          "note": "",
+          "vcpu": 4
+        }
+      ],
+      "sshHint": "daytona ssh {id}"
+    },
+    "id": "daytona"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
+      "consoleUrl": "https://www.agent37.com/dashboard/cloud",
+      "credentialFields": [
+        {
+          "hint": "Make one on the Agent37 dashboard under Cloud API, API keys. Stowbox links its own SSH key to the workspace the first time it opens a terminal.",
+          "label": "API key",
+          "name": "api_key",
+          "secret": true
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 4,
+      "defaultSize": "default",
+      "editorSsh": false,
+      "fork": true,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": true,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "A3",
+      "idleStop": true,
+      "isolated": false,
+      "keyPrefixes": [
+        "sk_live_"
+      ],
+      "label": "agent37",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": true,
+      "meteringNote": "Agent37 settles metered minutes at least hourly and reports them by UTC day; managed model spend is not counted here.",
+      "newBoxBlurb": "A persistent Linux sandbox on Agent37, billed by the minute. Stowbox installs tmux, Claude Code and Codex in it, which adds about half a minute. With no activity it sleeps and bills only its disk; the next connection wakes it.",
+      "portForwards": false,
+      "power": [
+        "start",
+        "stop",
+        "reboot",
+        "hibernate",
+        "wake",
+        "destroy"
+      ],
+      "remoteHome": "/home/node",
+      "remoteUser": "node",
+      "sizes": [
+        {
+          "diskBytes": 4294967296,
+          "hourlyMicro": 6520,
+          "id": "default",
+          "memoryBytes": 4294967296,
+          "note": "",
+          "vcpu": 2
+        },
+        {
+          "diskBytes": 6442450944,
+          "hourlyMicro": 12794,
+          "id": "medium",
+          "memoryBytes": 8589934592,
+          "note": "",
+          "vcpu": 4
+        },
+        {
+          "diskBytes": 12884901888,
+          "hourlyMicro": 21204,
+          "id": "large",
+          "memoryBytes": 17179869184,
+          "note": "",
+          "vcpu": 4
+        },
+        {
+          "diskBytes": 25769803776,
+          "hourlyMicro": 38024,
+          "id": "xlarge",
+          "memoryBytes": 34359738368,
+          "note": "",
+          "vcpu": 4
+        }
+      ],
+      "sshHint": "npx agent37 ssh {id}"
+    },
+    "id": "agent37"
+  }
+]
