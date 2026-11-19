@@ -1,8 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js";
 import type { CreateSpec, Harness, Machine } from "../bridge/types";
-import { actions, agentsForMachine, capsOf, connectedProviders, machineById, multiProvider, providerLabel, state } from "../state/store";
+import { actions, agentsForMachine, capsOf, creatableProviders, machineById, multiProvider, providerLabel, state } from "../state/store";
 import * as I from "../icons";
-import { gib, money, statusLabel } from "./format";
+import { boxHourly, gib, money, statusLabel } from "./format";
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
 /** A new box from the composer stops on its own after this, where the provider has auto-stop. */
@@ -64,7 +64,7 @@ function boxPlace(m: Machine): Place {
   return {
     value: m.id,
     label: `${m.name}${state_}${where}`,
-    hint: `Runs in ${m.name}, ${statusLabel[m.status].toLowerCase()}, ${money(m.estHourlyMicro, m.currency)}/h now.${wakes}`,
+    hint: `Runs in ${m.name}, ${statusLabel[m.status].toLowerCase()}, ${m.currency ? `${boxHourly(m)} now` : "no price"}.${wakes}`,
     box: { existing: m.id },
   };
 }
@@ -83,7 +83,7 @@ export default function Composer() {
 
   const places = createMemo(() => {
     const boxes = state.machines.filter(usable).map(boxPlace);
-    const fresh = connectedProviders()
+    const fresh = creatableProviders()
       .map((p) => newBoxPlace(p.id))
       .filter((p): p is Place => !!p);
     return { boxes, fresh, all: [...boxes, ...fresh] };

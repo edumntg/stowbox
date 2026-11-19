@@ -32,7 +32,16 @@ pub fn endpoint(v: &Value) -> Result<Endpoint> {
     let host_key = parse_host_key(&s("hostKey"))
         .map_err(|_| Error::Provider("boat did not send the sandbox's SSH host key, so the connection cannot be checked".into()))?;
     let user = Some(s("sshUser")).filter(|u| !u.is_empty()).unwrap_or_else(|| "user".into());
-    Ok(Endpoint { host, port, user, login: Login::Key, check: HostCheck::Pinned(host_key), dial: Dial::Tcp, provider: "boat" })
+    Ok(Endpoint {
+        host,
+        port,
+        user,
+        login: Login::Key,
+        check: HostCheck::Pinned(host_key),
+        dial: Dial::Tcp,
+        provider: "boat",
+        key_refused: "the boat API key may lack the ssh action".into(),
+    })
 }
 
 /// boat's `POST /sandboxes/{id}/sshkey`. The first seconds of a start

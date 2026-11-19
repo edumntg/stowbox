@@ -43,10 +43,23 @@ pub(super) fn after(action: PowerAction) -> Option<MachineStatus> {
 pub async fn run(p: &dyn Provider) -> Outcome {
     let caps = p.capabilities();
     let mut out = Outcome::default();
-    assert!(caps.supports(PowerAction::Destroy), "{} cannot delete a box", p.id());
 
     p.whoami().await.unwrap();
     out.passed.push("whoami");
+
+    if !caps.create {
+        // The boxes are there already: they list, read back, and refuse
+        // what the provider does not claim.
+        let boxes = p.list_machines().await.unwrap();
+        let first = boxes.first().expect("a provider that cannot make boxes lists the ones it has");
+        assert_eq!(first.provider, p.id());
+        assert_eq!(p.get_machine(&first.id).await.unwrap().id, first.id);
+        out.passed.push("list");
+        assert!(p.create_machine(CreateSpec::default()).await.is_err(), "{} made a box without claiming to", p.id());
+        assert!(p.power(&first.id, PowerAction::Destroy).await.is_err(), "{} deleted a box without claiming to", p.id());
+        return out;
+    }
+    assert!(caps.supports(PowerAction::Destroy), "{} cannot delete a box", p.id());
 
     let made = p.create_machine(CreateSpec { name: Some("conformance".into()), ..Default::default() }).await.unwrap();
     assert_eq!(made.provider, p.id());

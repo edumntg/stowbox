@@ -141,9 +141,9 @@ src/                   SolidJS UI (bridge/, state/, ui/, icons/, styles/)
 box. Every provider implements the `Provider` trait and describes itself with
 `Capabilities`; the `Registry` holds every connected one and routes each box to
 the provider that owns it. The UI turns features on and off from the
-capabilities, never from the provider's name. How boat, Daytona and Agent37
-are used, and what they do not have, is in `docs/boat.md`, `docs/daytona.md`
-and `docs/agent37.md`.
+capabilities, never from the provider's name. How boat, Daytona, Agent37 and
+a plain SSH host are used, and what they do not have, is in `docs/boat.md`,
+`docs/daytona.md`, `docs/agent37.md` and `docs/sshhost.md`.
 
 ## How boxd is used
 

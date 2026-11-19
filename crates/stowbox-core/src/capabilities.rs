@@ -40,18 +40,36 @@ pub struct CredentialField {
     pub secret: bool,
     /// Where to find the value, in the words of the onboarding screen.
     pub hint: String,
+    /// May be left empty; the provider then uses its default.
+    #[serde(default)]
+    pub optional: bool,
+    /// Shown in the empty field.
+    #[serde(default)]
+    pub placeholder: String,
 }
 
 impl CredentialField {
     /// The single API key most providers connect with.
     pub fn api_key(hint: &str) -> Self {
-        Self { name: crate::providers::API_KEY.into(), label: "API key".into(), secret: true, hint: hint.into() }
+        Self { name: crate::providers::API_KEY.into(), label: "API key".into(), secret: true, hint: hint.into(), optional: false, placeholder: String::new() }
+    }
+
+    /// A value that is not a secret, such as a host name.
+    pub fn plain(name: &str, label: &str, hint: &str, placeholder: &str) -> Self {
+        Self { name: name.into(), label: label.into(), secret: false, hint: hint.into(), optional: false, placeholder: placeholder.into() }
+    }
+
+    pub fn optional(self) -> Self {
+        Self { optional: true, ..self }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
+    /// Whether Stowbox can make boxes here. A provider that cannot (an SSH
+    /// host) shows the boxes it has and is left out of New box.
+    pub create: bool,
     /// What a new box is, in the provider's own terms, for the New box dialog.
     pub new_box_blurb: String,
     /// The free-size choices in New box, for providers with `custom_size`.
@@ -124,6 +142,11 @@ fn yes() -> bool {
 impl Capabilities {
     pub fn supports(&self, action: PowerAction) -> bool {
         self.power.contains(&action)
+    }
+
+    /// Whether the idle guard has anything to do here: standby, hibernate or stop.
+    pub fn can_idle_down(&self) -> bool {
+        [PowerAction::Pause, PowerAction::Hibernate, PowerAction::Stop].into_iter().any(|a| self.supports(a))
     }
 
     /// The action that brings a box in `status` to running without a

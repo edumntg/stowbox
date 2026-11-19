@@ -75,6 +75,8 @@ pub struct Endpoint {
     pub dial: Dial,
     /// The provider's name, for messages.
     pub provider: &'static str,
+    /// What to tell the person when the box refuses Stowbox's key.
+    pub key_refused: String,
 }
 
 /// A host key as an OpenSSH line, with or without a host name in front
@@ -207,6 +209,13 @@ impl Pool {
         self.slots.lock().unwrap().entry(id.to_string()).or_default().clone()
     }
 
+    /// Whether a live connection to the box is held right now. Never waits:
+    /// a slot busy connecting counts as not connected.
+    pub fn is_connected(&self, id: &str) -> bool {
+        let slot = self.slots.lock().ok().and_then(|s| s.get(id).cloned());
+        slot.is_some_and(|s| s.try_lock().is_ok_and(|c| c.as_ref().is_some_and(|c| !c.is_closed())))
+    }
+
     /// Forgets the connection to a sandbox (after a stop, resume or delete).
     pub fn drop_conn(&self, id: &str) {
         self.slots.lock().unwrap().remove(id);
@@ -222,7 +231,7 @@ impl Pool {
             ..Default::default()
         });
         let at = format!("{}:{}", ep.host, ep.port);
-        let checker = Checker { check: ep.check.clone(), at };
+        let checker = Checker { check: ep.check.clone(), at: at.clone() };
         // The tunnel first, so its refusals (a revoked API key) keep their own error.
         let tunnel = match &ep.dial {
             Dial::Tcp => None,
@@ -245,10 +254,9 @@ impl Pool {
                 russh::Error::UnknownKey => Error::Provider(match &ep.check {
                     HostCheck::Pinned(_) => format!("the box presented another SSH host key than {} announced; not connecting", ep.provider),
                     HostCheck::Remembered(path) => format!(
-                        "{} presented another SSH host key than the first time; not connecting. If {} changed it, remove the {} line from {}",
+                        "{} presented another SSH host key than the first time; not connecting. If {} changed it, remove the line starting {at} from {}",
                         ep.host,
                         ep.provider,
-                        ep.host,
                         path.display()
                     ),
                     HostCheck::Edge => format!("{} refused the SSH host key", ep.provider),
@@ -265,7 +273,7 @@ impl Pool {
         };
         if !ok {
             return Err(Error::Auth(match ep.login {
-                Login::Key => format!("the box refused Stowbox's SSH key; the {} API key may lack the ssh permission", ep.provider),
+                Login::Key => format!("the box refused Stowbox's SSH key; {}", ep.key_refused),
                 Login::Token => format!("{}'s SSH gateway refused the access token", ep.provider),
             }));
         }
@@ -423,7 +431,12 @@ pub fn remote_command(spec: &ExecSpec) -> String {
         format!("bash -lc {}", shell_quote(&script))
     } else {
         let inner = format!("printf '\\036stowbox-pgid:%s\\n' \"$$\" >&2; exec bash -lc \"$1\"");
-        format!("setsid -w bash -c {} stowbox {}", shell_quote(&inner), shell_quote(&script))
+        // setsid -w is util-linux. Elsewhere (macOS, BSD, BusyBox) the script
+        // runs without a group of its own: it works, but dropping the exec
+        // cannot kill what it left running. `sh -c` keeps this independent
+        // of the account's login shell.
+        let pick = "if setsid -w true 2>/dev/null; then exec setsid -w bash -c \"$1\" stowbox \"$2\"; else exec bash -c \"$1\" stowbox \"$2\"; fi";
+        format!("sh -c {} stowbox {} {}", shell_quote(pick), shell_quote(&inner), shell_quote(&script))
     }
 }
 
@@ -545,7 +558,7 @@ mod tests {
             env: vec![("A".into(), "x y".into()), ("bad key".into(), "z".into())],
         };
         let c = remote_command(&spec);
-        assert!(c.starts_with("setsid -w bash -c "));
+        assert!(c.starts_with("sh -c ") && c.contains("setsid -w bash -c"));
         assert!(c.contains("export A="));
         assert!(!c.contains("bad key"));
         let tty = remote_command(&ExecSpec { tty: true, ..spec });
@@ -580,6 +593,25 @@ mod tests {
         assert_eq!(rest.unwrap(), b"oops\n");
     }
 
+    /// A host without util-linux (macOS, BSD) still runs the script.
+    #[cfg(unix)]
+    #[test]
+    fn the_wrapper_runs_without_setsid() {
+        if !crate::testing::has_bash() {
+            return;
+        }
+        let which = |b: &str| String::from_utf8(std::process::Command::new("sh").args(["-c", &format!("command -v {b}")]).output().unwrap().stdout).unwrap();
+        let dir = crate::testing::temp_dir("stowbox-no-setsid");
+        for b in ["bash", "sh"] {
+            std::os::unix::fs::symlink(which(b).trim(), dir.join(b)).unwrap();
+        }
+        let spec = ExecSpec { script: "echo ran; exit 4".into(), ..Default::default() };
+        let out = std::process::Command::new(dir.join("sh")).arg("-c").arg(remote_command(&spec)).env("PATH", &dir).output().unwrap();
+        assert_eq!(out.status.code(), Some(4));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "ran\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_new_key_is_kept_and_read_back() {
         let dir = crate::testing::temp_dir("stowbox-sshexec-key");
@@ -604,33 +636,10 @@ mod tests {
     #[ignore = "starts a local sshd; run with --ignored"]
     async fn local_sshd_exec_end_to_end() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        let sshd = ["/usr/sbin/sshd", "/usr/local/sbin/sshd"].into_iter().find(|p| Path::new(p).exists()).expect("sshd");
         let dir = crate::testing::temp_dir("stowbox-sshexec-sshd");
-        let host = dir.join("host");
-        assert!(std::process::Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-f"]).arg(&host).status().unwrap().success());
         let pool = Pool::new(load_or_make_key(&dir.join("client")).unwrap()).unwrap();
-        std::fs::write(dir.join("authorized_keys"), format!("{}\n", pool.public_line())).unwrap();
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let user = String::from_utf8(std::process::Command::new("id").arg("-un").output().unwrap().stdout).unwrap().trim().to_string();
-        let cfg = dir.join("sshd_config");
-        std::fs::write(
-            &cfg,
-            format!(
-                "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nAuthorizedKeysFile {}\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\nPermitRootLogin yes\nPidFile {}\n",
-                host.display(),
-                dir.join("authorized_keys").display(),
-                dir.join("pid").display()
-            ),
-        )
-        .unwrap();
-        let _ = std::fs::create_dir_all("/run/sshd");
-        let mut daemon = std::process::Command::new(sshd).arg("-D").arg("-e").arg("-f").arg(&cfg).stderr(std::process::Stdio::null()).spawn().unwrap();
-        for _ in 0..50 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        let sshd = crate::testing::LocalSshd::start(pool.public_line()).await;
+        let (port, user) = (sshd.port, sshd.user.clone());
 
         struct Local {
             ep: Endpoint,
@@ -643,7 +652,7 @@ mod tests {
                 Ok(self.ep.clone())
             }
         }
-        let host_key = parse_host_key(&std::fs::read_to_string(host.with_extension("pub")).unwrap()).unwrap();
+        let host_key = parse_host_key(&sshd.host_key).unwrap();
         let ep = Endpoint {
             host: "127.0.0.1".into(),
             port,
@@ -652,6 +661,7 @@ mod tests {
             check: HostCheck::Pinned(host_key),
             dial: Dial::Tcp,
             provider: "test",
+            key_refused: String::new(),
         };
         let auth = Local { ep, calls: AtomicUsize::new(0) };
 
@@ -725,8 +735,6 @@ mod tests {
         assert!(std::fs::read_to_string(&known).unwrap().starts_with(&format!("127.0.0.1:{port} ssh-ed25519 ")));
         let at = format!("127.0.0.1:{port}");
         assert!(!remember_host_key(&known, &at, &other_key), "a changed key is refused");
-
-        let _ = daemon.kill();
-        let _ = daemon.wait();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -43,19 +43,26 @@ export function gib(bytes: number): string {
   return (Number.isInteger(g) ? g : g.toFixed(1)) + " GiB";
 }
 
+/** vCPU and memory, or an honest blank when the provider does not report them (an SSH host). */
 export function sizeLabel(m: Pick<Machine, "vcpu" | "memoryBytes">): string {
-  return `${m.vcpu} vCPU · ${gib(m.memoryBytes)}`;
+  return m.vcpu ? `${m.vcpu} vCPU · ${gib(m.memoryBytes)}` : "size not reported";
 }
 
 export function compactSize(m: Pick<Machine, "vcpu" | "memoryBytes">): string {
-  return `${m.vcpu}c ${Math.round(m.memoryBytes / GIB)}G`;
+  return m.vcpu ? `${m.vcpu}c ${Math.round(m.memoryBytes / GIB)}G` : "—";
+}
+
+/** A box's hourly estimate, or "no price" for a box with none, such as an SSH host. */
+export function boxHourly(m: { estHourlyMicro: number; currency: string }): string {
+  return m.currency ? `${money(m.estHourlyMicro, m.currency)}/h` : "no price";
 }
 
 /** Amounts in several currencies, summed per currency and never across
  * them: "€0.18/h + $0.04/h". `suffix` goes after each part. */
 export function moneyByCurrency(items: { micro: number; currency: string }[], fallbackCurrency: string, suffix = ""): string {
   const by = new Map<string, number>();
-  for (const i of items) by.set(i.currency.toLowerCase(), (by.get(i.currency.toLowerCase()) ?? 0) + i.micro);
+  // A box with no price adds nothing, rather than a currency-less zero.
+  for (const i of items) if (i.currency) by.set(i.currency.toLowerCase(), (by.get(i.currency.toLowerCase()) ?? 0) + i.micro);
   if (by.size === 0) return money(0, fallbackCurrency) + suffix;
   return [...by].map(([c, v]) => money(v, c) + suffix).join(" + ");
 }

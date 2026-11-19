@@ -55,6 +55,7 @@ pub const KIND: crate::providers::ProviderKind = crate::providers::ProviderKind 
 pub fn capabilities() -> Capabilities {
     use PowerAction::*;
     Capabilities {
+        create: true,
         new_box_blurb: "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.".into(),
         free_sizes: Vec::new(),
         default_size: "default".into(),

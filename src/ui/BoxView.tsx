@@ -4,7 +4,7 @@ import { api } from "../bridge/api";
 import { actions, agentsForMachine, capsFor, multiProvider, phaseOf, providerLabel, setupActive, setupRunFor, state } from "../state/store";
 import * as I from "../icons";
 import { AgentDot, Dot, PowerActions } from "./common";
-import { agentPhaseLabel, gib, hours, IDLE_STOP, money, relTime, sizeLabel, sshHint, statusLabel, until } from "./format";
+import { agentPhaseLabel, boxHourly, gib, hours, IDLE_STOP, money, relTime, sizeLabel, sshHint, statusLabel, until } from "./format";
 import { boxTerminalKey } from "./termSessions";
 
 const Terminal = lazy(() => import("./Terminal"));
@@ -233,7 +233,7 @@ const DetailsTab = (p: { machine: Machine }) => {
             {sizeLabel(m())} · {gib(m().diskBytes)} disk
           </dd>
           <dt>Estimated now</dt>
-          <dd class="mono">{money(m().estHourlyMicro, m().currency)}/h in this state</dd>
+          <dd class="mono">{m().currency ? `${boxHourly(m())} in this state` : "no price"}</dd>
           <Show when={m().url}>
             <dt>Address</dt>
             <dd>
@@ -443,7 +443,7 @@ export default function BoxView(p: { machine: Machine }) {
             <span class="tag">{providerLabel(m().provider)}</span>
           </Show>
           <span class="meta mono">
-            {sizeLabel(m())} · {money(m().estHourlyMicro, m().currency)}/h
+            {sizeLabel(m())} · {boxHourly(m())}
           </span>
         </div>
         <div class="view-actions">
@@ -463,9 +463,11 @@ export default function BoxView(p: { machine: Machine }) {
               <I.Code /> Editor
             </button>
           </Show>
-          <button class="btn ghost danger" title="Destroy the machine and its disk" disabled={!!state.pending[m().id]} onClick={() => actions.confirmDestroy(m())}>
-            <I.Trash /> Delete
-          </button>
+          <Show when={capsFor(m())?.power.includes("destroy")}>
+            <button class="btn ghost danger" title="Destroy the machine and its disk" disabled={!!state.pending[m().id]} onClick={() => actions.confirmDestroy(m())}>
+              <I.Trash /> Delete
+            </button>
+          </Show>
         </div>
       </header>
 
