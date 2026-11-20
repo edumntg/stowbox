@@ -54,12 +54,17 @@ shadows, except the floating shadow under dialogs and toasts.
   folds its agents. Agents nest under an AGENTS header with their status and
   relative time.
 - Main column: two tab rows, then the view. The top row has a pinned
-  Fleet tab, then the open boxes, each with its state dot, icon, the count
-  of its open agents and a close control that closes its agents too. Under
-  it, while a box or one of its agents is in view, a lower row on the view's
-  background: a pinned Box tab (the box's own view), then that box's open
-  agents, then a + for a new agent there. The active agent is underlined. A
-  box and an agent never share a row. Both rows reorder by dragging.
+  Fleet tab, then the open boxes, each with its state dot, its provider's
+  mark (as in the sidebar), the count of its open agents and a close
+  control that closes its agents too. Under it, while a box or one of its
+  agents is in view, a lower row on the view's background: a pinned Box tab
+  (the lit box's own view), then the open agents of every box, then a + for
+  a new agent in the lit box. An agent tab is its state dot, its harness's
+  mark (Claude Code or Codex), its title, and last, at reduced opacity, the
+  provider mark of its box; the tooltip names the box. Opening an agent of
+  another box lights that box above, so the two rows never disagree. The
+  active agent is underlined. A box and an agent never share a row. Both
+  rows reorder by dragging.
 - Fleet view (the landing page, read top down as an inbox): first the
   composer, a bordered card with a borderless textarea ("What should the
   agent do?"), then one row: Claude Code and Codex as a segmented control
@@ -224,7 +229,8 @@ shadows, except the floating shadow under dialogs and toasts.
 ## Icons
 
 Lucide, 1.75px stroke, 14 to 16px, inlined per glyph. The app mark is one
-cube drawn with the same stroke.
+cube drawn with the same stroke. Provider and harness marks are the
+owners' own shapes, bundled, filled in the text colour of their row.
 
 ## Motion
 

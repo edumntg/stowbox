@@ -730,6 +730,19 @@ ul {
   cursor: grabbing;
 }
 
+.tab .provider-mark,
+.tab .provider-mono {
+  width: 13px;
+  height: 13px;
+}
+
+/* Where an agent runs: quieter than what it is. */
+.tab-where {
+  display: inline-flex;
+  flex: none;
+  opacity: 0.6;
+}
+
 .tab-count {
   font-size: var(--text-3xs);
   color: var(--muted-foreground);
@@ -1628,7 +1641,9 @@ select.input {
   color: var(--muted-foreground);
 }
 
+/* A full agent row scrolls; the pinned tabs keep their width. */
 .tab.pinned {
+  flex: none;
   padding-right: 12px;
 }
 

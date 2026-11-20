@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
-import { actions, agentBoxGone, agentById, demo, hasPrices, machineById, selectedAgent, selectedMachine, spendCurrency, state, type TabGroup } from "../state/store";
+import { actions, agentBoxGone, agentById, capsOf, demo, hasPrices, machineById, openAgentsOf, selectedAgent, selectedMachine, spendCurrency, state, type TabGroup } from "../state/store";
 import * as I from "../icons";
 import AgentView from "./AgentView";
 import BoxView from "./BoxView";
@@ -11,24 +11,36 @@ import Onboarding from "./Onboarding";
 import Palette, { paletteShortcut } from "./Palette";
 import Sidebar from "./Sidebar";
 import Toasts from "./Toasts";
-import { AgentDot, BrandMark, Dot, isMac, isWindows } from "./common";
+import { AgentDot, BrandMark, Dot, HarnessIcon, ProviderIcon, harnessName, isMac, isWindows } from "./common";
 import { dragSort } from "./dragSort";
 import { moneyByCurrency } from "./format";
 
-/** A box in the top row. It stays active while one of its agents is shown. */
+/** The box whose tab is lit: the one shown, or the shown agent's. */
+const currentBox = () => {
+  const sel = state.ui.selection;
+  if (sel.kind === "box") return sel.id;
+  if (sel.kind === "agent") return agentById(sel.id)?.machineId;
+  return undefined;
+};
+
+/** A box in the top row, marked with its provider as in the sidebar. It
+ * stays active while one of its agents is shown. */
 const BoxTab = (p: { group: TabGroup }) => {
   const id = () => p.group.machineId;
   const machine = () => machineById(id());
-  const sel = () => state.ui.selection;
-  const active = () => (sel().kind === "box" && (sel() as { id: string }).id === id()) || (sel().kind === "agent" && p.group.agents.includes((sel() as { id: string }).id));
-  const label = () => machine()?.name ?? agentById(p.group.agents[0] ?? "")?.machineName ?? "box";
+  const open = () => openAgentsOf(id());
+  const active = () => currentBox() === id();
+  const label = () => machine()?.name ?? agentById(open()[0] ?? "")?.machineName ?? "box";
+  const provider = () => machine()?.provider ?? "";
   return (
     <div class="tab" classList={{ active: active() }} role="tab" aria-selected={active()} data-sort={id()}>
-      <button class="tab-label" style={{ display: "flex", "align-items": "center", gap: "7px", "min-width": 0 }} onClick={() => actions.selectGroup(id())} title={machine() ? label() : `${label()} (deleted)`}>
+      <button class="tab-label" style={{ display: "flex", "align-items": "center", gap: "7px", "min-width": 0 }} onClick={() => actions.selectGroup(id())} title={machine() ? `${label()} on ${capsOf(provider())?.label ?? provider()}` : `${label()} (deleted)`}>
         <Dot status={machine()?.status ?? "stopped"} />
-        <I.Box />
+        <Show when={provider()} fallback={<I.Box />}>
+          {(pr) => <ProviderIcon provider={pr()} />}
+        </Show>
         <span class="tab-label">{label()}</span>
-        <Show when={p.group.agents.length}>{(n) => <span class="tab-count mono">{n()}</span>}</Show>
+        <Show when={open().length}>{(n) => <span class="tab-count mono">{n()}</span>}</Show>
       </button>
       <button class="tab-close" aria-label={`Close ${label()} and its agents`} title="Close the box and its agent tabs" onClick={() => actions.closeTab({ kind: "box", id: id() })}>
         <I.Close />
@@ -37,23 +49,41 @@ const BoxTab = (p: { group: TabGroup }) => {
   );
 };
 
-/** An agent in the row under its box. */
+/** An agent in the agent row, which holds agents from every open box: its
+ * state, the coding agent it runs, its title, and, quieter, the provider of
+ * the box it runs in. The tooltip names the box. */
 const AgentTab = (p: { id: string }) => {
   const agent = () => agentById(p.id);
   const active = () => state.ui.selection.kind === "agent" && state.ui.selection.id === p.id;
   const label = () => agent()?.title || "New agent";
+  const box = () => machineById(agent()?.machineId ?? "");
+  const where = () => {
+    const a = agent();
+    if (!a) return label();
+    const on = box() ? ` on ${capsOf(box()!.provider)?.label ?? box()!.provider}` : " (box deleted)";
+    return `${label()}: ${harnessName(a.harness)} in ${a.machineName}${on}`;
+  };
   return (
     <div class="tab" classList={{ active: active() }} role="tab" aria-selected={active()} data-sort={p.id}>
-      <button class="tab-label" style={{ display: "flex", "align-items": "center", gap: "7px", "min-width": 0 }} onClick={() => actions.select({ kind: "agent", id: p.id })} title={label()}>
+      <button class="tab-label" style={{ display: "flex", "align-items": "center", gap: "7px", "min-width": 0 }} onClick={() => actions.select({ kind: "agent", id: p.id })} title={where()}>
         <Show when={agent()}>
           {(a) => (
-            <Show when={!agentBoxGone(a())} fallback={<Dot status="stopped" />}>
-              <AgentDot agent={a()} />
-            </Show>
+            <>
+              <Show when={!agentBoxGone(a())} fallback={<Dot status="stopped" />}>
+                <AgentDot agent={a()} />
+              </Show>
+              <HarnessIcon harness={a().harness} />
+            </>
           )}
         </Show>
-        <I.Terminal />
         <span class="tab-label">{label()}</span>
+        <Show when={box()}>
+          {(m) => (
+            <span class="tab-where">
+              <ProviderIcon provider={m().provider} />
+            </span>
+          )}
+        </Show>
       </button>
       <button class="tab-close" aria-label={`Close ${label()}`} onClick={() => actions.closeTab({ kind: "agent", id: p.id })}>
         <I.Close />
@@ -62,14 +92,13 @@ const AgentTab = (p: { id: string }) => {
   );
 };
 
-/** The open boxes, then, under the one in view, its agents. Both rows can
- * be reordered by dragging. */
+/** The open boxes, then, while a box or an agent is in view, the open agents
+ * of every box, so moving between agents in different boxes is one click.
+ * Both rows can be reordered by dragging. */
 const TabRows = () => {
   const current = () => {
-    const sel = state.ui.selection;
-    if (sel.kind === "box") return state.ui.tabs.find((g) => g.machineId === sel.id);
-    if (sel.kind === "agent") return state.ui.tabs.find((g) => g.agents.includes(sel.id));
-    return undefined;
+    const id = currentBox();
+    return id ? state.ui.tabs.find((g) => g.machineId === id) : undefined;
   };
   const sortable = (onMove: (from: string, to: string) => void) => (row: HTMLElement) => {
     const stop = dragSort(row, onMove);
@@ -86,7 +115,7 @@ const TabRows = () => {
       </div>
       <Show when={current()}>
         {(g) => (
-          <div class="tabstrip sub" role="tablist" aria-label={`Open in ${machineById(g().machineId)?.name ?? "this box"}`} ref={sortable((from, to) => actions.moveAgentTab(g().machineId, from, to))}>
+          <div class="tabstrip sub" role="tablist" aria-label="Open agents" ref={sortable((from, to) => actions.moveAgentTab(from, to))}>
             <Show when={machineById(g().machineId)}>
               {(m) => (
                 <div class="tab pinned" classList={{ active: state.ui.selection.kind === "box" }} role="tab" aria-selected={state.ui.selection.kind === "box"}>
@@ -97,7 +126,7 @@ const TabRows = () => {
                 </div>
               )}
             </Show>
-            <For each={g().agents}>{(id) => <AgentTab id={id} />}</For>
+            <For each={state.ui.agentTabs}>{(id) => <AgentTab id={id} />}</For>
             <Show when={machineById(g().machineId)}>
               <button class="tab-add" title="New agent in this box" aria-label="New agent in this box" onClick={() => actions.openDialog({ kind: "new-agent", machineId: g().machineId })}>
                 <I.Plus />

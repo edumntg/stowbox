@@ -2,7 +2,7 @@ import { Show, createEffect, createMemo, createSignal, lazy, untrack } from "sol
 import type { AgentMeta } from "../bridge/types";
 import { actions, agentBoxGone as boxGone, agentWorking, capsFor, machineById, phaseOf, providerLabel, state } from "../state/store";
 import * as I from "../icons";
-import { AgentDot, BoxState, Dot, PowerActions } from "./common";
+import { AgentDot, BoxState, Dot, PowerActions, harnessName } from "./common";
 import { agentPhaseLabel, fileSize, statusLabel, uploadCapText } from "./format";
 import type { TermInput } from "./Terminal";
 import { agentTerminalKey, closeTerminal } from "./termSessions";
@@ -46,7 +46,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
     const m = machine();
     return !m || m.status === "stopped" || m.status === "failed";
   };
-  const harnessName = () => (a().harness === "codex" ? "Codex" : "Claude Code");
+  const harness = () => harnessName(a().harness);
   const tmux = () => state.tmux[a().machineId];
   const running = () => !!state.live[a().id]?.running;
 
@@ -171,7 +171,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
         </div>
         <div class="view-actions">
           <Show when={!gone() && !halted() && !ended() && (running() || (term() && !termEnded()))}>
-            <button class="btn ghost danger" onClick={() => void endSession()} title={`Quit ${harnessName()} in the box. The conversation stays; opening the agent again resumes it.`}>
+            <button class="btn ghost danger" onClick={() => void endSession()} title={`Quit ${harness()} in the box. The conversation stays; opening the agent again resumes it.`}>
               <I.Stop /> End session
             </button>
           </Show>
@@ -180,7 +180,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
           </button>
         </div>
         <div class="subhead">
-          <span class="tag">{harnessName()}</span>
+          <span class="tag">{harness()}</span>
           <span class="in-box">
             <Show when={machine()}>{(m) => <Dot status={m().status} />}</Show>
             <Show when={!gone()} fallback={<span>{a().machineName}</span>}>
@@ -258,12 +258,12 @@ export default function AgentView(p: { agent: AgentMeta }) {
                   <Show
                     when={halted()}
                     fallback={
-                      <Show when={ended()} fallback={<span>Opening {harnessName()}…</span>}>
+                      <Show when={ended()} fallback={<span>Opening {harness()}…</span>}>
                         <span>
                           <strong>The session ended.</strong> The conversation is kept; opening it again resumes where it stopped.
                         </span>
                         <button class="btn" onClick={() => openTerm(null)}>
-                          <I.Terminal /> Open {harnessName()} again
+                          <I.Terminal /> Open {harness()} again
                         </button>
                       </Show>
                     }
@@ -272,7 +272,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
                       <strong>
                         {machine()?.name ?? a().machineName} is {machine() ? statusLabel[machine()!.status].toLowerCase() : "not running"}.
                       </strong>{" "}
-                      Start it to open {harnessName()} here; the conversation is kept.
+                      Start it to open {harness()} here; the conversation is kept.
                       <Show when={machine() && capsFor(machine()!)?.autoStop}> {providerLabel(machine()!.provider)} stops a box when its auto-stop falls due.</Show>
                     </span>
                     <Show when={machine()}>
@@ -311,7 +311,7 @@ export default function AgentView(p: { agent: AgentMeta }) {
                       when={copying()}
                       fallback={
                         <>
-                          {harnessName()} in {machine()?.name ?? a().machineName}.{" "}
+                          {harness()} in {machine()?.name ?? a().machineName}.{" "}
                           {tmux() === false
                             ? "This box has no tmux, so the agent stops when this terminal closes."
                             : "It keeps running in the box when you close the tab; opening the agent again attaches to it."}
