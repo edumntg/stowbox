@@ -299,3 +299,9 @@ async fn vercel_live() {
 async fn blaxel_live() {
     live("blaxel").await;
 }
+
+#[tokio::test]
+#[ignore = "makes and deletes real Modal sandboxes"]
+async fn modal_live() {
+    live("modal").await;
+}

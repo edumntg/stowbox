@@ -4,7 +4,7 @@
 //! `app.boxd.sh`, and the JWT rides on every gRPC call as
 //! `authorization: Bearer …`. See `auth.rs`.
 
-mod auth;
+pub(crate) mod auth;
 mod convert;
 
 pub mod pb {

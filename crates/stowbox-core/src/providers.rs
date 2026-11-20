@@ -121,6 +121,7 @@ pub const ALL: &[ProviderKind] = &[
     crate::e2b::KIND,
     crate::vercel::KIND,
     crate::blaxel::KIND,
+    crate::modal::KIND,
     crate::sshhost::KIND,
 ];
 
