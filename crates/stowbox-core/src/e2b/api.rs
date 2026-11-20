@@ -1,13 +1,11 @@
 //! E2B's REST API at `api.e2b.app`: the team's API key in `X-API-Key`, JSON
 //! bodies, errors as `{ code, message }`.
 
-use crate::{Error, Result};
+use crate::{http, Error, Result};
 use reqwest::Method;
 use serde_json::Value;
 use std::time::Duration;
 
-const MAX_WAIT: Duration = Duration::from_secs(8);
-const RETRIES: u32 = 2;
 /// Largest answer read. A list of a few hundred sandboxes is well under it.
 const MAX_BODY: usize = 8 << 20;
 
@@ -89,19 +87,11 @@ impl Api {
             if let Some(b) = &body {
                 req = req.json(b);
             }
-            let mut resp = req.send().await?;
+            let resp = req.send().await?;
             let status = resp.status();
-            let header = |name: &str| resp.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
-            let retry_after =
-                header("retry-after").and_then(|v| v.trim().parse::<f64>().ok()).filter(|s| s.is_finite() && *s >= 0.0).map(Duration::from_secs_f64);
-            let next = header("x-next-token");
-            let mut bytes = Vec::new();
-            while let Some(chunk) = resp.chunk().await? {
-                if bytes.len() + chunk.len() > MAX_BODY {
-                    return Err(Error::Provider(format!("E2B answered with more than {MAX_BODY} bytes")));
-                }
-                bytes.extend_from_slice(&chunk);
-            }
+            let retry_after = http::header(&resp);
+            let next = resp.headers().get("x-next-token").and_then(|v| v.to_str().ok()).map(str::to_string);
+            let bytes = http::read_capped(resp, MAX_BODY, "E2B").await?;
             let text = String::from_utf8_lossy(&bytes);
             if status.is_success() {
                 if text.trim().is_empty() {
@@ -110,10 +100,9 @@ impl Api {
                 let v = serde_json::from_str(&text).map_err(|e| Error::Provider(format!("E2B answered {status} with a body that is not JSON: {e}")))?;
                 return Ok((v, next));
             }
-            let short = retry_after.map(|d| d <= MAX_WAIT).unwrap_or(true);
-            if attempt < RETRIES && matches!(status.as_u16(), 429 | 503) && short {
+            if let Some(wait) = http::wait(attempt, &method, status.as_u16(), retry_after) {
                 attempt += 1;
-                tokio::time::sleep(retry_after.unwrap_or(Duration::from_secs(1 << attempt)).min(MAX_WAIT)).await;
+                tokio::time::sleep(wait).await;
                 continue;
             }
             return Err(into_error(status.as_u16(), &text));

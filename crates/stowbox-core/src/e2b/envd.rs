@@ -187,14 +187,15 @@ pub async fn exec(rpc: Client, spec: ExecSpec) -> Result<ExecHandle> {
                 Err(e) => Some(ExecOutput::Error(e.to_string())),
             };
             let Some(o) = out else { continue };
-            let last = matches!(o, ExecOutput::Exit(_) | ExecOutput::Error(_));
-            if out_tx.send(o).await.is_err() {
-                if !last {
-                    kill(&rpc, pid, pgid).await;
-                }
-                return;
+            let ended = matches!(o, ExecOutput::Exit(_));
+            // A broken stream leaves the command running with nothing to
+            // read it, so it is ended as if the reader had gone.
+            let broke = matches!(o, ExecOutput::Error(_));
+            let delivered = out_tx.send(o).await.is_ok();
+            if broke || (!ended && !delivered) {
+                kill(&rpc, pid, pgid).await;
             }
-            if last {
+            if ended || broke || !delivered {
                 return;
             }
         }

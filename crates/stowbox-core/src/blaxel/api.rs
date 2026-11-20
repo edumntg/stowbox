@@ -3,7 +3,7 @@
 //! bearer token and the workspace in `X-Blaxel-Workspace`; errors are
 //! `{ error, message }`.
 
-use crate::{Error, Result};
+use crate::{http, Error, Result};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Method;
 use serde_json::Value;
@@ -12,8 +12,6 @@ use std::time::Duration;
 /// The API version Stowbox was written against. Lists come back paginated
 /// from 2026-04-28 on.
 const VERSION: &str = "2026-09-22";
-const MAX_WAIT: Duration = Duration::from_secs(8);
-const RETRIES: u32 = 2;
 /// Largest answer read. A page of sandboxes is well under it.
 const MAX_BODY: usize = 8 << 20;
 /// How long a streaming answer may take to start.
@@ -66,7 +64,8 @@ impl Api {
         headers.insert("x-blaxel-workspace", HeaderValue::from_str(workspace).map_err(|_| bad())?);
         headers.insert("blaxel-version", HeaderValue::from_static(VERSION));
         let http = reqwest::Client::builder().user_agent(ua).connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(130)).build()?;
-        let stream_http = reqwest::Client::builder().user_agent(ua).connect_timeout(Duration::from_secs(10)).build()?;
+        // TCP keepalives find a stream whose peer went away without a reset.
+        let stream_http = reqwest::Client::builder().user_agent(ua).connect_timeout(Duration::from_secs(10)).tcp_keepalive(Duration::from_secs(30)).build()?;
         Ok(Self { http, stream_http, base: base.trim_end_matches('/').to_string(), headers })
     }
 
@@ -92,14 +91,8 @@ impl Api {
             };
             let resp = req.send().await?;
             let status = resp.status();
-            let retry_after = resp
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.trim().parse::<f64>().ok())
-                .filter(|s| s.is_finite() && *s >= 0.0)
-                .map(Duration::from_secs_f64);
-            let bytes = read_capped(resp, MAX_BODY).await?;
+            let retry_after = http::header(&resp);
+            let bytes = http::read_capped(resp, MAX_BODY, "Blaxel").await?;
             let text = String::from_utf8_lossy(&bytes);
             if status.is_success() {
                 if text.trim().is_empty() {
@@ -107,10 +100,9 @@ impl Api {
                 }
                 return serde_json::from_str(&text).map_err(|e| Error::Provider(format!("Blaxel answered {status} with a body that is not JSON: {e}")));
             }
-            let short = retry_after.map(|d| d <= MAX_WAIT).unwrap_or(true);
-            if attempt < RETRIES && matches!(status.as_u16(), 429 | 503) && short {
+            if let Some(wait) = http::wait(attempt, &method, status.as_u16(), retry_after) {
                 attempt += 1;
-                tokio::time::sleep(retry_after.unwrap_or(Duration::from_secs(1 << attempt)).min(MAX_WAIT)).await;
+                tokio::time::sleep(wait).await;
                 continue;
             }
             return Err(into_error(status.as_u16(), &text));
@@ -138,23 +130,12 @@ impl Api {
         if status.is_success() {
             return Ok(resp);
         }
-        let text = read_capped(resp, 64 << 10).await.unwrap_or_default();
+        let text = http::read_capped(resp, 64 << 10, "Blaxel").await.unwrap_or_default();
         Err(into_error(status.as_u16(), &String::from_utf8_lossy(&text)))
     }
 }
 
 /// The whole body, refusing one longer than `cap`.
-async fn read_capped(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    while let Some(chunk) = resp.chunk().await? {
-        if out.len() + chunk.len() > cap {
-            return Err(Error::Provider(format!("Blaxel answered with more than {cap} bytes")));
-        }
-        out.extend_from_slice(&chunk);
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

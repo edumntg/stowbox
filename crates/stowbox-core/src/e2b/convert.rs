@@ -35,14 +35,19 @@ pub fn valid_id(id: &str) -> bool {
     (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
-/// The base domain a sandbox's traffic goes to, when E2B names one and it
-/// looks like a domain; `e2b.app` otherwise.
+/// E2B's own domains. The sandbox's access token and every keystroke go to
+/// the domain the API names, so it must be one of these.
+const DOMAINS: [&str; 2] = ["e2b.app", "e2b.dev"];
+
+/// The base domain a sandbox's traffic goes to, when E2B names one of its
+/// own; `e2b.app` otherwise.
 pub fn domain(s: &Value) -> String {
     let d = str_at(s, "domain");
-    let ok = !d.is_empty()
+    let own = DOMAINS.iter().any(|o| d == *o || d.strip_suffix(o).is_some_and(|sub| sub.len() > 1 && sub.ends_with('.')));
+    let ok = own
         && d.len() <= 253
-        && d.contains('.')
         && !d.starts_with(['.', '-'])
+        && !d.contains("..")
         && d.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
     if ok {
         d.to_string()
@@ -60,8 +65,8 @@ pub fn machine(s: &Value) -> Machine {
         provider: super::ID.into(),
         status: status(str_at(s, "state")),
         vcpu: num_at(s, "cpuCount") as u32,
-        memory_bytes: num_at(s, "memoryMB") as u64 * MIB,
-        disk_bytes: num_at(s, "diskSizeMB") as u64 * MIB,
+        memory_bytes: (num_at(s, "memoryMB") as u64).saturating_mul(MIB),
+        disk_bytes: (num_at(s, "diskSizeMB") as u64).saturating_mul(MIB),
         size: String::new(),
         public_ip: String::new(),
         access_domain: String::new(),
@@ -130,7 +135,8 @@ mod tests {
             assert!(!valid_id(bad), "{bad}");
         }
         assert_eq!(domain(&json!({ "domain": "e2b.dev" })), "e2b.dev");
-        for bad in ["", "evil", ".e2b.app", "e2b.app/x", "e2b.app:1", "E2B.APP"] {
+        assert_eq!(domain(&json!({ "domain": "eu.e2b.app" })), "eu.e2b.app");
+        for bad in ["", "evil", ".e2b.app", "e2b.app/x", "e2b.app:1", "E2B.APP", "attacker.com", "evile2b.app", "e2b.app.evil.com", "a..e2b.app"] {
             assert_eq!(domain(&json!({ "domain": bad })), "e2b.app", "{bad}");
         }
     }

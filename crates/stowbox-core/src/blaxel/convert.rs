@@ -89,7 +89,7 @@ pub fn machine(s: &Value) -> Machine {
         provider: super::ID.into(),
         status: status(str_at(s, "status"), str_at(s, "state")),
         vcpu: vcpus_for(memory_mib),
-        memory_bytes: memory_mib * MIB,
+        memory_bytes: memory_mib.saturating_mul(MIB),
         // The disk is a tmpfs sized from memory; Blaxel does not report it.
         disk_bytes: 0,
         size: if super::SIZES_GIB.iter().any(|g| super::size_id(g * 1024) == size) { size } else { String::new() },

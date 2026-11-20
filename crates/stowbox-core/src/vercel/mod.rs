@@ -194,7 +194,13 @@ impl Vercel {
     /// Vercel only adds to a timeout, so this adds what is missing.
     async fn keep_up(api: &Api, sid: &str, idle: u32) -> Result<()> {
         let s = api.get(&format!("/v2/sandboxes/sessions/{}", seg(sid))).await?;
-        let missing = now_ms() + f64::from(idle) * 1000.0 - s.get("session").map(convert::deadline_ms).unwrap_or(0.0);
+        // Without a deadline there is nothing to measure from; asking for
+        // more than `idle` would keep the box up past its idle stop.
+        let Some(deadline) = s.get("session").map(convert::deadline_ms).filter(|d| *d > 0.0) else {
+            return Ok(());
+        };
+        let idle_ms = f64::from(idle) * 1000.0;
+        let missing = (now_ms() + idle_ms - deadline).min(idle_ms);
         if missing > 1000.0 {
             api.post(&format!("/v2/sandboxes/sessions/{}/extend-timeout", seg(sid)), json!({ "duration": missing.ceil() as u64 })).await?;
         }
@@ -341,8 +347,10 @@ impl Provider for Vercel {
         let id = Self::checked(id)?.to_string();
         let idle = Some(Self::machine_of(&self.fetch(&id, false).await?)?.idle_stop_secs).filter(|s| *s > 0).unwrap_or(DEFAULT_IDLE_STOP_SECS);
         let (sid, cwd) = self.running_session(&id).await?;
-        // A session that sat idle may be close to its deadline.
-        Self::keep_up(&self.api, &sid, idle).await?;
+        // A session that sat idle may be close to its deadline. Past the
+        // plan's cap Vercel refuses to extend it, but the session still runs
+        // until then, so that refusal does not fail the exec.
+        let _ = Self::keep_up(&self.api, &sid, idle).await;
         let inner =
             if spec.tty { exec::terminal(&self.api, &self.http, &sid, &cwd, spec).await? } else { exec::command(self.api.clone(), sid.clone(), spec).await? };
 
@@ -425,7 +433,7 @@ mod tests {
     }
 
     /// Live: commands run as the declared user and home, and dropping an
-    /// exec kills what its script left running, not only the shell. Needs
+    /// exec or a terminal kills what it left running, not only the shell. Needs
     /// the `STOWBOX_LIVE_VERCEL_*` variables; makes and deletes a sandbox.
     #[tokio::test]
     #[ignore = "makes and deletes a real Vercel sandbox"]
@@ -458,14 +466,22 @@ mod tests {
             h.output.close();
             drop(h);
             tokio::time::sleep(Duration::from_secs(4)).await;
-            Ok::<_, Error>((who, run("pgrep -c -f 'sleep 77[78]' || true").await?))
+            let left = run("pgrep -c -f 'sleep 77[78]' || true").await?;
+            let t = p.exec(&m.id, ExecSpec { script: "sleep 779".into(), tty: true, cols: 80, rows: 24, env: vec![] }).await?;
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            drop(t);
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            // The bracket keeps pgrep from matching the shell that runs it.
+            let after_tty = run("pgrep -c -f 'sleep 77[9]' || true").await?;
+            Ok::<_, Error>((who, left, after_tty))
         };
         let result = check.await;
         p.power(&m.id, PowerAction::Destroy).await.unwrap();
-        let (who, left) = result.unwrap();
+        let (who, left, after_tty) = result.unwrap();
         let caps = capabilities();
         assert_eq!(who, format!("{}\n{}", caps.remote_user, caps.remote_home));
         assert_eq!(left, "0");
+        assert_eq!(after_tty, "0");
     }
 
     #[test]

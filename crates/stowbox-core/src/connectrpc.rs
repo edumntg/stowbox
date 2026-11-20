@@ -9,6 +9,7 @@
 //! [`MAX_MESSAGE`] before a byte is kept, and the buffer never holds more
 //! than one message plus one read.
 
+use crate::http::read_capped;
 use crate::{Error, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
@@ -113,7 +114,7 @@ impl Client {
         if let Some(len) = resp.content_length().filter(|&l| l as usize > MAX_MESSAGE) {
             return Err(Error::Provider(format!("{}: answered with {len} bytes", self.who)));
         }
-        let body = read_capped(resp, MAX_MESSAGE).await?;
+        let body = read_capped(resp, MAX_MESSAGE, "envd").await?;
         if !status.is_success() {
             let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
             return Err(if v.is_object() { error_from(self.who, &v) } else { http_error(self.who, status.as_u16()) });
@@ -143,7 +144,7 @@ impl Client {
         let resp = tokio::time::timeout(idle, builder.send()).await.map_err(|_| Error::Network(format!("{}: no answer to the stream request", self.who)))??;
         let status = resp.status();
         if !status.is_success() {
-            let body = read_capped(resp, 64 << 10).await.unwrap_or_default();
+            let body = read_capped(resp, 64 << 10, "envd").await.unwrap_or_default();
             let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
             return Err(if v.is_object() { error_from(self.who, &v) } else { http_error(self.who, status.as_u16()) });
         }
@@ -160,18 +161,6 @@ fn http_error(who: &str, status: u16) -> Error {
         502..=504 => Error::Network(format!("{who} is not answering ({status})")),
         _ => Error::Provider(format!("{who} answered {status}")),
     }
-}
-
-/// The whole body, refusing one longer than `cap`.
-async fn read_capped(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    while let Some(chunk) = resp.chunk().await? {
-        if out.len() + chunk.len() > cap {
-            return Err(Error::Provider(format!("an answer over {cap} bytes")));
-        }
-        out.extend_from_slice(&chunk);
-    }
-    Ok(out)
 }
 
 /// The messages of a server stream, read as they arrive.

@@ -53,6 +53,7 @@ pub mod e2b;
 pub mod error;
 pub mod git;
 pub mod guard;
+pub mod http;
 pub mod metrics;
 pub mod ndjson;
 pub mod notify;

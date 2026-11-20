@@ -3,13 +3,11 @@
 //! `{ "error": { code, message } }`.
 
 use crate::daytona::api::seg;
-use crate::{Error, Result};
+use crate::{http, Error, Result};
 use reqwest::Method;
 use serde_json::Value;
 use std::time::Duration;
 
-const MAX_WAIT: Duration = Duration::from_secs(8);
-const RETRIES: u32 = 2;
 /// Largest answer read. A page of sandboxes is well under it.
 const MAX_BODY: usize = 8 << 20;
 /// How long a streaming answer may take to start.
@@ -48,7 +46,9 @@ impl Api {
     pub fn new(base: &str, token: String, team: String) -> Result<Self> {
         let ua = concat!("stowbox/", env!("CARGO_PKG_VERSION"));
         let http = reqwest::Client::builder().user_agent(ua).connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(60)).build()?;
-        let stream_http = reqwest::Client::builder().user_agent(ua).connect_timeout(Duration::from_secs(10)).build()?;
+        // A command stream has no keepalives of its own, so TCP's find a
+        // peer that went away without a reset.
+        let stream_http = reqwest::Client::builder().user_agent(ua).connect_timeout(Duration::from_secs(10)).tcp_keepalive(Duration::from_secs(30)).build()?;
         Ok(Self { http, stream_http, base: base.trim_end_matches('/').to_string(), token, team })
     }
 
@@ -83,7 +83,7 @@ impl Api {
         if status.is_success() {
             return Ok(resp);
         }
-        let text = read_capped(resp, 64 << 10).await.unwrap_or_default();
+        let text = http::read_capped(resp, 64 << 10, "Vercel").await.unwrap_or_default();
         Err(into_error(status.as_u16(), &String::from_utf8_lossy(&text)))
     }
 
@@ -97,14 +97,8 @@ impl Api {
             }
             let resp = req.send().await?;
             let status = resp.status();
-            let retry_after = resp
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.trim().parse::<f64>().ok())
-                .filter(|s| s.is_finite() && *s >= 0.0)
-                .map(Duration::from_secs_f64);
-            let bytes = read_capped(resp, MAX_BODY).await?;
+            let retry_after = http::header(&resp);
+            let bytes = http::read_capped(resp, MAX_BODY, "Vercel").await?;
             let text = String::from_utf8_lossy(&bytes);
             if status.is_success() {
                 if text.trim().is_empty() {
@@ -112,27 +106,14 @@ impl Api {
                 }
                 return serde_json::from_str(&text).map_err(|e| Error::Provider(format!("Vercel answered {status} with a body that is not JSON: {e}")));
             }
-            let short = retry_after.map(|d| d <= MAX_WAIT).unwrap_or(true);
-            if attempt < RETRIES && matches!(status.as_u16(), 429 | 503) && short {
+            if let Some(wait) = http::wait(attempt, &method, status.as_u16(), retry_after) {
                 attempt += 1;
-                tokio::time::sleep(retry_after.unwrap_or(Duration::from_secs(1 << attempt)).min(MAX_WAIT)).await;
+                tokio::time::sleep(wait).await;
                 continue;
             }
             return Err(into_error(status.as_u16(), &text));
         }
     }
-}
-
-/// The whole body, refusing one longer than `cap`.
-async fn read_capped(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    while let Some(chunk) = resp.chunk().await? {
-        if out.len() + chunk.len() > cap {
-            return Err(Error::Provider(format!("Vercel answered with more than {cap} bytes")));
-        }
-        out.extend_from_slice(&chunk);
-    }
-    Ok(out)
 }
 
 #[cfg(test)]

@@ -152,14 +152,15 @@ pub async fn command(api: Arc<Api>, sid: String, spec: ExecSpec) -> Result<ExecH
                 Err(e) => Some(ExecOutput::Error(e.to_string())),
             };
             let Some(o) = out else { continue };
-            let last = matches!(o, ExecOutput::Exit(_) | ExecOutput::Error(_));
-            if out_tx.send(o).await.is_err() {
-                if !last {
-                    kill(&api, &sid, &id, pgid).await;
-                }
-                return;
+            let ended = matches!(o, ExecOutput::Exit(_));
+            // A broken stream leaves the command running with nothing to
+            // read it, so it is ended as if the reader had gone.
+            let broke = matches!(o, ExecOutput::Error(_));
+            let delivered = out_tx.send(o).await.is_ok();
+            if broke || (!ended && !delivered) {
+                kill(&api, &sid, &id, pgid).await;
             }
-            if last {
+            if ended || broke || !delivered {
                 return;
             }
         }
@@ -224,6 +225,8 @@ pub async fn terminal(api: &Api, http: &reqwest::Client, sid: &str, cwd: &str, s
             break;
         }
     }
+    // Vercel's protocol: the short-lived token for this one socket rides in
+    // the query; the server refuses it in a header. It is never logged.
     let sep = if url.contains('?') { '&' } else { '?' };
     let mut ws = websocket::connect(&format!("{url}{sep}token={}", seg(token)), &[]).await?;
     ws.send.send(Message::Text(start_message(&spec, cwd))).await.map_err(|_| Error::Network("the Vercel terminal closed before it started".into()))?;
@@ -252,6 +255,8 @@ pub async fn terminal(api: &Api, http: &reqwest::Client, sid: &str, cwd: &str, s
         let _keep_open = ws.send;
         loop {
             let ev = tokio::select! {
+                // Closing the socket ends what the PTY runs; the live test
+                // checks that nothing is left.
                 _ = out_tx.closed() => return,
                 ev = ws.recv.recv() => ev,
             };

@@ -27,6 +27,13 @@ in the workspace shows up, whoever made it.
   sandboxes alike. Connecting lists one sandbox, which checks the key and
   the workspace together. The key goes to each sandbox's own URL, so that
   URL must be `https` on `*.bl.run` or `*.blaxel.ai`; any other is refused.
+  Blaxel's edge checks the key and removes `Authorization` before the
+  request enters the sandbox, so code in a box cannot read it: on
+  2026-11-20 a packet capture inside a sandbox saw the other headers of a
+  request in plain HTTP/1.1, and no `Authorization`.
+- **Waiting to start.** A sandbox deploys for a few seconds after it is
+  made. An exec in that window waits up to a minute for it, since Blaxel
+  has no start action to offer instead.
 - **Names.** A box's id is the sandbox name: the name given in New box,
   lower-cased into letters, digits and dashes.
 - **Exec without a TTY.** `POST {sandbox}/process` starts the command line

@@ -25,6 +25,7 @@ use api::Api;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub const ID: &str = "blaxel";
 pub const DEFAULT_API: &str = "https://api.blaxel.ai/v0";
@@ -38,6 +39,8 @@ const DEFAULT_GIB: u64 = 4;
 /// memory.
 const DEFAULT_DISK_GIB: u32 = 3;
 /// The user commands run as, and its home, as the base image reports them.
+/// Polls, two seconds apart, for a deploying sandbox before an exec gives up.
+const START_POLLS: u32 = 30;
 const USER: &str = "root";
 const HOME: &str = "/blaxel";
 /// Blaxel's list price: $0.0000115 a GB-second of memory while active,
@@ -245,10 +248,20 @@ impl Provider for Blaxel {
     }
 
     async fn exec(&self, id: &str, spec: ExecSpec) -> Result<ExecHandle> {
-        let s = self.api.get(&self.sandbox(id, "")?).await?;
-        let m = convert::machine(&s);
-        if !matches!(m.status, MachineStatus::Running | MachineStatus::Hibernated) {
-            return Err(Error::Provider(format!("the Blaxel sandbox {id} is not running; start it first")));
+        let path = self.sandbox(id, "")?;
+        let mut s = self.api.get(&path).await?;
+        // A new sandbox deploys for a few seconds; wait for it rather than
+        // refuse, since Blaxel has no start for the person to press.
+        for _ in 0..START_POLLS {
+            if !matches!(convert::machine(&s).status, MachineStatus::Pending | MachineStatus::Starting) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            s = self.api.get(&path).await?;
+        }
+        let status = convert::machine(&s).status;
+        if !matches!(status, MachineStatus::Running | MachineStatus::Hibernated) {
+            return Err(Error::Provider(format!("the Blaxel sandbox {id} is {}, so it cannot run commands", format!("{status:?}").to_lowercase())));
         }
         let base = convert::sandbox_url(&s).ok_or_else(|| Error::Provider("Blaxel gave the sandbox no usable URL".into()))?;
         if spec.tty {

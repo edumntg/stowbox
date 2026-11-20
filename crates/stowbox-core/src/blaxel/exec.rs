@@ -153,14 +153,15 @@ pub async fn command(api: Arc<Api>, base: String, spec: ExecSpec) -> Result<Exec
                 Err(e) => Some(ExecOutput::Error(e.to_string())),
             };
             let Some(o) = out else { continue };
-            let last = matches!(o, ExecOutput::Exit(_) | ExecOutput::Error(_));
-            if out_tx.send(o).await.is_err() {
-                if !last {
-                    kill(&api, &base, &proc, pgid).await;
-                }
-                return;
+            let ended = matches!(o, ExecOutput::Exit(_));
+            // A broken stream leaves the command running with nothing to
+            // read it, so it is ended as if the reader had gone.
+            let broke = matches!(o, ExecOutput::Error(_));
+            let delivered = out_tx.send(o).await.is_ok();
+            if broke || (!ended && !delivered) {
+                kill(&api, &base, &proc, pgid).await;
             }
-            if last {
+            if ended || broke || !delivered {
                 return;
             }
         }
@@ -233,8 +234,10 @@ pub async fn terminal(api: Arc<Api>, base: String, spec: ExecSpec) -> Result<Exe
             let ev = tokio::select! {
                 _ = out_tx.closed() => {
                     // Hang up what the terminal runs; Blaxel would keep the
-                    // session ten minutes for a reconnect.
-                    let _ = run(&api, &base, format!("kill -HUP -$(cat {path}.pid) $(cat {path}.pid) 2>/dev/null; rm -f {path}.pid {path}.rc")).await;
+                    // session ten minutes for a reconnect. A pid file that is
+                    // empty or names init must not turn into `kill -1`.
+                    let hang_up = format!("p=$(cat {path}.pid 2>/dev/null); [ \"$p\" -gt 1 ] 2>/dev/null && kill -HUP -\"$p\" \"$p\" 2>/dev/null; rm -f {path}.pid {path}.rc");
+                    let _ = run(&api, &base, hang_up).await;
                     return;
                 }
                 ev = ws.recv.recv() => ev,

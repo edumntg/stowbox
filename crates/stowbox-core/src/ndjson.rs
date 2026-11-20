@@ -17,16 +17,23 @@ pub const MAX_LINE: usize = 4 << 20;
 pub struct Lines {
     resp: reqwest::Response,
     buf: Vec<u8>,
+    scanned: usize,
     idle: Option<Duration>,
     who: &'static str,
     done: bool,
 }
 
 /// The first whole line in `buf`, taken off it, or `None` until one ends.
-/// Blank lines are skipped.
-pub fn take_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
+/// Blank lines are skipped. `scanned` is how much of `buf` is known to hold
+/// no newline, so a long line arriving in small chunks is searched once.
+pub fn take_line(buf: &mut Vec<u8>, scanned: &mut usize) -> Option<Vec<u8>> {
     loop {
-        let nl = buf.iter().position(|&b| b == b'\n')?;
+        let found = buf.get(*scanned..).and_then(|rest| rest.iter().position(|&b| b == b'\n'));
+        let Some(nl) = found.map(|i| i + *scanned) else {
+            *scanned = buf.len();
+            return None;
+        };
+        *scanned = 0;
         let mut line: Vec<u8> = buf.drain(..=nl).collect();
         line.pop();
         if line.last() == Some(&b'\r') {
@@ -46,13 +53,13 @@ impl Lines {
     /// `idle` bounds each wait for more; `None` for a server that sends no
     /// keepalives, whose quiet commands would otherwise look dead.
     pub fn new(resp: reqwest::Response, idle: Option<Duration>, who: &'static str) -> Self {
-        Self { resp, buf: Vec::new(), idle, who, done: false }
+        Self { resp, buf: Vec::new(), scanned: 0, idle, who, done: false }
     }
 
     /// The next value, `None` once the answer has ended.
     pub async fn next(&mut self) -> Result<Option<Value>> {
         loop {
-            if let Some(line) = take_line(&mut self.buf) {
+            if let Some(line) = take_line(&mut self.buf, &mut self.scanned) {
                 return parse(self.who, &line).map(Some);
             }
             if self.buf.len() > MAX_LINE {
@@ -85,11 +92,12 @@ mod tests {
     #[test]
     fn lines_come_off_whole_and_blank_ones_are_skipped() {
         let mut buf = b"{\"a\":1}\r\n\n  \n{\"b\"".to_vec();
-        assert_eq!(take_line(&mut buf), Some(b"{\"a\":1}".to_vec()));
-        assert_eq!(take_line(&mut buf), None);
-        assert_eq!(buf, b"{\"b\"");
+        let mut scanned = 0;
+        assert_eq!(take_line(&mut buf, &mut scanned), Some(b"{\"a\":1}".to_vec()));
+        assert_eq!(take_line(&mut buf, &mut scanned), None);
+        assert_eq!((buf.as_slice(), scanned), (&b"{\"b\""[..], 4));
         buf.extend_from_slice(b":2}\n");
-        assert_eq!(take_line(&mut buf), Some(b"{\"b\":2}".to_vec()));
+        assert_eq!(take_line(&mut buf, &mut scanned), Some(b"{\"b\":2}".to_vec()));
         assert!(buf.is_empty());
     }
 

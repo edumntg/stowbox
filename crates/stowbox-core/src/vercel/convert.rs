@@ -90,7 +90,7 @@ pub fn machine(sandbox: &Value, session: Option<&Value>) -> Machine {
         provider: super::ID.into(),
         status,
         vcpu: from("vcpus") as u32,
-        memory_bytes: from("memory") as u64 * MIB,
+        memory_bytes: (from("memory") as u64).saturating_mul(MIB),
         disk_bytes: DISK_GIB << 30,
         size: String::new(),
         public_ip: String::new(),
