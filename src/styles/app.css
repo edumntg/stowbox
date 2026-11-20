@@ -1704,9 +1704,12 @@ select.input {
 .meter-fill {
   display: block;
   height: 100%;
-  border-radius: 2px;
+  /* Full width, scaled to the ratio: a transform animates without relayout.
+     The track's rounded clip shapes the ends. */
+  transform-origin: left;
+  transform: scaleX(var(--ratio, 0));
   background: color-mix(in srgb, var(--foreground) 70%, transparent);
-  transition: width 300ms var(--ease-out), background 150ms;
+  transition: transform 300ms var(--ease-out), background 150ms;
 }
 
 .meter-fill[data-level="warn"] {
