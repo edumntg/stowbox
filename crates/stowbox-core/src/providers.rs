@@ -113,7 +113,8 @@ pub struct ProviderKind {
 }
 
 /// Every provider, in the order the UI lists them.
-pub const ALL: &[ProviderKind] = &[crate::boxd::KIND, crate::boat::KIND, crate::daytona::KIND, crate::agent37::KIND, crate::e2b::KIND, crate::sshhost::KIND];
+pub const ALL: &[ProviderKind] =
+    &[crate::boxd::KIND, crate::boat::KIND, crate::daytona::KIND, crate::agent37::KIND, crate::e2b::KIND, crate::vercel::KIND, crate::sshhost::KIND];
 
 /// The provider with this id.
 pub fn find(id: &str) -> Result<&'static ProviderKind> {

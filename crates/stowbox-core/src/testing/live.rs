@@ -287,3 +287,9 @@ async fn agent37_live() {
 async fn e2b_live() {
     live("e2b").await;
 }
+
+#[tokio::test]
+#[ignore = "makes and deletes real Vercel sandboxes"]
+async fn vercel_live() {
+    live("vercel").await;
+}

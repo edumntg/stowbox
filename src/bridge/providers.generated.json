@@ -391,6 +391,106 @@
       "autoHibernate": false,
       "autoStop": false,
       "autoSuspend": false,
+      "consoleUrl": "https://vercel.com/dashboard",
+      "create": true,
+      "credentialFields": [
+        {
+          "hint": "Make a token on vercel.com under Account Settings, Tokens, scoped to the team below.",
+          "label": "API key",
+          "name": "api_key",
+          "optional": false,
+          "placeholder": "",
+          "secret": true
+        },
+        {
+          "hint": "The team the sandboxes belong to, under the team's Settings, General.",
+          "label": "team id",
+          "name": "team",
+          "optional": false,
+          "placeholder": "team_…",
+          "secret": false
+        },
+        {
+          "hint": "The project the sandboxes belong to, by name or id.",
+          "label": "project",
+          "name": "project",
+          "optional": false,
+          "placeholder": "my-project",
+          "secret": false
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 64,
+      "defaultSize": "2-vcpu",
+      "editorSsh": false,
+      "fork": true,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": false,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "VC",
+      "idleStop": true,
+      "isolated": false,
+      "keyPrefixes": [],
+      "label": "Vercel",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": false,
+      "meteringNote": "Vercel's API does not report what a sandbox has cost; the dashboard does. This is the list price with every vCPU busy.",
+      "newBoxBlurb": "A Vercel Sandbox microVM with Node and Python, up in seconds. It stops after a stretch with no use and keeps its disk; starting it again boots from that.",
+      "portForwards": false,
+      "power": [
+        "stop",
+        "start",
+        "destroy"
+      ],
+      "remoteHome": "/vercel",
+      "remoteUser": "ubuntu",
+      "sizes": [
+        {
+          "diskBytes": 68719476736,
+          "hourlyMicro": 170400,
+          "id": "1-vcpu",
+          "memoryBytes": 2147483648,
+          "note": "",
+          "vcpu": 1
+        },
+        {
+          "diskBytes": 68719476736,
+          "hourlyMicro": 340800,
+          "id": "2-vcpu",
+          "memoryBytes": 4294967296,
+          "note": "",
+          "vcpu": 2
+        },
+        {
+          "diskBytes": 68719476736,
+          "hourlyMicro": 681600,
+          "id": "4-vcpu",
+          "memoryBytes": 8589934592,
+          "note": "",
+          "vcpu": 4
+        },
+        {
+          "diskBytes": 68719476736,
+          "hourlyMicro": 1363200,
+          "id": "8-vcpu",
+          "memoryBytes": 17179869184,
+          "note": "Pro and Enterprise",
+          "vcpu": 8
+        }
+      ],
+      "sshHint": ""
+    },
+    "id": "vercel"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
       "consoleUrl": "",
       "create": false,
       "credentialFields": [

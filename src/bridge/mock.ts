@@ -50,7 +50,7 @@ const AGENT37_SHAPES = [
 const agent37Hourly = (vcpu: number, mem: number, disk: number) => vcpu * AGENT37_RATES.vcpuHourMicro + mem * AGENT37_RATES.ramGibHourMicro + disk * AGENT37_RATES.diskGibHourMicro;
 
 // `?providers=boxd` or `?providers=boat,daytona` previews a subset of connected providers.
-const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b").split(",").filter((p) => p in CAPS));
+const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b,vercel").split(",").filter((p) => p in CAPS));
 
 const noRates = { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 };
 
@@ -60,7 +60,15 @@ const noRates = { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 };
 const PRICED: Record<string, { rates: typeof noRates; vcpu: number; memoryBytes: number; diskBytes: number; source: string; idleStopSecs: number; idPrefix: string; account: string }> = {
   // core e2b::RATES; a paused sandbox shows as hibernated and costs nothing.
   e2b: { rates: { vcpuHourMicro: 50_400, ramGibHourMicro: 16_200, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 512 * 1024 * 1024, diskBytes: 22 * GIB, source: "base", idleStopSecs: 1_800, idPrefix: "e2bmock", account: "E2B team" },
+  // core vercel::RATES; sizes are `N-vcpu` with 2 GiB per vCPU, and every disk is 64 GiB.
+  vercel: { rates: { vcpuHourMicro: 128_000, ramGibHourMicro: 21_200, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 64 * GIB, source: "universal", idleStopSecs: 1_800, idPrefix: "mock-sandbox-", account: "Vercel my-project" },
 };
+
+/** vCPU and memory of a `N-vcpu` size, the form Vercel's sizes take. */
+function pricedSize(size: string | null | undefined): Partial<Machine> {
+  const n = Number(/^(\d+)-vcpu$/.exec(size ?? "")?.[1] ?? 0);
+  return n > 0 ? { vcpu: n, memoryBytes: n * 2 * GIB } : {};
+}
 
 function pricedMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status" | "provider">): Machine {
   const p = PRICED[partial.provider];
@@ -323,6 +331,8 @@ let machines: Machine[] = [
   machine({ id: "build.example.com", name: "build.example.com", status: "running", provider: "sshhost" }),
   machine({ id: "e2bmock11", name: "e2b-tests", status: "running", provider: "e2b" }),
   machine({ id: "e2bmock12", name: "e2b-parked", status: "hibernated", provider: "e2b" }),
+  machine({ id: "preview-api", name: "preview-api", status: "running", provider: "vercel" }),
+  machine({ id: "nightly-evals", name: "nightly-evals", status: "stopped", provider: "vercel", vcpu: 4, memoryBytes: 8 * GIB }),
 ].filter((m) => connected.has(m.provider));
 
 // Metrics drift a little per sample so the fleet view shows movement, and
@@ -1054,7 +1064,7 @@ export const mockApi: Api = {
         : provider === "daytona"
           ? newDaytonaBox(spec)
           : provider in PRICED
-            ? machine({ id: PRICED[provider].idPrefix + Date.now().toString(36), createdAt: Math.floor(Date.now() / 1000), name: spec.name || `${provider}-new`, status: "running", provider, idleStopSecs: spec.autoStopSecs ?? undefined })
+            ? machine({ id: PRICED[provider].idPrefix + Date.now().toString(36), createdAt: Math.floor(Date.now() / 1000), name: spec.name || `${provider}-new`, status: "running", provider, idleStopSecs: spec.autoStopSecs ?? undefined, ...pricedSize(spec.size) })
           : provider === "agent37"
             ? machine({ id: "a37" + Date.now().toString(36).slice(-7), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "agent37-new", status: "running", provider, size: spec.size ?? "default", idleStopSecs: spec.autoStopSecs ?? 3_600 })
             : machine({ id: "vm_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "mock-new", status: "running", vcpu: spec.vcpu ?? 2, memoryBytes: spec.memoryBytes ?? 8 * GIB, isolated: spec.isolated });
