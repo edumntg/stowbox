@@ -281,3 +281,9 @@ async fn daytona_live() {
 async fn agent37_live() {
     live("agent37").await;
 }
+
+#[tokio::test]
+#[ignore = "makes and deletes real E2B sandboxes"]
+async fn e2b_live() {
+    live("e2b").await;
+}

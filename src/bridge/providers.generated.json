@@ -329,6 +329,68 @@
       "autoHibernate": false,
       "autoStop": false,
       "autoSuspend": false,
+      "consoleUrl": "https://e2b.dev/dashboard",
+      "create": true,
+      "credentialFields": [
+        {
+          "hint": "Copy it from the E2B dashboard under Keys. It starts with e2b_.",
+          "label": "API key",
+          "name": "api_key",
+          "optional": false,
+          "placeholder": "",
+          "secret": true
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 22,
+      "defaultSize": "base",
+      "editorSsh": false,
+      "fork": true,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": false,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "E2",
+      "idleStop": true,
+      "isolated": false,
+      "keyPrefixes": [
+        "e2b_"
+      ],
+      "label": "e2b",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": false,
+      "meteringNote": "E2B's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.",
+      "newBoxBlurb": "An E2B sandbox from the base template, up in under a second. It pauses after a stretch with no use, memory and all, and costs nothing while paused; opening a terminal resumes it.",
+      "portForwards": false,
+      "power": [
+        "hibernate",
+        "wake",
+        "destroy"
+      ],
+      "remoteHome": "/home/user",
+      "remoteUser": "user",
+      "sizes": [
+        {
+          "diskBytes": 23622320128,
+          "hourlyMicro": 108900,
+          "id": "base",
+          "memoryBytes": 536870912,
+          "note": "",
+          "vcpu": 2
+        }
+      ],
+      "sshHint": ""
+    },
+    "id": "e2b"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
       "consoleUrl": "",
       "create": false,
       "credentialFields": [

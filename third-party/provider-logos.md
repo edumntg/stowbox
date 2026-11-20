@@ -17,6 +17,7 @@ Downloaded on 2026-11-19.
 | boat | <https://boat.dev/icon.svg> | None published that we could find |
 | Daytona | <https://www.daytona.io/favicon.svg> | <https://www.daytona.io/brand>: the glyph is the form meant for UI with limited space |
 | Agent37 | <https://www.agent37.com/logo.svg> | None published that we could find |
+| E2B | <https://e2b.dev/brand/e2b-symbol-black-s.svg> (downloaded 2026-11-20; its `<metadata>` is removed) | <https://e2b.dev/brand>: the small symbol is the form for compact UI |
 
 The SSH host is not a company, so it has no logo: `sshhost.svg` is Lucide's
 `server` icon, under the ISC license in `third-party/lucide-LICENSE`.

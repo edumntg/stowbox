@@ -6,6 +6,7 @@
 //! - `daytona`: Daytona, over its REST API, with exec over its SSH gateway.
 //! - `agent37`: Agent37, over its REST API, with exec over SSH through a
 //!   WebSocket at its edge.
+//! - `e2b`: E2B, over its REST API, with exec over envd's Connect API.
 //! - `sshhost`: any machine reachable over SSH, with no lifecycle.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
@@ -13,6 +14,7 @@
 //! - `registry`: the connected providers, and which one owns each box.
 //! - `agent`: a coding agent's interactive session inside a box, its state,
 //!   and the Claude Code login the box uses.
+//! - `connectrpc`: a Connect protocol client for protobuf services (envd).
 //! - `cost`: live €/h estimates from the provider's rate card.
 //! - `git`: the repository review (status, diff) and commit, push and pull
 //!   request, run inside the box.
@@ -37,8 +39,10 @@ pub mod audit;
 pub mod boat;
 pub mod boxd;
 pub mod capabilities;
+pub mod connectrpc;
 pub mod cost;
 pub mod daytona;
+pub mod e2b;
 pub mod error;
 pub mod git;
 pub mod guard;
