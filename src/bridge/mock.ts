@@ -50,7 +50,7 @@ const AGENT37_SHAPES = [
 const agent37Hourly = (vcpu: number, mem: number, disk: number) => vcpu * AGENT37_RATES.vcpuHourMicro + mem * AGENT37_RATES.ramGibHourMicro + disk * AGENT37_RATES.diskGibHourMicro;
 
 // `?providers=boxd` or `?providers=boat,daytona` previews a subset of connected providers.
-const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b,vercel").split(",").filter((p) => p in CAPS));
+const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b,vercel,blaxel").split(",").filter((p) => p in CAPS));
 
 const noRates = { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 };
 
@@ -62,12 +62,17 @@ const PRICED: Record<string, { rates: typeof noRates; vcpu: number; memoryBytes:
   e2b: { rates: { vcpuHourMicro: 50_400, ramGibHourMicro: 16_200, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 512 * 1024 * 1024, diskBytes: 22 * GIB, source: "base", idleStopSecs: 1_800, idPrefix: "e2bmock", account: "E2B team" },
   // core vercel::RATES; sizes are `N-vcpu` with 2 GiB per vCPU, and every disk is 64 GiB.
   vercel: { rates: { vcpuHourMicro: 128_000, ramGibHourMicro: 21_200, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 64 * GIB, source: "universal", idleStopSecs: 1_800, idPrefix: "mock-sandbox-", account: "Vercel my-project" },
+  // core blaxel::RATES: memory only, CPU included; standby shows as hibernated and costs nothing.
+  blaxel: { rates: { vcpuHourMicro: 0, ramGibHourMicro: 41_400, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 0, source: "blaxel/base-image:latest", idleStopSecs: 0, idPrefix: "mock-sbx-", account: "Blaxel my-workspace" },
 };
 
-/** vCPU and memory of a `N-vcpu` size, the form Vercel's sizes take. */
+/** vCPU and memory of a `N-vcpu` (Vercel) or `N-gib` (Blaxel) size. */
 function pricedSize(size: string | null | undefined): Partial<Machine> {
-  const n = Number(/^(\d+)-vcpu$/.exec(size ?? "")?.[1] ?? 0);
-  return n > 0 ? { vcpu: n, memoryBytes: n * 2 * GIB } : {};
+  const vcpus = Number(/^(\d+)-vcpu$/.exec(size ?? "")?.[1] ?? 0);
+  if (vcpus > 0) return { vcpu: vcpus, memoryBytes: vcpus * 2 * GIB };
+  const gib = Number(/^(\d+)-gib$/.exec(size ?? "")?.[1] ?? 0);
+  // Blaxel gives one vCPU per 2 GiB, six at 16 GiB.
+  return gib > 0 ? { vcpu: gib >= 16 ? 6 : Math.max(1, gib / 2), memoryBytes: gib * GIB } : {};
 }
 
 function pricedMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status" | "provider">): Machine {
@@ -333,6 +338,7 @@ let machines: Machine[] = [
   machine({ id: "e2bmock12", name: "e2b-parked", status: "hibernated", provider: "e2b" }),
   machine({ id: "preview-api", name: "preview-api", status: "running", provider: "vercel" }),
   machine({ id: "nightly-evals", name: "nightly-evals", status: "stopped", provider: "vercel", vcpu: 4, memoryBytes: 8 * GIB }),
+  machine({ id: "agent-scratch", name: "agent-scratch", status: "hibernated", provider: "blaxel" }),
 ].filter((m) => connected.has(m.provider));
 
 // Metrics drift a little per sample so the fleet view shows movement, and

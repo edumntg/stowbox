@@ -16,7 +16,7 @@
 <p align="center"><b>A desktop cockpit for cloud boxes and the coding agents running in them.</b></p>
 
 Stowbox talks to [boxd](https://boxd.sh), [boat](https://boat.dev),
-[Daytona](https://www.daytona.io), [Agent37](https://www.agent37.com), [E2B](https://e2b.dev) and [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox) with your own API keys, from your computer;
+[Daytona](https://www.daytona.io), [Agent37](https://www.agent37.com), [E2B](https://e2b.dev), [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox) and [Blaxel](https://blaxel.ai) with your own API keys, from your computer;
 connect one or several. It shows your boxes with a
 live cost estimate, runs Claude Code or Codex inside them, one terminal and one
 session per agent, opens a shell in any box, and pauses, stops, forks or deletes

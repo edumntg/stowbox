@@ -9,6 +9,8 @@
 //! - `e2b`: E2B, over its REST API, with exec over envd's Connect API.
 //! - `vercel`: Vercel Sandbox, over its REST API, with commands streamed as
 //!   NDJSON and terminals over a WebSocket.
+//! - `blaxel`: Blaxel, over its REST API, with commands through each
+//!   sandbox's process API and terminals over its WebSocket.
 //! - `sshhost`: any machine reachable over SSH, with no lifecycle.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
@@ -40,6 +42,7 @@
 pub mod agent;
 pub mod agent37;
 pub mod audit;
+pub mod blaxel;
 pub mod boat;
 pub mod boxd;
 pub mod capabilities;

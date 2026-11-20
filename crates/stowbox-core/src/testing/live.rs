@@ -293,3 +293,9 @@ async fn e2b_live() {
 async fn vercel_live() {
     live("vercel").await;
 }
+
+#[tokio::test]
+#[ignore = "makes and deletes real Blaxel sandboxes"]
+async fn blaxel_live() {
+    live("blaxel").await;
+}

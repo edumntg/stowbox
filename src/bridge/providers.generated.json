@@ -491,6 +491,98 @@
       "autoHibernate": false,
       "autoStop": false,
       "autoSuspend": false,
+      "consoleUrl": "https://app.blaxel.ai",
+      "create": true,
+      "credentialFields": [
+        {
+          "hint": "Make one in the Blaxel console under Workspace settings, API keys. It starts with bl_.",
+          "label": "API key",
+          "name": "api_key",
+          "optional": false,
+          "placeholder": "",
+          "secret": true
+        },
+        {
+          "hint": "The workspace the sandboxes belong to, as its name shows in the console URL.",
+          "label": "workspace",
+          "name": "workspace",
+          "optional": false,
+          "placeholder": "my-workspace",
+          "secret": false
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 3,
+      "defaultSize": "4-gib",
+      "editorSsh": false,
+      "fork": false,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": false,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "BX",
+      "idleStop": false,
+      "isolated": false,
+      "keyPrefixes": [
+        "bl_"
+      ],
+      "label": "Blaxel",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": false,
+      "meteringNote": "Blaxel's API does not report what a sandbox has cost; the console does. This is the list price while active; standby costs no compute.",
+      "newBoxBlurb": "A Blaxel sandbox microVM. It goes to standby seconds after its last use, memory and processes kept, costs nothing for compute there, and wakes in milliseconds.",
+      "portForwards": false,
+      "power": [
+        "destroy"
+      ],
+      "remoteHome": "/blaxel",
+      "remoteUser": "root",
+      "sizes": [
+        {
+          "diskBytes": 0,
+          "hourlyMicro": 82800,
+          "id": "2-gib",
+          "memoryBytes": 2147483648,
+          "note": "",
+          "vcpu": 1
+        },
+        {
+          "diskBytes": 0,
+          "hourlyMicro": 165600,
+          "id": "4-gib",
+          "memoryBytes": 4294967296,
+          "note": "",
+          "vcpu": 2
+        },
+        {
+          "diskBytes": 0,
+          "hourlyMicro": 331200,
+          "id": "8-gib",
+          "memoryBytes": 8589934592,
+          "note": "",
+          "vcpu": 4
+        },
+        {
+          "diskBytes": 0,
+          "hourlyMicro": 662400,
+          "id": "16-gib",
+          "memoryBytes": 17179869184,
+          "note": "",
+          "vcpu": 6
+        }
+      ],
+      "sshHint": ""
+    },
+    "id": "blaxel"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
       "consoleUrl": "",
       "create": false,
       "credentialFields": [
