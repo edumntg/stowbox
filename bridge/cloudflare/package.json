@@ -1,0 +1,16 @@
+{
+  "name": "stowbox-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test src/checks.test.ts",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261119.1",
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.165.0"
+  }
+}

@@ -50,6 +50,12 @@ pub struct Socket {
     pub recv: mpsc::Receiver<Result<Event>>,
 }
 
+/// A host from a provider or the person, with only the characters a DNS
+/// name or an IPv4 address has, so it cannot change a request line.
+pub fn valid_host(host: &str) -> bool {
+    (1..=253).contains(&host.len()) && !host.starts_with(['.', '-']) && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+}
+
 /// `wss://host[:port]/path?query` as host, port and the request target.
 /// The URL comes from a provider's API, so the host may hold only the
 /// characters a DNS name has.
@@ -64,8 +70,7 @@ pub fn parse_url(url: &str) -> Result<(String, u16, String)> {
         Some((h, p)) => (h, p.parse::<u16>().map_err(|_| bad())?),
         None => (authority, 443),
     };
-    let host_ok = (1..=253).contains(&host.len()) && !host.starts_with(['.', '-']) && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
-    if !host_ok || port == 0 {
+    if !valid_host(host) || port == 0 {
         return Err(bad());
     }
     let target = if target.starts_with('?') {

@@ -417,20 +417,28 @@ async fn token_login(handle: &mut client::Handle<Checker>, user: &str) -> Result
     Ok(false)
 }
 
-/// What runs on the far side. Environment goes in as `export`s, since
-/// sshd drops `env` requests it was not told to accept.
-pub fn remote_command(spec: &ExecSpec) -> String {
+/// The script with the spec's environment as `export`s in front, for
+/// `bash -lc`. Names that are not shell names are left out.
+pub fn with_env(spec: &ExecSpec) -> String {
     let mut script = String::new();
     for (k, v) in &spec.env {
-        if k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') && !k.is_empty() {
+        let shell_name = k.bytes().next().is_some_and(|b| !b.is_ascii_digit()) && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+        if shell_name {
             script.push_str(&format!("export {}={} && ", k, shell_quote(v)));
         }
     }
     script.push_str(&spec.script);
+    script
+}
+
+/// What runs on the far side. Environment goes in as `export`s, since
+/// sshd drops `env` requests it was not told to accept.
+pub fn remote_command(spec: &ExecSpec) -> String {
+    let script = with_env(spec);
     if spec.tty {
         format!("bash -lc {}", shell_quote(&script))
     } else {
-        let inner = format!("printf '\\036stowbox-pgid:%s\\n' \"$$\" >&2; exec bash -lc \"$1\"");
+        let inner = "printf '\\036stowbox-pgid:%s\\n' \"$$\" >&2; exec bash -lc \"$1\"";
         // setsid -w is util-linux. Elsewhere (macOS, BSD, BusyBox) the script
         // runs without a group of its own: it works, but dropping the exec
         // cannot kill what it left running. `sh -c` keeps this independent

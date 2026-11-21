@@ -122,6 +122,7 @@ pub const ALL: &[ProviderKind] = &[
     crate::vercel::KIND,
     crate::blaxel::KIND,
     crate::modal::KIND,
+    crate::cloudflare::KIND,
     crate::sshhost::KIND,
 ];
 

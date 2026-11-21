@@ -1,0 +1,40 @@
+{
+  "name": "stowbox-bridge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      { "name": "REGISTRY", "class_name": "Registry" },
+      { "name": "BOX_STANDARD_2", "class_name": "BoxStandard2" },
+      { "name": "BOX_STANDARD_3", "class_name": "BoxStandard3" },
+      { "name": "BOX_STANDARD_4", "class_name": "BoxStandard4" }
+    ]
+  },
+  // One class per size: an instance type belongs to a container class.
+  // The image is pinned by digest; README.md says how to move it.
+  "containers": [
+    {
+      "class_name": "BoxStandard2",
+      "image": "docker.io/library/node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb",
+      "instance_type": "standard-2",
+      "max_instances": 10
+    },
+    {
+      "class_name": "BoxStandard3",
+      "image": "docker.io/library/node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb",
+      "instance_type": "standard-3",
+      "max_instances": 10
+    },
+    {
+      "class_name": "BoxStandard4",
+      "image": "docker.io/library/node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb",
+      "instance_type": "standard-4",
+      "max_instances": 10
+    }
+  ],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Registry", "BoxStandard2", "BoxStandard3", "BoxStandard4"] }
+  ],
+  "observability": { "enabled": true }
+}

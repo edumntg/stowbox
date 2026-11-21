@@ -13,6 +13,8 @@
 //!   sandbox's process API and terminals over its WebSocket.
 //! - `modal`: Modal, over its gRPC client API, with exec through each
 //!   sandbox's task command router.
+//! - `cloudflare`: Cloudflare Containers, through the `stowbox-bridge`
+//!   Worker the person deploys, with exec over its WebSocket.
 //! - `sshhost`: any machine reachable over SSH, with no lifecycle.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
@@ -48,6 +50,7 @@ pub mod blaxel;
 pub mod boat;
 pub mod boxd;
 pub mod capabilities;
+pub mod cloudflare;
 pub mod connectrpc;
 pub mod cost;
 pub mod daytona;
