@@ -311,3 +311,9 @@ async fn modal_live() {
 async fn cloudflare_live() {
     live("cloudflare").await;
 }
+
+#[tokio::test]
+#[ignore = "makes and deletes real sprites"]
+async fn sprites_live() {
+    live("sprites").await;
+}

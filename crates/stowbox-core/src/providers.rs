@@ -123,6 +123,7 @@ pub const ALL: &[ProviderKind] = &[
     crate::blaxel::KIND,
     crate::modal::KIND,
     crate::cloudflare::KIND,
+    crate::sprites::KIND,
     crate::sshhost::KIND,
 ];
 

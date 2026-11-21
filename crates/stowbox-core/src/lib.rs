@@ -15,6 +15,8 @@
 //!   sandbox's task command router.
 //! - `cloudflare`: Cloudflare Containers, through the `stowbox-bridge`
 //!   Worker the person deploys, with exec over its WebSocket.
+//! - `sprites`: Sprites by Fly.io, over its REST API, with exec over its
+//!   WebSocket.
 //! - `sshhost`: any machine reachable over SSH, with no lifecycle.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
@@ -68,6 +70,7 @@ pub mod provider;
 pub mod providers;
 pub mod provision;
 pub mod registry;
+pub mod sprites;
 pub mod ssh;
 pub mod sshexec;
 pub mod sshhost;

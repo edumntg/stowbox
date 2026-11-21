@@ -22,6 +22,7 @@ Downloaded on 2026-11-19.
 | Blaxel | <https://blaxel.ai/favicon.svg> (downloaded 2026-11-20; the black background square is removed) | <https://blaxel.ai/brand> offers no logo files; the favicon's mark is used |
 | Cloudflare | Simple Icons 16.38.0, `icons/cloudflare.svg` (downloaded 2026-11-21; its `role` and `<title>` are removed and the path takes `currentColor`) | <https://www.cloudflare.com/trademark/> |
 | Modal | <https://modal.com/assets/favicon.svg> (downloaded 2026-11-20; the gradient shading paths are removed, leaving the mark's outline, and the view box is cropped to it) | None published that we could find |
+| Sprites | <https://sprites.dev/images/favicon/favicon.svg> (downloaded 2026-11-21; only the outer path is kept, so the eyes show as holes, and its `<style>` and nested `<svg>` are removed) | None published that we could find |
 
 ## Harness marks
 

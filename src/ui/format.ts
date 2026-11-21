@@ -43,13 +43,16 @@ export function gib(bytes: number): string {
   return (Number.isInteger(g) ? g : g.toFixed(1)) + " GiB";
 }
 
-/** vCPU and memory, or an honest blank when the provider does not report them (an SSH host). */
+/** vCPU and memory, or an honest blank for what the provider does not report
+ * (an SSH host reports neither; Sprites manages memory and reports none). */
 export function sizeLabel(m: Pick<Machine, "vcpu" | "memoryBytes">): string {
-  return m.vcpu ? `${m.vcpu} vCPU · ${gib(m.memoryBytes)}` : "size not reported";
+  if (!m.vcpu) return "size not reported";
+  return m.memoryBytes ? `${m.vcpu} vCPU · ${gib(m.memoryBytes)}` : `${m.vcpu} vCPU`;
 }
 
 export function compactSize(m: Pick<Machine, "vcpu" | "memoryBytes">): string {
-  return m.vcpu ? `${m.vcpu}c ${Math.round(m.memoryBytes / GIB)}G` : "—";
+  if (!m.vcpu) return "—";
+  return m.memoryBytes ? `${m.vcpu}c ${Math.round(m.memoryBytes / GIB)}G` : `${m.vcpu}c`;
 }
 
 /** A box's hourly estimate, or "no price" for a box with none, such as an SSH host. */

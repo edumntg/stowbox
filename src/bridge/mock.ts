@@ -50,7 +50,7 @@ const AGENT37_SHAPES = [
 const agent37Hourly = (vcpu: number, mem: number, disk: number) => vcpu * AGENT37_RATES.vcpuHourMicro + mem * AGENT37_RATES.ramGibHourMicro + disk * AGENT37_RATES.diskGibHourMicro;
 
 // `?providers=boxd` or `?providers=boat,daytona` previews a subset of connected providers.
-const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b,vercel,blaxel,modal,cloudflare").split(",").filter((p) => p in CAPS));
+const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b,vercel,blaxel,modal,cloudflare,sprites").split(",").filter((p) => p in CAPS));
 
 const noRates = { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 };
 
@@ -68,6 +68,8 @@ const PRICED: Record<string, { rates: typeof noRates; vcpu: number; memoryBytes:
   modal: { rates: { vcpuHourMicro: 70_956, ramGibHourMicro: 24_012, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 512 * GIB, source: "", idleStopSecs: 0, lifetimeSecs: 86_400, idPrefix: "sb-mock", account: "Modal my-workspace" },
   // core cloudflare: priced per size from its menu, nothing while stopped; a stopped box keeps no files.
   cloudflare: { rates: noRates, vcpu: 1, memoryBytes: 6 * GIB, diskBytes: 12e9, source: "", idleStopSecs: 1_800, bySize: true, idPrefix: "box-mock", account: "Cloudflare bridge" },
+  // core sprites: one shape, the CPU at full use while awake; warm shows as standby, cold as hibernated, both free of CPU.
+  sprites: { rates: noRates, vcpu: 8, memoryBytes: 0, diskBytes: 100e9, source: "", idleStopSecs: 0, bySize: true, idPrefix: "sprite-mock-", account: "my-org" },
 };
 
 /** vCPU and memory of a `N-vcpu` (Vercel) or `N-gib` (Blaxel) size. */
@@ -271,6 +273,20 @@ function boatMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "
 }
 
 /** A Daytona box takes its size from a default snapshot, as core does. */
+/** As core sprites names one: the typed name in lowercase letters, digits
+ * and single hyphens, up to 40, or `box-` and eight random characters; the
+ * name is the id. */
+function newSprite(typed: string | null | undefined): Machine {
+  const name =
+    (typed ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+/, "")
+      .slice(0, 40)
+      .replace(/-+$/, "") || `box-${Math.random().toString(36).slice(2, 10)}`;
+  return machine({ id: name, createdAt: Math.floor(Date.now() / 1000), name, status: "running", provider: "sprites", size: "sprite" });
+}
+
 function newDaytonaBox(spec: CreateSpec): Machine {
   const caps = CAPS.daytona;
   const size = caps?.sizes.find((z) => z.id === (spec.size ?? caps.defaultSize));
@@ -353,6 +369,8 @@ let machines: Machine[] = [
   machine({ id: "sb-mockGpuEvals01", name: "modal-evals", status: "running", provider: "modal" }),
   machine({ id: "box-mock7k2q9x4m1p8z3nab", name: "edge-worker", status: "running", provider: "cloudflare", size: "standard-3" }),
   machine({ id: "box-mockr5t8w2y6u0i4o1cd", name: "edge-idle", status: "stopped", provider: "cloudflare" }),
+  machine({ id: "agent-lab", name: "agent-lab", status: "running", provider: "sprites" }),
+  machine({ id: "notes-sync", name: "notes-sync", status: "suspended", provider: "sprites" }),
 ].filter((m) => connected.has(m.provider));
 
 // Metrics drift a little per sample so the fleet view shows movement, and
@@ -1083,6 +1101,8 @@ export const mockApi: Api = {
         ? machine({ id: "sbx_mock_" + Date.now(), createdAt: Math.floor(Date.now() / 1000), name: spec.name || "boat-new", status: "running", provider, size: spec.size ?? "default", autoStopAt: spec.autoStopSecs ? Math.floor(Date.now() / 1000) + spec.autoStopSecs : 0 })
         : provider === "daytona"
           ? newDaytonaBox(spec)
+          : provider === "sprites"
+            ? newSprite(spec.name)
           : provider in PRICED
             ? machine({ id: PRICED[provider].idPrefix + Date.now().toString(36), createdAt: Math.floor(Date.now() / 1000), name: spec.name || `${provider}-new`, status: "running", provider, idleStopSecs: PRICED[provider].idleStopSecs > 0 ? (spec.autoStopSecs ?? undefined) : 0, size: spec.size ?? "", ...pricedSize(spec.size) })
           : provider === "agent37"

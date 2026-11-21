@@ -52,6 +52,7 @@
       "meteredUsage": true,
       "meteringNote": "boxd meters with a lag of up to about 25 minutes, so the last half hour may be missing here.",
       "newBoxBlurb": "A persistent Linux machine on boxd. It boots in well under a second and hibernates on its own after four idle hours.",
+      "pausesWhenIdle": false,
       "portForwards": true,
       "power": [
         "start",
@@ -111,6 +112,7 @@
       "meteredUsage": true,
       "meteringNote": "boat counts by the second at list price; time included in the plan is not taken off here.",
       "newBoxBlurb": "A full Ubuntu VM on boat with Docker and the common agents installed. Billed by the second while it runs; a stop keeps the disk as a snapshot for at least 14 days.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [
         "start",
@@ -197,6 +199,7 @@
       "meteredUsage": false,
       "meteringNote": "Daytona's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.",
       "newBoxBlurb": "A Daytona sandbox from the default image, up in about a second. Daytona stops it after a stretch with no activity, even with work running; Stowbox reports activity while a terminal or an agent is open.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [
         "start",
@@ -275,6 +278,7 @@
       "meteredUsage": true,
       "meteringNote": "Agent37 settles metered minutes at least hourly and reports them by UTC day; managed model spend is not counted here.",
       "newBoxBlurb": "A persistent Linux sandbox on Agent37, billed by the minute. Stowbox installs tmux, Claude Code and Codex in it, which adds about half a minute. With no activity it sleeps and bills only its disk; the next connection wakes it.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [
         "start",
@@ -364,6 +368,7 @@
       "meteredUsage": false,
       "meteringNote": "E2B's API does not report what a sandbox has cost; the dashboard does. This is the list-price estimate.",
       "newBoxBlurb": "An E2B sandbox from the base template, up in under a second. It pauses after a stretch with no use, memory and all, and costs nothing while paused; opening a terminal resumes it.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [
         "hibernate",
@@ -440,6 +445,7 @@
       "meteredUsage": false,
       "meteringNote": "Vercel's API does not report what a sandbox has cost; the dashboard does. This is the list price with every vCPU busy.",
       "newBoxBlurb": "A Vercel Sandbox microVM with Node and Python, up in seconds. It stops after a stretch with no use and keeps its disk; starting it again boots from that.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [
         "stop",
@@ -534,6 +540,7 @@
       "meteredUsage": false,
       "meteringNote": "Blaxel's API does not report what a sandbox has cost; the console does. This is the list price while active; standby costs no compute.",
       "newBoxBlurb": "A Blaxel sandbox microVM. It goes to standby seconds after its last use, memory and processes kept, costs nothing for compute there, and wakes in milliseconds.",
+      "pausesWhenIdle": true,
       "portForwards": false,
       "power": [
         "destroy"
@@ -624,6 +631,7 @@
       "meteredUsage": false,
       "meteringNote": "Modal's API does not report what a sandbox has cost; its usage page does. This is the list price while it runs.",
       "newBoxBlurb": "A Modal sandbox, a gVisor container on Modal's workers, running as root. It lives a day at most and then is gone, disk and all; Beta, as Modal's sandbox API is not a published one.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [
         "destroy"
@@ -714,6 +722,7 @@
       "meteredUsage": false,
       "meteringNote": "The bridge cannot read Cloudflare's billing. This is the list price while running with the CPU fully busy; Cloudflare bills CPU on use, and a stopped box costs nothing.",
       "newBoxBlurb": "A Cloudflare container behind your stowbox-bridge Worker. It stops after the idle time with nothing connected, and a stopped box keeps no files: the next start is a fresh disk.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [
         "start",
@@ -751,6 +760,65 @@
       "sshHint": ""
     },
     "id": "cloudflare"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
+      "consoleUrl": "https://sprites.dev",
+      "create": true,
+      "credentialFields": [
+        {
+          "hint": "An access token for your Sprites organization, from sprites.dev. It looks like org/id/secret.",
+          "label": "API key",
+          "name": "api_key",
+          "optional": false,
+          "placeholder": "",
+          "secret": true
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 93,
+      "defaultSize": "sprite",
+      "editorSsh": false,
+      "fork": false,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": false,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "SP",
+      "idleStop": false,
+      "isolated": false,
+      "keyPrefixes": [],
+      "label": "Sprites",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": false,
+      "meteringNote": "Sprites bills CPU time, memory and storage on use, and its API does not report them. This is the CPU at full use while awake; a paused sprite costs only its storage.",
+      "newBoxBlurb": "A Sprites microVM with 8 vCPUs and a 100 GB disk that persists. It pauses by itself seconds after its last use and wakes on the next command.",
+      "pausesWhenIdle": true,
+      "portForwards": false,
+      "power": [
+        "destroy"
+      ],
+      "remoteHome": "/home/sprite",
+      "remoteUser": "sprite",
+      "sizes": [
+        {
+          "diskBytes": 100000000000,
+          "hourlyMicro": 308000,
+          "id": "sprite",
+          "memoryBytes": 0,
+          "note": "",
+          "vcpu": 8
+        }
+      ],
+      "sshHint": ""
+    },
+    "id": "sprites"
   },
   {
     "capabilities": {
@@ -814,6 +882,7 @@
       "meteredUsage": false,
       "meteringNote": "An SSH host has no price Stowbox can read.",
       "newBoxBlurb": "A machine you already have, reached over SSH. Stowbox does not make, stop or delete it.",
+      "pausesWhenIdle": false,
       "portForwards": false,
       "power": [],
       "remoteHome": "",

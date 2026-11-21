@@ -124,6 +124,7 @@ pub fn capabilities() -> Capabilities {
         auto_hibernate: false,
         auto_stop: false,
         idle_stop: false,
+        pauses_when_idle: false,
         custom_size: false,
         sizes: SIZES
             .iter()
