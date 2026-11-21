@@ -81,7 +81,13 @@ impl TokenExchange {
 fn parse_expires(v: &serde_json::Value) -> Option<SystemTime> {
     let n = v.as_i64()?;
     let secs = if n > 10_000_000_000 { n / 1000 } else { n };
-    Some(UNIX_EPOCH + Duration::from_secs(secs.max(0) as u64))
+    unix_secs(secs)
+}
+
+/// `UNIX_EPOCH + secs`, or None past what `SystemTime` holds on this
+/// platform (Windows ends far sooner than i64 seconds).
+fn unix_secs(secs: i64) -> Option<SystemTime> {
+    UNIX_EPOCH.checked_add(Duration::from_secs(u64::try_from(secs).unwrap_or(0)))
 }
 
 /// Reads the `exp` claim from a JWT without verifying it. We only use it to
@@ -91,8 +97,7 @@ pub fn jwt_exp(token: &str) -> Option<SystemTime> {
     let bytes =
         base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload).ok().or_else(|| base64::engine::general_purpose::URL_SAFE.decode(payload).ok())?;
     let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let exp = claims.get("exp")?.as_i64()?;
-    Some(UNIX_EPOCH + Duration::from_secs(exp.max(0) as u64))
+    unix_secs(claims.get("exp")?.as_i64()?)
 }
 
 #[cfg(test)]
@@ -120,5 +125,14 @@ mod tests {
         let ms = parse_expires(&serde_json::json!(1_700_000_000_000i64)).unwrap();
         assert_eq!(s, ms);
         assert!(parse_expires(&serde_json::json!("2026-01-01T00:00:00Z")).is_none());
+        assert_eq!(parse_expires(&serde_json::json!(-5)), Some(UNIX_EPOCH));
+    }
+
+    #[test]
+    fn far_future_times_do_not_panic() {
+        // On Windows these are past SystemTime's range; elsewhere they fit.
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(r#"{{"exp":{}}}"#, i64::MAX));
+        let _ = jwt_exp(&format!("h.{payload}.s"));
+        let _ = parse_expires(&serde_json::json!(i64::MAX));
     }
 }

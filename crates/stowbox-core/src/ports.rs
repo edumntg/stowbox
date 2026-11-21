@@ -236,12 +236,14 @@ fn proc_addr(hex: &str) -> Option<String> {
             Some(std::net::Ipv4Addr::from(n.to_le_bytes()).to_string())
         }
         32 => {
-            // Four 32-bit words, each in host (little-endian) order.
-            let mut bytes = [0u8; 16];
+            // Four 32-bit words, each in host (little-endian) order. `get`
+            // returns None when a non-ASCII character straddles a word.
+            let mut bytes = Vec::with_capacity(16);
             for w in 0..4 {
-                let n = u32::from_str_radix(&hex[w * 8..w * 8 + 8], 16).ok()?;
-                bytes[w * 4..w * 4 + 4].copy_from_slice(&n.to_le_bytes());
+                let word = hex.get(w * 8..w * 8 + 8)?;
+                bytes.extend_from_slice(&u32::from_str_radix(word, 16).ok()?.to_le_bytes());
             }
+            let bytes: [u8; 16] = bytes.try_into().ok()?;
             let v6 = std::net::Ipv6Addr::from(bytes);
             Some(match v6.to_ipv4_mapped() {
                 Some(v4) => v4.to_string(),
@@ -308,6 +310,15 @@ ESTAB  0      0          10.0.0.5:22      10.0.0.1:51234
                 (8080, vec!["*"], None, false),
             ]
         );
+    }
+
+    #[test]
+    fn proc_addresses_decode_and_reject_non_ascii() {
+        assert_eq!(proc_addr("0100007F").as_deref(), Some("127.0.0.1"));
+        assert_eq!(proc_addr("00000000000000000000000001000000").as_deref(), Some("::1"));
+        // U+FFFD is three bytes, so this is 32 bytes with a split word.
+        assert_eq!(proc_addr("0000000\u{FFFD}0000000000000000000001"), None);
+        assert_eq!(proc_addr("\u{FFFD}\u{FFFD}"), None);
     }
 
     #[test]

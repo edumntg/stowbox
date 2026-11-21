@@ -141,10 +141,9 @@ pub fn dollars_micro(d: f64) -> i64 {
 /// 0 for anything else.
 pub fn parse_time(s: &str) -> i64 {
     let s = s.trim();
-    let b = s.as_bytes();
-    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' || b[16] != b':' {
+    let [_, _, _, _, b'-', _, _, b'-', _, _, b'T' | b't' | b' ', _, _, b':', _, _, b':', _, _, ..] = s.as_bytes() else {
         return 0;
-    }
+    };
     let num = |r: std::ops::Range<usize>| s.get(r).and_then(|t| t.parse::<i64>().ok());
     let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(sec)) = (num(0..4), num(5..7), num(8..10), num(11..13), num(14..16), num(17..19)) else {
         return 0;
@@ -152,16 +151,17 @@ pub fn parse_time(s: &str) -> i64 {
     if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
         return 0;
     }
-    let mut rest = &s[19..];
+    let Some(mut rest) = s.get(19..) else { return 0 };
     if let Some(r) = rest.strip_prefix('.') {
         rest = r.trim_start_matches(|c: char| c.is_ascii_digit());
     }
-    let offset = match rest {
-        "Z" | "z" | "" => 0,
-        o if o.len() == 6 && (o.starts_with('+') || o.starts_with('-')) && &o[3..4] == ":" => {
-            let (Some(oh), Some(om)) = (o[1..3].parse::<i64>().ok(), o[4..6].parse::<i64>().ok()) else { return 0 };
-            let v = oh * 3600 + om * 60;
-            if o.starts_with('-') {
+    let offset = match rest.as_bytes() {
+        b"Z" | b"z" | b"" => 0,
+        [sign @ (b'+' | b'-'), h1, h2, b':', m1, m2] => {
+            let digit = |c: &u8| c.is_ascii_digit().then(|| i64::from(c - b'0'));
+            let (Some(h1), Some(h2), Some(m1), Some(m2)) = (digit(h1), digit(h2), digit(m1), digit(m2)) else { return 0 };
+            let v = (h1 * 10 + h2) * 3600 + (m1 * 10 + m2) * 60;
+            if *sign == b'-' {
                 -v
             } else {
                 v
@@ -197,6 +197,15 @@ mod tests {
         assert_eq!(parse_time(""), 0);
         assert_eq!(parse_time("yesterday"), 0);
         assert_eq!(parse_time("2026-13-01T00:00:00Z"), 0);
+        assert_eq!(parse_time("2026-11-14T10:20:30-01:30"), 1_794_651_630 + 5400);
+    }
+
+    #[test]
+    fn times_with_non_ascii_offsets_are_rejected() {
+        assert_eq!(parse_time("2026-11-14T10:20:30+0é00"), 0);
+        assert_eq!(parse_time("2026-11-14T10:20:30+é:00"), 0);
+        assert_eq!(parse_time("2026-11-14T10:20:30.é"), 0);
+        assert_eq!(parse_time("2026-11-14T10:20:3é"), 0);
     }
 
     #[test]

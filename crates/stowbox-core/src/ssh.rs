@@ -41,6 +41,15 @@ pub fn alias(machine_name: &str) -> String {
     format!("stowbox-{clean}")
 }
 
+/// Dot-separated labels of ASCII letters, digits and inner hyphens, 1 to 63
+/// bytes each and 253 in all (RFC 1123).
+fn is_hostname(host: &str) -> bool {
+    host.len() <= 253
+        && host.split('.').all(|label| {
+            (1..=63).contains(&label.len()) && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') && !label.starts_with('-') && !label.ends_with('-')
+        })
+}
+
 /// Where a box answers SSH.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,7 +67,14 @@ impl Target {
             return Err(format!("boxd has not given {} an SSH port yet. Try again once the box is running.", m.name));
         }
         let domain = if m.access_domain.is_empty() { "boxd.sh" } else { m.access_domain.as_str() };
-        Ok(Target { alias: alias(&m.name), host: format!("{}.{domain}", m.name), port: m.ssh_port, user: USER.into() })
+        let host = format!("{}.{domain}", m.name);
+        // The host goes into ~/.ssh/config, where whitespace or a newline
+        // would start another directive, so only a plain DNS name passes.
+        if !m.name.contains('.') && is_hostname(&host) {
+            Ok(Target { alias: alias(&m.name), host, port: m.ssh_port, user: USER.into() })
+        } else {
+            Err("boxd gave this box an address that is not a plain host name, so Stowbox will not write it to ~/.ssh/config.".into())
+        }
     }
 
     /// A command that works without Stowbox's config, with any linked key.
@@ -217,6 +233,16 @@ pub fn merge(config: &str, alias: &str, stanza: &str) -> String {
     }
     out.push_str(after);
     out
+}
+
+/// `type base64` from a provider's host key, or None unless it is exactly
+/// that on one line: anything more would add entries to known_hosts.
+fn host_key_line(key: &str) -> Option<String> {
+    let mut parts = key.trim().split(' ');
+    let (Some(kind), Some(blob), None) = (parts.next(), parts.next(), parts.next()) else { return None };
+    let kind_ok = !kind.is_empty() && kind.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'@' | b'.'));
+    let blob_ok = !blob.is_empty() && blob.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+    (kind_ok && blob_ok).then(|| format!("{kind} {blob}"))
 }
 
 /// Stowbox's known_hosts with `key` recorded for `alias` (other lines kept).
@@ -533,7 +559,7 @@ pub async fn setup(provider: &dyn Provider, files: &Files, m: &Machine, device: 
         changes.push(format!("Linked it to your {} account", provider.id()));
     }
 
-    let host_key = provider.ssh_host_key().await.ok().flatten().filter(|k| !k.trim().is_empty());
+    let host_key = provider.ssh_host_key().await.ok().flatten().and_then(|k| host_key_line(&k));
     if let Some(key) = &host_key {
         let path = files.known_hosts();
         let old = read(&path)?;
@@ -591,6 +617,28 @@ mod tests {
         assert_eq!(Target::of(&custom).unwrap().host, "web.preview.example.com");
         assert!(Target::of(&box_named("api", 0)).unwrap_err().contains("SSH port"));
         assert_eq!(alias("My Box"), "stowbox-my-box");
+    }
+
+    #[test]
+    fn targets_refuse_names_that_are_not_host_names() {
+        for name in ["api\n  ProxyCommand sh", "api x", "a.b", "-api", "api-", "", "ápi", &"a".repeat(64)] {
+            assert!(Target::of(&box_named(name, 22)).is_err(), "{name:?}");
+        }
+        for domain in ["boxd.sh\nHost *", "boxd..sh", "boxd.sh ", "boxd.sh/x", "*.boxd.sh"] {
+            let mut m = box_named("api", 22);
+            m.access_domain = domain.into();
+            assert!(Target::of(&m).is_err(), "{domain:?}");
+        }
+        assert!(Target::of(&box_named("api-2", 22)).is_ok());
+    }
+
+    #[test]
+    fn host_keys_are_one_type_and_blob() {
+        assert_eq!(host_key_line(" ssh-ed25519 AAAA+/= \n").as_deref(), Some("ssh-ed25519 AAAA+/="));
+        assert_eq!(host_key_line("ssh-ed25519 AAAA\n* ssh-ed25519 BBBB"), None);
+        assert_eq!(host_key_line("ssh-ed25519 AAAA comment"), None);
+        assert_eq!(host_key_line("ssh-ed25519"), None);
+        assert_eq!(host_key_line(""), None);
     }
 
     #[test]
