@@ -305,3 +305,9 @@ async fn blaxel_live() {
 async fn modal_live() {
     live("modal").await;
 }
+
+#[tokio::test]
+#[ignore = "makes and deletes real Cloudflare containers through the bridge"]
+async fn cloudflare_live() {
+    live("cloudflare").await;
+}

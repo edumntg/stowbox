@@ -1,0 +1,3 @@
+# Its own workspace, apart from the app's. The same supply-chain policy:
+# only versions public for at least a day.
+minimumReleaseAge: 1440

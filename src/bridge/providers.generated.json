@@ -673,6 +673,90 @@
       "autoHibernate": false,
       "autoStop": false,
       "autoSuspend": false,
+      "consoleUrl": "https://dash.cloudflare.com/?to=/:account/workers/containers",
+      "create": true,
+      "credentialFields": [
+        {
+          "hint": "The URL wrangler printed when you deployed bridge/cloudflare.",
+          "label": "bridge URL",
+          "name": "url",
+          "optional": false,
+          "placeholder": "https://stowbox-bridge.you.workers.dev",
+          "secret": false
+        },
+        {
+          "hint": "The STOWBOX_TOKEN secret you gave the bridge Worker: at least 32 characters, made with openssl rand -hex 32.",
+          "label": "bridge token",
+          "name": "api_key",
+          "optional": false,
+          "placeholder": "",
+          "secret": true
+        }
+      ],
+      "currency": "usd",
+      "customSize": false,
+      "defaultDiskGib": 11,
+      "defaultSize": "standard-2",
+      "editorSsh": false,
+      "fork": false,
+      "freeSizes": [],
+      "httpsDefaultRoute": false,
+      "httpsLinks": false,
+      "httpsList": false,
+      "httpsNamed": false,
+      "httpsRemove": false,
+      "icon": "CF",
+      "idleStop": true,
+      "isolated": false,
+      "keyPrefixes": [],
+      "label": "Cloudflare",
+      "maxUploadBytes": 20971520,
+      "meteredUsage": false,
+      "meteringNote": "The bridge cannot read Cloudflare's billing. This is the list price while running with the CPU fully busy; Cloudflare bills CPU on use, and a stopped box costs nothing.",
+      "newBoxBlurb": "A Cloudflare container behind your stowbox-bridge Worker. It stops after the idle time with nothing connected, and a stopped box keeps no files: the next start is a fresh disk.",
+      "portForwards": false,
+      "power": [
+        "start",
+        "stop",
+        "destroy"
+      ],
+      "remoteHome": "/root",
+      "remoteUser": "root",
+      "sizes": [
+        {
+          "diskBytes": 12000000000,
+          "hourlyMicro": 129024,
+          "id": "standard-2",
+          "memoryBytes": 6442450944,
+          "note": "",
+          "vcpu": 1
+        },
+        {
+          "diskBytes": 16000000000,
+          "hourlyMicro": 220032,
+          "id": "standard-3",
+          "memoryBytes": 8589934592,
+          "note": "",
+          "vcpu": 2
+        },
+        {
+          "diskBytes": 20000000000,
+          "hourlyMicro": 401040,
+          "id": "standard-4",
+          "memoryBytes": 12884901888,
+          "note": "",
+          "vcpu": 4
+        }
+      ],
+      "sshHint": ""
+    },
+    "id": "cloudflare"
+  },
+  {
+    "capabilities": {
+      "autoHibernate": false,
+      "autoStop": false,
+      "autoSuspend": false,
       "consoleUrl": "",
       "create": false,
       "credentialFields": [

@@ -50,14 +50,14 @@ const AGENT37_SHAPES = [
 const agent37Hourly = (vcpu: number, mem: number, disk: number) => vcpu * AGENT37_RATES.vcpuHourMicro + mem * AGENT37_RATES.ramGibHourMicro + disk * AGENT37_RATES.diskGibHourMicro;
 
 // `?providers=boxd` or `?providers=boat,daytona` previews a subset of connected providers.
-const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b,vercel,blaxel,modal").split(",").filter((p) => p in CAPS));
+const connected = new Set((new URLSearchParams(window.location.search).get("providers") ?? "boxd,boat,daytona,agent37,sshhost,e2b,vercel,blaxel,modal,cloudflare").split(",").filter((p) => p in CAPS));
 
 const noRates = { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 };
 
 /** Providers priced as resources × list price, with nothing else of their
  * own in the mock. Rates are core's; `stopped` is the state the provider's
  * pause shows as. */
-const PRICED: Record<string, { rates: typeof noRates; vcpu: number; memoryBytes: number; diskBytes: number; source: string; idleStopSecs: number; lifetimeSecs?: number; idPrefix: string; account: string }> = {
+const PRICED: Record<string, { rates: typeof noRates; vcpu: number; memoryBytes: number; diskBytes: number; source: string; idleStopSecs: number; lifetimeSecs?: number; bySize?: boolean; idPrefix: string; account: string }> = {
   // core e2b::RATES; a paused sandbox shows as hibernated and costs nothing.
   e2b: { rates: { vcpuHourMicro: 50_400, ramGibHourMicro: 16_200, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 512 * 1024 * 1024, diskBytes: 22 * GIB, source: "base", idleStopSecs: 1_800, idPrefix: "e2bmock", account: "E2B team" },
   // core vercel::RATES; sizes are `N-vcpu` with 2 GiB per vCPU, and every disk is 64 GiB.
@@ -66,6 +66,8 @@ const PRICED: Record<string, { rates: typeof noRates; vcpu: number; memoryBytes:
   blaxel: { rates: { vcpuHourMicro: 0, ramGibHourMicro: 41_400, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 0, source: "blaxel/base-image:latest", idleStopSecs: 0, idPrefix: "mock-sbx-", account: "Blaxel my-workspace" },
   // core modal::RATES; `N-vcpu` sizes with 2 GiB per vCPU. A sandbox cannot stop and ends a day after it was made.
   modal: { rates: { vcpuHourMicro: 70_956, ramGibHourMicro: 24_012, diskGibHourMicro: 0 }, vcpu: 2, memoryBytes: 4 * GIB, diskBytes: 512 * GIB, source: "", idleStopSecs: 0, lifetimeSecs: 86_400, idPrefix: "sb-mock", account: "Modal my-workspace" },
+  // core cloudflare: priced per size from its menu, nothing while stopped; a stopped box keeps no files.
+  cloudflare: { rates: noRates, vcpu: 1, memoryBytes: 6 * GIB, diskBytes: 12e9, source: "", idleStopSecs: 1_800, bySize: true, idPrefix: "box-mock", account: "Cloudflare bridge" },
 };
 
 /** vCPU and memory of a `N-vcpu` (Vercel) or `N-gib` (Blaxel) size. */
@@ -79,11 +81,17 @@ function pricedSize(size: string | null | undefined): Partial<Machine> {
 
 function pricedMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" | "status" | "provider">): Machine {
   const p = PRICED[partial.provider];
-  const vcpu = partial.vcpu ?? p.vcpu;
-  const memoryBytes = partial.memoryBytes ?? p.memoryBytes;
-  const diskBytes = partial.diskBytes ?? p.diskBytes;
+  const caps = CAPS[partial.provider];
+  const sized = p.bySize ? caps.sizes.find((z) => z.id === (partial.size || caps.defaultSize)) : undefined;
+  const vcpu = partial.vcpu ?? sized?.vcpu ?? p.vcpu;
+  const memoryBytes = partial.memoryBytes ?? sized?.memoryBytes ?? p.memoryBytes;
+  const diskBytes = partial.diskBytes ?? sized?.diskBytes ?? p.diskBytes;
   const live = partial.status === "running" || partial.status === "starting";
-  const est = (live ? vcpu * p.rates.vcpuHourMicro + (memoryBytes / GIB) * p.rates.ramGibHourMicro : 0) + (diskBytes / GIB) * p.rates.diskGibHourMicro;
+  const est = sized
+    ? live
+      ? sized.hourlyMicro
+      : 0
+    : (live ? vcpu * p.rates.vcpuHourMicro + (memoryBytes / GIB) * p.rates.ramGibHourMicro : 0) + (diskBytes / GIB) * p.rates.diskGibHourMicro;
   const idleStopSecs = partial.idleStopSecs ?? p.idleStopSecs;
   const createdAt = partial.createdAt ?? Math.floor(Date.now() / 1000) - 1_800;
   return {
@@ -109,7 +117,7 @@ function pricedMachine(partial: Partial<Machine> & Pick<Machine, "id" | "name" |
     memoryBytes,
     diskBytes,
     currency: "usd",
-    size: partial.size ?? "",
+    size: sized?.id ?? partial.size ?? "",
     autoStopAt: p.lifetimeSecs ? createdAt + p.lifetimeSecs : 0,
     estHourlyMicro: Math.round(est),
   };
@@ -343,6 +351,8 @@ let machines: Machine[] = [
   machine({ id: "nightly-evals", name: "nightly-evals", status: "stopped", provider: "vercel", vcpu: 4, memoryBytes: 8 * GIB }),
   machine({ id: "agent-scratch", name: "agent-scratch", status: "hibernated", provider: "blaxel" }),
   machine({ id: "sb-mockGpuEvals01", name: "modal-evals", status: "running", provider: "modal" }),
+  machine({ id: "box-mock7k2q9x4m1p8z3nab", name: "edge-worker", status: "running", provider: "cloudflare", size: "standard-3" }),
+  machine({ id: "box-mockr5t8w2y6u0i4o1cd", name: "edge-idle", status: "stopped", provider: "cloudflare" }),
 ].filter((m) => connected.has(m.provider));
 
 // Metrics drift a little per sample so the fleet view shows movement, and
@@ -1184,7 +1194,10 @@ export const mockApi: Api = {
   async rates(provider) {
     if (provider === "sshhost") return { currency: "", rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 }, sizes: [] };
     if (provider === "daytona") return { currency: "usd", rates: DAYTONA_RATES, sizes: [] };
-    if (provider in PRICED) return { currency: "usd", rates: PRICED[provider].rates, sizes: [] };
+    if (provider in PRICED) {
+      const sizes = PRICED[provider].bySize ? CAPS[provider].sizes.map((z) => ({ size: z.id, hourlyMicro: z.hourlyMicro })) : [];
+      return { currency: "usd", rates: PRICED[provider].rates, sizes };
+    }
     if (provider === "agent37") return { currency: "usd", rates: AGENT37_RATES, sizes: [] };
     if (provider === "boat") return { currency: "usd", rates: { vcpuHourMicro: 0, ramGibHourMicro: 0, diskGibHourMicro: 0 }, sizes: BOAT_SIZES.map((z) => ({ size: z.id, hourlyMicro: z.hourlyMicro })) };
     return { currency: "eur", rates: { vcpuHourMicro: 39_000, ramGibHourMicro: 12_000, diskGibHourMicro: 80 }, sizes: [] };
