@@ -328,7 +328,7 @@ impl Pool {
 
         let tty = spec.tty;
         tokio::spawn(async move {
-            let mut marker = if tty { Marker::Done } else { Marker::Reading(Vec::new()) };
+            let mut marker = Marker::new(tty);
             let mut pgid: Option<u32> = None;
             let mut code: Option<i32> = None;
             loop {
@@ -440,20 +440,30 @@ pub fn remote_command(spec: &ExecSpec) -> String {
     }
 }
 
-/// Reads the process group id off the front of stderr, once.
-enum Marker {
+/// Reads the process group id off the front of stderr, once. Any exec that
+/// runs [`remote_command`] uses it, over SSH or not.
+pub(crate) enum Marker {
     Reading(Vec<u8>),
     Done,
 }
 
 impl Marker {
+    /// Waiting for the marker, which only a command without a TTY prints.
+    pub(crate) fn new(tty: bool) -> Self {
+        if tty {
+            Marker::Done
+        } else {
+            Marker::Reading(Vec::new())
+        }
+    }
+
     /// Returns the group id when this chunk completed the marker line, and
     /// the stderr bytes to pass on.
-    fn feed(&mut self, data: &[u8]) -> (Option<u32>, Option<Vec<u8>>) {
+    pub(crate) fn feed(&mut self, data: &[u8]) -> (Option<u32>, Option<Vec<u8>>) {
         let Marker::Reading(buf) = self else { return (None, Some(data.to_vec())) };
         buf.extend_from_slice(data);
         let n = buf.len().min(MARKER.len());
-        if buf[..n] != MARKER[..n] {
+        if buf.get(..n) != MARKER.get(..n) {
             let all = std::mem::take(buf);
             *self = Marker::Done;
             return (None, Some(all));
@@ -467,20 +477,25 @@ impl Marker {
             }
             return (None, None);
         };
-        let id = std::str::from_utf8(&buf[MARKER.len()..nl]).ok().and_then(|s| s.trim().parse::<u32>().ok());
-        let rest = buf[nl + 1..].to_vec();
+        let id = buf.get(MARKER.len()..nl).and_then(|b| std::str::from_utf8(b).ok()).and_then(|s| s.trim().parse::<u32>().ok());
+        let rest = buf.get(nl + 1..).unwrap_or_default().to_vec();
         *self = Marker::Done;
         (id, Some(rest))
     }
 }
 
-/// Best effort: TERM, a second for it to land, then KILL.
+/// The shell command that ends process group `pgid`: TERM, a second for it
+/// to land, then KILL. `None` for a group that must never be signalled.
+/// No `--` before the group: dash's `kill` (Debian's `sh`) refuses it, and
+/// `kill -SIG -N` is POSIX.
+pub(crate) fn kill_group_command(pgid: u32) -> Option<String> {
+    (pgid > 1).then(|| format!("kill -TERM -{pgid} 2>/dev/null; sleep 1; kill -KILL -{pgid} 2>/dev/null; true"))
+}
+
+/// Best effort; see [`kill_group_command`].
 async fn kill_group(conn: &Conn, pgid: u32) {
-    if pgid <= 1 {
-        return;
-    }
+    let Some(cmd) = kill_group_command(pgid) else { return };
     let Ok(ch) = conn.channel_open_session().await else { return };
-    let cmd = format!("kill -TERM -- -{pgid} 2>/dev/null; sleep 1; kill -KILL -- -{pgid} 2>/dev/null; true");
     let _ = ch.exec(false, cmd).await;
     let _ = ch.eof().await;
 }

@@ -31,6 +31,12 @@ const OP_BINARY: u8 = 0x2;
 /// Opens `wss://{host}:{port}/` with `headers` on the upgrade and returns
 /// the stream inside it.
 pub async fn connect(host: &str, port: u16, headers: &[(String, String)]) -> Result<DuplexStream> {
+    over(tls(host, port).await?, host, headers).await
+}
+
+/// A TLS connection to `host:port`, verified against the web PKI roots, for
+/// an HTTP/1.1 upgrade.
+pub(crate) async fn tls(host: &str, port: u16) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
     let tcp = tokio::time::timeout(Duration::from_secs(15), tokio::net::TcpStream::connect((host, port)))
         .await
         .map_err(|_| Error::Network(format!("no answer from {host}:{port} within 15 s")))??;
@@ -43,8 +49,10 @@ pub async fn connect(host: &str, port: u16, headers: &[(String, String)]) -> Res
         .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| Error::Network(format!("tls: {host}: {e}")))?;
-    let tls = tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, tcp).await.map_err(|e| Error::Network(format!("tls to {host}: {e}")))?;
-    over(tls, host, headers).await
+    tokio::time::timeout(Duration::from_secs(15), tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, tcp))
+        .await
+        .map_err(|_| Error::Network(format!("no TLS answer from {host} within 15 s")))?
+        .map_err(|e| Error::Network(format!("tls to {host}: {e}")))
 }
 
 /// The handshake and the pump over any stream, so tests need no TLS.
@@ -52,17 +60,35 @@ pub async fn over<S>(mut stream: S, host: &str, headers: &[(String, String)]) ->
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    // The host is a box id from the provider's API and the headers carry the
-    // key the person typed: a line break in either would add lines of its
-    // own to the request.
-    if host.contains(['\r', '\n']) || headers.iter().any(|(k, v)| k.contains(['\r', '\n', ':']) || v.contains(['\r', '\n'])) {
-        return Err(Error::Provider("a WebSocket tunnel header holds a line break; check the API key for stray characters".into()));
+    let rest = handshake(&mut stream, host, "/", headers).await?;
+    let (ours, theirs) = tokio::io::duplex(256 * 1024);
+    tokio::spawn(pump(stream, theirs, rest));
+    Ok(ours)
+}
+
+/// Sends the upgrade for `path` (with its query) and checks the answer.
+/// Returns what the server sent after the answer's head: frames may ride in
+/// with it.
+pub(crate) async fn handshake<S>(stream: &mut S, host: &str, path: &str, headers: &[(String, String)]) -> Result<Vec<u8>>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    // The host and path come from the provider's API and the headers carry
+    // the key the person typed: a line break or a space in any of them would
+    // add to the request line or headers.
+    if host.contains(['\r', '\n'])
+        || !path.starts_with('/')
+        || path.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+        || headers.iter().any(|(k, v)| k.contains(['\r', '\n', ':']) || v.contains(['\r', '\n']))
+    {
+        return Err(Error::Provider("a WebSocket header holds a line break; check the API key for stray characters".into()));
     }
     let mut nonce = [0u8; 16];
     getrandom::getrandom(&mut nonce).map_err(|e| Error::Network(format!("no randomness for the WebSocket key: {e}")))?;
     let key = base64::engine::general_purpose::STANDARD.encode(nonce);
-    let mut req =
-        format!("GET / HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n");
+    let mut req = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n"
+    );
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -86,11 +112,7 @@ where
         buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
     };
     check_answer(&String::from_utf8_lossy(head), &key, host)?;
-    let rest = rest.to_vec();
-
-    let (ours, theirs) = tokio::io::duplex(256 * 1024);
-    tokio::spawn(pump(stream, theirs, rest));
-    Ok(ours)
+    Ok(rest.to_vec())
 }
 
 /// The handshake answer's head and what came after its blank line, once
@@ -151,9 +173,18 @@ pub fn encode(opcode: u8, payload: &[u8], mask: [u8; 4]) -> Vec<u8> {
 /// the network, so every field is read with a bounds check and the length
 /// is capped before anything is copied.
 pub fn decode(buf: &[u8]) -> Result<Option<(u8, Vec<u8>, usize)>> {
+    Ok(decode_frame(buf)?.map(|(_, op, payload, used)| (op, payload, used)))
+}
+
+/// One decoded frame: FIN, opcode, payload, and the bytes it took.
+pub type Frame = (bool, u8, Vec<u8>, usize);
+
+/// [`decode`], with whether the frame is the last of its message (FIN).
+pub fn decode_frame(buf: &[u8]) -> Result<Option<Frame>> {
     let [b0, b1, rest @ ..] = buf else {
         return Ok(None);
     };
+    let fin = b0 & 0x80 != 0;
     let opcode = b0 & 0x0f;
     let masked = b1 & 0x80 != 0;
     let (len, rest) = match b1 & 0x7f {
@@ -188,10 +219,10 @@ pub fn decode(buf: &[u8]) -> Result<Option<(u8, Vec<u8>, usize)>> {
     }
     // `rest` is a suffix of `buf`, so the header is what lies before it.
     let used = buf.len() - rest.len() + len;
-    Ok(Some((opcode, payload, used)))
+    Ok(Some((fin, opcode, payload, used)))
 }
 
-fn new_mask() -> [u8; 4] {
+pub(crate) fn new_mask() -> [u8; 4] {
     let mut m = [0u8; 4];
     let _ = getrandom::getrandom(&mut m);
     m

@@ -38,7 +38,8 @@ impl RateCard {
 
     /// Whether the card has a price for anything at all.
     pub fn is_priced(&self) -> bool {
-        self.rates.vcpu_hour_micro > 0 || self.sizes.iter().any(|s| s.hourly_micro > 0)
+        // Some providers price memory alone (Blaxel), so either rate counts.
+        self.rates.vcpu_hour_micro > 0 || self.rates.ram_gib_hour_micro > 0 || self.sizes.iter().any(|s| s.hourly_micro > 0)
     }
 
     /// The estimate for `m` in its current state, from whichever part of
@@ -167,6 +168,8 @@ mod tests {
         assert_eq!(card.hourly_micro(&m), 0);
         assert!(card.is_priced());
         assert!(!RateCard::default().is_priced());
+        let memory_only = Rates { vcpu_hour_micro: 0, ram_gib_hour_micro: 41_400, disk_gib_hour_micro: 0 };
+        assert!(RateCard::resources("usd", memory_only).is_priced());
         // A boxd machine on a resource card is unchanged.
         let boxd = RateCard::resources("eur", BOXD_PUBLISHED_EUR);
         assert_eq!(boxd.hourly_micro(&machine(MachineStatus::Running, 2, 8)), 2 * 39_000 + 8 * 12_000 + 100 * 80);

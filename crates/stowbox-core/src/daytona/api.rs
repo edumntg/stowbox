@@ -2,14 +2,10 @@
 //! JSON bodies, NestJS-style errors (`{ statusCode, message, error }`, where
 //! `message` can be a list) and `Retry-After` on 429.
 
-use crate::{Error, Result};
+use crate::{http, Error, Result};
 use reqwest::Method;
 use serde_json::Value;
 use std::time::Duration;
-
-/// How long one wait on a 429 or 503 may be before giving up.
-const MAX_WAIT: Duration = Duration::from_secs(8);
-const RETRIES: u32 = 2;
 
 pub struct Api {
     http: reqwest::Client,
@@ -102,13 +98,7 @@ impl Api {
             }
             let resp = req.send().await?;
             let status = resp.status();
-            let retry_after = resp
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.trim().parse::<f64>().ok())
-                .filter(|s| s.is_finite() && *s >= 0.0)
-                .map(Duration::from_secs_f64);
+            let retry_after = http::header(&resp);
             let text = resp.text().await?;
             if status.is_success() {
                 if text.trim().is_empty() {
@@ -116,10 +106,9 @@ impl Api {
                 }
                 return serde_json::from_str(&text).map_err(|e| Error::Provider(format!("Daytona answered {status} with a body that is not JSON: {e}")));
             }
-            let short = retry_after.map(|d| d <= MAX_WAIT).unwrap_or(true);
-            if attempt < RETRIES && matches!(status.as_u16(), 429 | 503) && short {
+            if let Some(wait) = http::wait(attempt, &method, status.as_u16(), retry_after) {
                 attempt += 1;
-                tokio::time::sleep(retry_after.unwrap_or(Duration::from_secs(1 << attempt)).min(MAX_WAIT)).await;
+                tokio::time::sleep(wait).await;
                 continue;
             }
             return Err(into_error(status.as_u16(), &text));

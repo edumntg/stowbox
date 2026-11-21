@@ -21,8 +21,9 @@ To run the app from this repo:
    ```
 
 3. On first launch the app asks for a boxd (`bxd_…`, from
-   [app.boxd.sh](https://app.boxd.sh)), boat (`boat_…`), Daytona (`dtn_…`) or
-   Agent37 (`sk_live_…`) API key. The others can be added later in Settings. Keys are stored in the OS keychain.
+   [app.boxd.sh](https://app.boxd.sh)), boat (`boat_…`), Daytona (`dtn_…`),
+   Agent37 (`sk_live_…`), E2B (`e2b_…`) or Blaxel (`bl_…`, with its
+   workspace) API key, or a Vercel token with its team and project. The others can be added later in Settings. Keys are stored in the OS keychain.
 
 To install it as a regular app instead of running it from a terminal:
 
@@ -61,7 +62,8 @@ A test fails when it no longer matches core; `STOWBOX_REGENERATE=1 cargo test
 -p stowbox-core the_mock_gets_the_descriptors` writes the new one.
 
 The live conformance run covers each provider whose
-`STOWBOX_LIVE_<ID>_KEY` (`BOXD`, `BOAT`, `DAYTONA`, `AGENT37`) is set and
+`STOWBOX_LIVE_<ID>_KEY` (`BOXD`, `BOAT`, `DAYTONA`, `AGENT37`, `E2B`, `VERCEL`, `BLAXEL`;
+other credential fields as `STOWBOX_LIVE_<ID>_<FIELD>`) is set and
 skips the rest. For each one it makes a `stowbox-live-*` box in the size New
 box starts on (`STOWBOX_LIVE_<ID>_SIZE` picks another), checks exec with
 stdin and a TTY, an upload, every power action and fork the provider claims,
@@ -130,9 +132,16 @@ crates/stowbox-core/   provider trait, registry, capabilities, agent protocol, c
   src/boat/            boat's REST client and how its sandboxes are reached over SSH
   src/daytona/         Daytona's REST client, states and SSH gateway login
   src/agent37/         Agent37's REST client, states, new-box install and SSH through its edge
+  src/e2b/             E2B's REST client, states and exec through envd
+  src/vercel/          Vercel Sandbox's REST client, states, commands and terminals
+  src/connectrpc.rs    a Connect protocol client for protobuf services (E2B's envd)
+  src/blaxel/          Blaxel's REST client, states, processes and terminals
+  src/ndjson.rs        newline-delimited JSON off a streaming answer (Vercel, Blaxel)
+  src/websocket.rs     text and binary WebSocket messages (Vercel, Blaxel terminals)
   src/sshexec.rs       exec over SSH (russh) for providers without a usable exec API
   src/wstunnel.rs      a byte stream over a WebSocket, for SSH through a provider's edge
   proto/boxd/api.proto boxd's public API, compiled with tonic at build time
+  proto/e2b/           envd's process service, messages only
 src-tauri/             the desktop shell: state, commands, agent turn runner, terminals
 src/                   SolidJS UI (bridge/, state/, ui/, icons/, styles/)
 ```
@@ -141,9 +150,10 @@ src/                   SolidJS UI (bridge/, state/, ui/, icons/, styles/)
 box. Every provider implements the `Provider` trait and describes itself with
 `Capabilities`; the `Registry` holds every connected one and routes each box to
 the provider that owns it. The UI turns features on and off from the
-capabilities, never from the provider's name. How boat, Daytona, Agent37 and
-a plain SSH host are used, and what they do not have, is in `docs/boat.md`,
-`docs/daytona.md`, `docs/agent37.md` and `docs/sshhost.md`.
+capabilities, never from the provider's name. How boat, Daytona, Agent37, E2B,
+Vercel, Blaxel and a plain SSH host are used, and what they do not have, is
+in `docs/boat.md`, `docs/daytona.md`, `docs/agent37.md`, `docs/e2b.md`,
+`docs/vercel.md`, `docs/blaxel.md` and `docs/sshhost.md`.
 
 ## How boxd is used
 

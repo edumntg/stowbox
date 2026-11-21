@@ -281,3 +281,21 @@ async fn daytona_live() {
 async fn agent37_live() {
     live("agent37").await;
 }
+
+#[tokio::test]
+#[ignore = "makes and deletes real E2B sandboxes"]
+async fn e2b_live() {
+    live("e2b").await;
+}
+
+#[tokio::test]
+#[ignore = "makes and deletes real Vercel sandboxes"]
+async fn vercel_live() {
+    live("vercel").await;
+}
+
+#[tokio::test]
+#[ignore = "makes and deletes real Blaxel sandboxes"]
+async fn blaxel_live() {
+    live("blaxel").await;
+}

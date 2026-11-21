@@ -44,8 +44,7 @@ impl Refusal {
             .or_else(|| secs("/retryAfterSeconds"))
             .or_else(|| secs("/retryAfter"))
             .or_else(|| secs("/error/details/retryAfterSeconds"))
-            .filter(|s| s.is_finite() && *s >= 0.0)
-            .map(Duration::from_secs_f64);
+            .and_then(crate::http::seconds);
         Refusal { status, code, message, request_id: s("/requestId"), retry_after }
     }
 

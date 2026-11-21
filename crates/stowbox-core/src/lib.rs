@@ -6,6 +6,11 @@
 //! - `daytona`: Daytona, over its REST API, with exec over its SSH gateway.
 //! - `agent37`: Agent37, over its REST API, with exec over SSH through a
 //!   WebSocket at its edge.
+//! - `e2b`: E2B, over its REST API, with exec over envd's Connect API.
+//! - `vercel`: Vercel Sandbox, over its REST API, with commands streamed as
+//!   NDJSON and terminals over a WebSocket.
+//! - `blaxel`: Blaxel, over its REST API, with commands through each
+//!   sandbox's process API and terminals over its WebSocket.
 //! - `sshhost`: any machine reachable over SSH, with no lifecycle.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
@@ -13,6 +18,7 @@
 //! - `registry`: the connected providers, and which one owns each box.
 //! - `agent`: a coding agent's interactive session inside a box, its state,
 //!   and the Claude Code login the box uses.
+//! - `connectrpc`: a Connect protocol client for protobuf services (envd).
 //! - `cost`: live €/h estimates from the provider's rate card.
 //! - `git`: the repository review (status, diff) and commit, push and pull
 //!   request, run inside the box.
@@ -29,20 +35,27 @@
 //! - `store`: on-disk persistence of agents, presets and setup runs.
 //! - `upload`: files dropped on an agent's terminal, copied into the box.
 //! - `worktree`: one git worktree and branch per agent, next to the repository.
+//! - `ndjson`: newline-delimited JSON off a streaming HTTP answer.
 //! - `wstunnel`: a byte stream over a WebSocket, for SSH through a provider's edge.
+//! - `websocket`: text and binary WebSocket messages, for providers whose terminal is one.
 
 pub mod agent;
 pub mod agent37;
 pub mod audit;
+pub mod blaxel;
 pub mod boat;
 pub mod boxd;
 pub mod capabilities;
+pub mod connectrpc;
 pub mod cost;
 pub mod daytona;
+pub mod e2b;
 pub mod error;
 pub mod git;
 pub mod guard;
+pub mod http;
 pub mod metrics;
+pub mod ndjson;
 pub mod notify;
 pub mod ports;
 pub mod provider;
@@ -57,6 +70,8 @@ pub mod store;
 pub(crate) mod testing;
 pub mod types;
 pub mod upload;
+pub mod vercel;
+pub mod websocket;
 pub mod worktree;
 pub mod wstunnel;
 
