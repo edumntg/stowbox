@@ -4,7 +4,9 @@
 # Exit 0 when every check passes; otherwise the failing checks are listed.
 #
 # Clippy and the secret scan count only lines changed since the base, so a
-# phase answers for its own code. Everything else covers the whole tree.
+# phase answers for its own code; on top of that, clippy-ratchet.sh keeps
+# each file's safety-lint count from rising. Everything else covers the
+# whole tree.
 
 set -uo pipefail
 root=$(git rev-parse --show-toplevel) || exit 1
@@ -52,11 +54,18 @@ if ! cargo fmt --all --check >/dev/null 2>&1; then
 fi
 
 step "clippy on changed lines (workspace lints, unsafe forbidden)"
-diags=$(cargo clippy --workspace --all-targets --message-format=json -q 2>/dev/null | jq -r '
+clippy_json=$(mktemp) || exit 1
+trap 'rm -f "$clippy_json"' EXIT
+# A clippy that is missing or cannot build prints nothing to count, so its
+# exit status is checked rather than read as a clean run.
+if ! cargo clippy --workspace --all-targets --message-format=json -q >"$clippy_json" 2>/dev/null; then
+  fail "cargo clippy did not run (is the clippy component installed? does the workspace build?)"
+fi
+diags=$(jq -r '
   select(.reason == "compiler-message") | .message
   | select(.level == "error" or .level == "warning")
   | (.spans[] | select(.is_primary)) as $s
-  | [.level, $s.file_name, $s.line_start, $s.line_end, (.code.code // "-"), .message] | @tsv' | sort -u)
+  | [.level, $s.file_name, $s.line_start, $s.line_end, (.code.code // "-"), .message] | @tsv' "$clippy_json" | sort -u)
 hits=$(awk -F'\t' 'NR == FNR { keep[$1 "\t" $2] = 1; next }
   $1 == "error" { print; next }
   { for (l = $3; l <= $4; l++) if (($2 "\t" l) in keep) { print; break } }' <(printf '%s\n' "$changed") <(printf '%s\n' "$diags"))
@@ -64,6 +73,9 @@ if [ -n "$hits" ]; then
   printf '%s\n' "$hits" | awk -F'\t' '{ printf "  %s %s:%s %s %s\n", $1, $2, $3, $5, $6 }'
   fail "clippy findings on changed lines"
 fi
+
+step "clippy safety lints at or under the per-file baseline"
+.claude/skills/phase-gate/clippy-ratchet.sh "$clippy_json" || fail "clippy safety-lint baseline (clippy-ratchet.sh)"
 
 step "cargo test -p stowbox-core"
 cargo test -p stowbox-core -q >/dev/null 2>&1 || fail "cargo test -p stowbox-core"

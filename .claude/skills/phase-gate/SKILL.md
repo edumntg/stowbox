@@ -46,7 +46,10 @@ is reported as skipped, with the reason.
 .claude/skills/phase-gate/gate.sh <base-ref> # or an explicit base
 ```
 
-It runs rustfmt, clippy on the changed lines, `cargo test -p stowbox-core`,
+It runs rustfmt, clippy on the changed lines, the per-file ceiling on the
+safety lints (`clippy-ratchet.sh` against `clippy-baseline.tsv`: a file's
+count never rises, and when it falls the baseline is lowered with
+`clippy-ratchet.sh --update` in the same change), `cargo test -p stowbox-core`,
 `cargo check --workspace`, the core-without-Tauri check, `pnpm build`,
 `cargo audit`, `cargo deny check`, `pnpm audit --prod`, a secret scan on the
 changed lines, and checks that provider SVGs are inert. Until the tree has
