@@ -1,0 +1,22 @@
+# Safety-lint warnings allowed per file; written by clippy-ratchet.sh --update.
+crates/stowbox-core/examples/cancel_probe.rs	8
+crates/stowbox-core/examples/hibernate_race.rs	5
+crates/stowbox-core/examples/hibernate_race2.rs	8
+crates/stowbox-core/examples/hibernate_race3.rs	8
+crates/stowbox-core/examples/smoke.rs	3
+crates/stowbox-core/src/agent/session.rs	1
+crates/stowbox-core/src/boat/api.rs	2
+crates/stowbox-core/src/boat/mod.rs	3
+crates/stowbox-core/src/boxd/auth.rs	1
+crates/stowbox-core/src/daytona/convert.rs	2
+crates/stowbox-core/src/daytona/mod.rs	4
+crates/stowbox-core/src/git.rs	9
+crates/stowbox-core/src/metrics.rs	7
+crates/stowbox-core/src/ports.rs	18
+crates/stowbox-core/src/provision.rs	7
+crates/stowbox-core/src/registry.rs	25
+crates/stowbox-core/src/ssh.rs	20
+crates/stowbox-core/src/sshexec.rs	4
+crates/stowbox-core/src/testing.rs	10
+crates/stowbox-core/src/upload.rs	3
+src-tauri/src/lib.rs	13

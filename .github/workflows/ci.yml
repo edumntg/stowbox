@@ -1,5 +1,6 @@
 # The three checks AGENTS.md asks for before a commit, on every PR and push to
-# main, plus the Rust ones on Windows. Windows minutes bill 2x on a private
+# main, plus the clippy safety-lint baseline from the phase gate, and the Rust
+# ones on Windows. Windows minutes bill 2x on a private
 # repo, so that is one job without the frontend build (it is the same bundle
 # on every OS), cached by rust-cache.
 name: CI
@@ -32,10 +33,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
 
       - name: pnpm build
         run: pnpm build
+      # Needs dist from the build above, which the shell embeds.
+      - name: clippy safety lints at or under the baseline
+        run: .claude/skills/phase-gate/clippy-ratchet.sh
       - name: cargo test -p stowbox-core
         run: cargo test -p stowbox-core
       - name: cargo check --workspace
