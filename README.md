@@ -15,9 +15,14 @@
 
 <p align="center"><b>A desktop cockpit for cloud boxes and the coding agents running in them.</b></p>
 
-Stowbox talks to [boxd](https://boxd.sh), [boat](https://boat.dev),
-[Daytona](https://www.daytona.io), [Agent37](https://www.agent37.com), [E2B](https://e2b.dev), [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox), [Blaxel](https://blaxel.ai), [Modal](https://modal.com) (beta) and [Cloudflare Containers](https://developers.cloudflare.com/containers/) (through a Worker you deploy) with your own API keys, from your computer;
-connect one or several. It shows your boxes with a
+Stowbox talks to nine sandbox providers with your own API keys, from your
+computer: [boxd](https://boxd.sh), [boat](https://boat.dev),
+[Daytona](https://www.daytona.io), [Agent37](https://www.agent37.com),
+[E2B](https://e2b.dev), [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox),
+[Blaxel](https://blaxel.ai), [Modal](https://modal.com) (beta) and
+[Cloudflare Containers](https://developers.cloudflare.com/containers/) (through
+a Worker you deploy). It also drives any machine you can reach over SSH.
+Connect one or several. It shows your boxes with a
 live cost estimate, runs Claude Code or Codex inside them, one terminal and one
 session per agent, opens a shell in any box, and pauses, stops, forks or deletes
 a box from the same window, with whatever each provider supports. There is no
@@ -34,6 +39,60 @@ tens of megabytes.
 <p align="center">
   <img src="docs/screenshots/fleet.png" width="100%" alt="The Fleet view: running boxes, working agents, agents waiting for you, estimated cost, alerts" />
 </p>
+
+## Status
+
+Stowbox is in active development and used day to day. Releases ship for
+macOS, Windows and Linux and update themselves. The installers are not
+code-signed yet, and no license has been chosen.
+
+### Providers
+
+Each provider is a module in `crates/stowbox-core` and has its own icon in
+the app. A provider ships only after it passes the conformance suite against
+a fake server, a live run on a real account and the
+[phase gate](.claude/skills/phase-gate/SKILL.md). The live run covers
+create, list, exec with stdin and a TTY, upload, every power action and fork
+it claims, links and delete.
+
+| Provider | Connect with | Power | Exec | Notes |
+| --- | --- | --- | --- | --- |
+| [boxd](https://boxd.sh) | API key `bxd_…` | standby, hibernate, wake, stop, start, reboot, fork | gRPC stream | Desktop view, HTTPS links, Open in VS Code or Cursor |
+| [boat](https://boat.dev) | API key `boat_…` | stop, start, fork | SSH | [docs/boat.md](docs/boat.md) |
+| [Daytona](https://www.daytona.io) | API key `dtn_…` | stop, start | SSH gateway | [docs/daytona.md](docs/daytona.md) |
+| [Agent37](https://www.agent37.com) | API key `sk_live_…` | stop, start | SSH in a WebSocket | [docs/agent37.md](docs/agent37.md) |
+| [E2B](https://e2b.dev) | API key `e2b_…` | pause, resume, fork | Connect-RPC (envd) | One run lasts at most 1 h on Hobby, 24 h on Pro. [docs/e2b.md](docs/e2b.md) |
+| [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox) | Token, team id, project | stop, start, fork | NDJSON, terminal WebSocket | One session lasts at most 45 min on Hobby, 24 h on Pro. [docs/vercel.md](docs/vercel.md) |
+| [Blaxel](https://blaxel.ai) | API key `bl_…`, workspace | automatic standby | process API, terminal WebSocket | [docs/blaxel.md](docs/blaxel.md) |
+| [Modal](https://modal.com) (beta) | Token id `ak-…`, secret `as-…` | delete only | gRPC command router | Built on Modal's unpublished SDK API. A sandbox lasts at most 24 h. [docs/modal.md](docs/modal.md) |
+| [Cloudflare Containers](https://developers.cloudflare.com/containers/) | Your Worker's URL and token | stop, start | Container exec with a PTY | Needs Workers Paid. A stop keeps no files. [docs/cloudflare.md](docs/cloudflare.md) |
+| SSH host | Host and user; port and key optional | none | SSH | Any machine you already have. [docs/sshhost.md](docs/sshhost.md) |
+
+Next, in the order of the [provider roadmap](docs/providers-roadmap.md):
+
+- **Fly.io Sprites** is built and waiting for its live run.
+- **exe.dev**, **Morph Cloud** and **Northflank** each wait for an account
+  for that run.
+
+### Quality bar
+
+Stowbox holds people's provider keys and a shell into their machines, so
+every change is held to the rules in [AGENTS.md](AGENTS.md):
+
+- No `unsafe`, and no panicking code on network, file or user input.
+- Keys are kept in the OS keychain only.
+- TLS is always verified, and SSH host keys are pinned or remembered.
+- There is a timeout on every network call.
+
+CI runs on every pull request:
+
+- the frontend build;
+- the `stowbox-core` tests, on Linux and Windows;
+- a workspace check, on Linux and Windows;
+- a per-file ceiling on clippy's safety lints, which can only go down.
+
+Every provider, transport, Tauri command or dependency also passes the phase
+gate: `cargo audit`, `cargo deny`, `pnpm audit` and a security review.
 
 ## Features
 
@@ -62,7 +121,7 @@ pull request from there, with `gh` in the box or the host's compare page.
 
 ### Ports and links
 
-See a dev server in the browser: the box's HTTPS links on boxd's proxy, named
+See a dev server in the browser: the box's HTTPS links on providers that have them, named
 links pinned to one port, raw TCP and UDP forwards for databases, and what is
 listening inside the box, with a warning for servers bound to localhost only.
 
@@ -104,8 +163,9 @@ Windows build is driven through onboarding in CI on every change to the app.
 ### Also in the box
 
 - **Boxes**: create, fork, standby, resume, hibernate, wake, stop, start,
-  reboot, delete; size and cost per hour per box, metered usage per box.
-- **Terminal**: an interactive shell in the box over boxd's exec stream,
+  reboot, delete, as far as the provider supports them. Size and cost per
+  hour per box, and metered usage per box.
+- **Terminal**: an interactive shell in the box over the provider's own exec,
   nothing to install locally.
 - **Open in VS Code or Cursor** over Remote-SSH, with a key Stowbox makes and
   a `Host stowbox-<box>` entry it manages in `~/.ssh/config`.
@@ -121,12 +181,20 @@ The full list, with every detail of how each feature behaves, is in
 ## Supported agents
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and
-[Codex](https://github.com/openai/codex), both preinstalled on boxd machines.
-Stowbox handles no Anthropic or OpenAI credentials: the agent signs in with
-what the box already has, an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set as a
-boxd secret (`boxd env set ANTHROPIC_API_KEY sk-ant-… --secret`), a
-`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or the login boxd stores
-for your organization. A box can also keep a Claude Code login of its own
+[Codex](https://github.com/openai/codex). boxd machines come with both, and
+Stowbox installs them, with tmux, on each Agent37 instance it creates. On
+other providers, the box's image has to provide them. A setup preset can
+install them, for example `npm install -g @anthropic-ai/claude-code
+@openai/codex`.
+
+Stowbox handles no Anthropic or OpenAI credentials. The agent signs in with
+whatever the box already has:
+
+- an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, set as a provider secret (for
+  example `boxd env set ANTHROPIC_API_KEY sk-ant-… --secret`) or through a
+  setup preset;
+- a `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`;
+- the login boxd stores for your organization. A box can also keep a Claude Code login of its own
 (its Agents tab), so two boxes can use two accounts; `/login` runs in any
 agent's terminal.
 
@@ -148,17 +216,14 @@ SmartScreen asks once: More info, Run anyway. Windows 10 may need the
 [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/),
 which the installer fetches when it is missing.
 
-On first launch the app asks for an API key: boxd (`bxd_…`, from
-[app.boxd.sh](https://app.boxd.sh) or `boxd auth keys create stowbox`) or boat
-(`boat_…`, from the boat dashboard or `boat api-key create stowbox`, with the
-ssh action) or Daytona (`dtn_…`, from the Daytona dashboard under Keys) or
-Agent37 (`sk_live_…`, from the Agent37 dashboard under Cloud API), or a
-machine you already have, reached over SSH with a host and a user. The
-others can be added later in Settings. Keys go to the OS keychain (Windows
-Credential Manager on Windows) and never to a Stowbox server. What differs
-between the providers is in [docs/boat.md](docs/boat.md),
-[docs/daytona.md](docs/daytona.md), [docs/agent37.md](docs/agent37.md) and
-[docs/sshhost.md](docs/sshhost.md).
+On first launch the app asks you to connect one provider, with the
+credentials in the [Providers](#providers) table. Add the others later in
+Settings. The boxd key (`bxd_…`) comes from [app.boxd.sh](https://app.boxd.sh)
+or `boxd auth keys create stowbox`. Every other provider's doc page says where
+its key comes from.
+
+Keys go to the OS keychain (Windows Credential Manager on Windows) and never
+to a Stowbox server.
 
 Platform notes for Windows (OpenSSH for the editor integration, where secrets
 live, CI): [docs/windows.md](docs/windows.md).
@@ -223,4 +288,5 @@ No license has been chosen for this repository yet.
 
 Icons are [Phosphor Icons](https://phosphoricons.com) (bold weight), MIT,
 inlined in `src/icons`. Terminal rendering by [xterm.js](https://xtermjs.org).
-Boxes by [boxd](https://boxd.sh), [boat](https://boat.dev), [Daytona](https://www.daytona.io) and [Agent37](https://www.agent37.com).
+Boxes by the providers listed under [Providers](#providers). Their marks in
+`src/assets/providers` belong to their owners.
