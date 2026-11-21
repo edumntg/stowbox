@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js";
-import type { AgentMeta, Machine, MachineStatus, PowerAction } from "../bridge/types";
+import type { AgentMeta, Harness, Machine, MachineStatus, PowerAction } from "../bridge/types";
 import { actions, capsFor, capsOf, state } from "../state/store";
 import * as I from "../icons";
 import { agentPhase, agentPhaseLabel, statusLabel, type AgentPhase } from "./format";
@@ -44,6 +44,10 @@ export const AgentDot = (p: { agent: AgentMeta }) => {
 
 // Bundled at build time, so no request reveals which providers someone uses.
 const providerMarks = import.meta.glob<string>("../assets/providers/*.svg", { eager: true, query: "?url", import: "default" });
+const harnessMarks = import.meta.glob<string>("../assets/harnesses/*.svg", { eager: true, query: "?url", import: "default" });
+
+/** A bundled SVG as a mask, so it takes the text colour of its row. */
+const Mark = (p: { url: string }) => <span class="provider-mark" aria-hidden="true" style={{ "mask-image": `url("${p.url}")`, "-webkit-mask-image": `url("${p.url}")` }} />;
 
 /** A provider's mark in the text colour of its row, or its monogram in a
  * square when no mark is bundled. */
@@ -51,7 +55,20 @@ export const ProviderIcon = (p: { provider: string }) => {
   const mark = () => providerMarks[`../assets/providers/${p.provider}.svg`];
   return (
     <Show when={mark()} fallback={<span class="provider-mono" aria-hidden="true">{capsOf(p.provider)?.icon ?? ""}</span>}>
-      {(url) => <span class="provider-mark" aria-hidden="true" style={{ "mask-image": `url("${url()}")`, "-webkit-mask-image": `url("${url()}")` }} />}
+      {(url) => <Mark url={url()} />}
+    </Show>
+  );
+};
+
+export const harnessName = (h: Harness) => (h === "codex" ? "Codex" : "Claude Code");
+
+/** The mark of the coding agent a session runs, or a terminal when none is
+ * bundled. */
+export const HarnessIcon = (p: { harness: Harness }) => {
+  const mark = () => harnessMarks[`../assets/harnesses/${p.harness}.svg`];
+  return (
+    <Show when={mark()} fallback={<I.Terminal />}>
+      {(url) => <Mark url={url()} />}
     </Show>
   );
 };

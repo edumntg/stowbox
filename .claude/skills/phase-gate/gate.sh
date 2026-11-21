@@ -104,8 +104,8 @@ secrets=$(printf '%s\n' "$changed" | cut -f1 | sort -u | while read -r f; do
 done)
 [ -n "$secrets" ] && { printf '%s\n' "$secrets"; fail "credential-looking strings"; }
 
-step "provider icons are inert SVG"
-for svg in src/assets/providers/*.svg; do
+step "provider and harness icons are inert SVG"
+for svg in src/assets/providers/*.svg src/assets/harnesses/*.svg; do
   [ -f "$svg" ] || continue
   if grep -qiE '<script|<foreignObject|[[:space:]]on[a-z]+=|href="[^#]|url\(|<!ENTITY' "$svg"; then
     fail "unsafe markup in $svg"

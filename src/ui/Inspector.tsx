@@ -2,7 +2,7 @@ import { Show } from "solid-js";
 import type { AgentMeta } from "../bridge/types";
 import { actions, capsFor, machineById, state } from "../state/store";
 import * as I from "../icons";
-import { BoxState, Dot, PowerActions } from "./common";
+import { BoxState, Dot, PowerActions, harnessName } from "./common";
 import { money, sizeLabel, until } from "./format";
 
 /** The box behind the selected agent: state, live cost and quick controls,
@@ -79,7 +79,7 @@ export default function Inspector(p: { agent: AgentMeta }) {
           <h3 class="section-title">Session</h3>
           <dl class="kv" style={{ "grid-template-columns": "76px 1fr" }}>
             <dt>Harness</dt>
-            <dd>{p.agent.harness === "claude-code" ? "Claude Code" : "Codex"}</dd>
+            <dd>{harnessName(p.agent.harness)}</dd>
             <dt>Model</dt>
             <dd>{p.agent.model || "harness default"}</dd>
             <dt>Directory</dt>

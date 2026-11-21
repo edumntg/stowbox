@@ -35,12 +35,10 @@ import { agentPhase, firstLine, money, spendLine } from "../ui/format";
 import { agentTerminalKey, boxTerminalKey, closeTerminal } from "../ui/termSessions";
 
 export type Selection = { kind: "none" } | { kind: "fleet" } | { kind: "presets" } | { kind: "box"; id: string } | { kind: "agent"; id: string };
-/** An open box in the top tab row, with its open agents in the row under
- * it. `last` is the agent shown when the box's tab was left, if any, so
- * coming back to the box lands where it was. */
+/** An open box in the top tab row. `last` is the agent shown when the box's
+ * tab was left, if any, so coming back to the box lands where it was. */
 export interface TabGroup {
   machineId: string;
-  agents: string[];
   last?: string;
 }
 export type BoxTab = "agents" | "setup" | "changes" | "ports" | "terminal" | "details";
@@ -154,6 +152,9 @@ interface AppState {
     theme: Theme;
     selection: Selection;
     tabs: TabGroup[];
+    /** Open agents from any box, in the order of the row under the boxes,
+     * so switching between agents never needs a trip through their box. */
+    agentTabs: string[];
     sidebar: boolean;
     inspector: boolean;
     boxTab: BoxTab;
@@ -249,6 +250,7 @@ export const [state, setState] = createStore<AppState>({
     theme: initialTheme(),
     selection: { kind: "fleet" },
     tabs: [],
+    agentTabs: [],
     sidebar: true,
     inspector: true,
     boxTab: "agents",
@@ -268,45 +270,55 @@ const sameSel = (a: Selection, b: Selection) =>
   a.kind === b.kind && (a.kind === "none" || a.kind === "fleet" || a.kind === "presets" || (a as { id: string }).id === (b as { id: string }).id);
 const FLEET: Selection = { kind: "fleet" };
 
-/** The saved groups. Earlier builds saved one flat list of boxes and
- * agents; it is regrouped by box once the agents are known. */
-function loadTabs(): TabGroup[] {
+interface SavedTabs {
+  tabs: TabGroup[];
+  agentTabs: string[];
+}
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** The saved tabs. Earlier builds kept each box's agents with it (v2), or
+ * one flat list of boxes and agents (v1); both become one agent row. */
+function loadTabs(): SavedTabs {
   try {
-    const raw = localStorage.getItem("stowbox.tabs.v2");
-    if (raw) {
-      const parsed = JSON.parse(raw) as TabGroup[];
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((g) => g && typeof g.machineId === "string" && Array.isArray(g.agents))
-        .map((g) => ({ machineId: g.machineId, agents: g.agents.filter((a) => typeof a === "string") }));
+    const v3 = JSON.parse(localStorage.getItem("stowbox.tabs.v3") ?? "null") as { boxes?: unknown; agents?: unknown } | null;
+    if (v3) return { tabs: strings(v3.boxes).map((machineId) => ({ machineId })), agentTabs: strings(v3.agents) };
+    const v2 = JSON.parse(localStorage.getItem("stowbox.tabs.v2") ?? "null") as unknown;
+    if (Array.isArray(v2)) {
+      const groups = v2.filter((g): g is { machineId: string; agents?: unknown } => typeof g?.machineId === "string");
+      return { tabs: groups.map((g) => ({ machineId: g.machineId })), agentTabs: groups.flatMap((g) => strings(g.agents)) };
     }
     const old = JSON.parse(localStorage.getItem("stowbox.tabs") ?? "[]") as Selection[];
-    const groups: TabGroup[] = [];
-    const group = (machineId: string) => {
-      let g = groups.find((x) => x.machineId === machineId);
-      if (!g) groups.push((g = { machineId, agents: [] }));
-      return g;
+    const saved: SavedTabs = { tabs: [], agentTabs: [] };
+    const box = (machineId: string) => {
+      if (!saved.tabs.some((g) => g.machineId === machineId)) saved.tabs.push({ machineId });
     };
     for (const t of Array.isArray(old) ? old : []) {
-      if (t?.kind === "box" && typeof t.id === "string") group(t.id);
+      if (t?.kind === "box" && typeof t.id === "string") box(t.id);
       if (t?.kind === "agent" && typeof t.id === "string") {
         const a = state.agents.find((x) => x.id === t.id);
-        if (a) group(a.machineId).agents.push(a.id);
+        if (a) {
+          box(a.machineId);
+          saved.agentTabs.push(a.id);
+        }
       }
     }
-    return groups;
+    return saved;
   } catch {
-    return [];
+    return { tabs: [], agentTabs: [] };
   }
 }
 
-function saveTabs(tabs: TabGroup[]) {
+function saveTabs() {
   try {
-    localStorage.setItem("stowbox.tabs.v2", JSON.stringify(tabs.map(({ machineId, agents }) => ({ machineId, agents }))));
+    localStorage.setItem("stowbox.tabs.v3", JSON.stringify({ boxes: state.ui.tabs.map((g) => g.machineId), agents: state.ui.agentTabs }));
   } catch {
     /* private mode: tabs just do not persist */
   }
 }
+
+/** The open agent tabs that belong to a box. */
+export const openAgentsOf = (machineId: string) => state.ui.agentTabs.filter((id) => agentById(id)?.machineId === machineId);
 
 /** Moves `from` to where `to` is, in place of a drag-and-drop. */
 function moved<T>(list: T[], from: T, to: T): T[] {
@@ -637,7 +649,7 @@ export const actions = {
         .catch(() => undefined);
     }
     await actions.refreshMachines();
-    if (state.ui.tabs.length === 0) setState("ui", "tabs", loadTabs());
+    if (state.ui.tabs.length === 0 && state.ui.agentTabs.length === 0) setState("ui", loadTabs());
     actions.pruneTabs();
     if (state.ui.selection.kind === "none") setState("ui", "selection", FLEET);
     void actions.refreshMetrics();
@@ -789,8 +801,8 @@ export const actions = {
       setupRuns: {},
       providers: await api.providerStatus(),
     });
-    setState("ui", { selection: FLEET, dialog: null, tabs: [] });
-    saveTabs([]);
+    setState("ui", { selection: FLEET, dialog: null, tabs: [], agentTabs: [] });
+    saveTabs();
   },
 
   async refreshMachines() {
@@ -842,17 +854,15 @@ export const actions = {
   select(sel: Selection) {
     const prev = state.ui.selection;
     // A box opens a tab in the top row; an agent opens its box's tab there
-    // and its own in the row under it.
+    // and its own at the end of the agent row.
     const machineId = sel.kind === "box" ? sel.id : sel.kind === "agent" ? agentById(sel.id)?.machineId : undefined;
     if (machineId) {
       const agent = sel.kind === "agent" ? sel.id : undefined;
       const i = state.ui.tabs.findIndex((g) => g.machineId === machineId);
-      if (i < 0) setState("ui", "tabs", (tabs) => [...tabs, { machineId, agents: agent ? [agent] : [], last: agent }]);
-      else {
-        if (agent && !state.ui.tabs[i].agents.includes(agent)) setState("ui", "tabs", i, "agents", (as) => [...as, agent]);
-        setState("ui", "tabs", i, "last", agent);
-      }
-      saveTabs(state.ui.tabs);
+      if (i < 0) setState("ui", "tabs", (tabs) => [...tabs, { machineId, last: agent }]);
+      else setState("ui", "tabs", i, "last", agent);
+      if (agent && !state.ui.agentTabs.includes(agent)) setState("ui", "agentTabs", (as) => [...as, agent]);
+      saveTabs();
     }
     // Another agent opens on its terminal; the Changes tab is per visit. Set
     // before the view shows, so it never mounts on the previous agent's tab.
@@ -865,10 +875,11 @@ export const actions = {
   /** Goes back to a box's tab: the agent last shown there, or the box. */
   selectGroup(machineId: string): void {
     const g = state.ui.tabs.find((x) => x.machineId === machineId);
-    const last = g?.last && g.agents.includes(g.last) ? g.last : undefined;
+    const open = openAgentsOf(machineId);
+    const last = g?.last && open.includes(g.last) ? g.last : undefined;
     if (last) return actions.select({ kind: "agent", id: last });
     if (machineById(machineId)) return actions.select({ kind: "box", id: machineId });
-    if (g?.agents[0]) return actions.select({ kind: "agent", id: g.agents[0] });
+    if (open[0]) return actions.select({ kind: "agent", id: open[0] });
   },
 
   /** Closing a box's tab closes its agents' tabs too; closing an agent's
@@ -878,18 +889,20 @@ export const actions = {
     const tabs = state.ui.tabs;
     if (sel.kind === "agent") {
       closeTerminal(agentTerminalKey(sel.id));
-      const i = tabs.findIndex((g) => g.agents.includes(sel.id));
-      if (i < 0) return;
-      const g = tabs[i];
-      const at = g.agents.indexOf(sel.id);
-      const agents = g.agents.filter((a) => a !== sel.id);
+      const at = state.ui.agentTabs.indexOf(sel.id);
+      if (at < 0) return;
+      const machineId = agentById(sel.id)?.machineId ?? "";
+      const agents = state.ui.agentTabs.filter((a) => a !== sel.id);
       // A box that is gone has nothing left to show once its last agent closes.
-      if (agents.length === 0 && !machineById(g.machineId)) return actions.closeTab({ kind: "box", id: g.machineId });
-      setState("ui", "tabs", i, { agents, last: g.last === sel.id ? undefined : g.last });
-      saveTabs(state.ui.tabs);
+      if (!machineById(machineId) && !agents.some((a) => agentById(a)?.machineId === machineId)) return actions.closeTab({ kind: "box", id: machineId });
+      setState("ui", "agentTabs", agents);
+      const i = tabs.findIndex((g) => g.machineId === machineId);
+      if (i >= 0 && tabs[i].last === sel.id) setState("ui", "tabs", i, "last", undefined);
+      saveTabs();
       if (sameSel(state.ui.selection, sel)) {
+        // Its neighbour in the row, whichever box that one is in.
         const neighbour = agents[Math.min(at, agents.length - 1)];
-        actions.select(neighbour ? { kind: "agent", id: neighbour } : { kind: "box", id: g.machineId });
+        actions.select(neighbour ? { kind: "agent", id: neighbour } : { kind: "box", id: machineId });
       }
       return;
     }
@@ -897,13 +910,14 @@ export const actions = {
     const i = tabs.findIndex((g) => g.machineId === sel.id);
     if (i < 0) return;
     const g = tabs[i];
+    const closing = openAgentsOf(g.machineId);
     closeTerminal(boxTerminalKey(g.machineId));
-    for (const a of g.agents) closeTerminal(agentTerminalKey(a));
+    for (const a of closing) closeTerminal(agentTerminalKey(a));
     const next = tabs.filter((_, j) => j !== i);
-    setState("ui", "tabs", next);
-    saveTabs(next);
+    setState("ui", { tabs: next, agentTabs: state.ui.agentTabs.filter((a) => !closing.includes(a)) });
+    saveTabs();
     const cur = state.ui.selection;
-    const inGroup = (cur.kind === "box" && cur.id === g.machineId) || (cur.kind === "agent" && g.agents.includes(cur.id));
+    const inGroup = (cur.kind === "box" && cur.id === g.machineId) || (cur.kind === "agent" && closing.includes(cur.id));
     if (inGroup) {
       const neighbour = next[Math.min(i, next.length - 1)];
       if (neighbour) actions.selectGroup(neighbour.machineId);
@@ -919,36 +933,30 @@ export const actions = {
       to,
     );
     setState("ui", "tabs", (tabs) => ids.map((id) => tabs.find((g) => g.machineId === id)!));
-    saveTabs(state.ui.tabs);
+    saveTabs();
   },
 
-  /** Drag-and-drop in a box's agent row. */
-  moveAgentTab(machineId: string, from: string, to: string) {
-    const i = state.ui.tabs.findIndex((g) => g.machineId === machineId);
-    if (i < 0) return;
-    setState("ui", "tabs", i, "agents", (as) => moved(as, from, to));
-    saveTabs(state.ui.tabs);
+  /** Drag-and-drop in the agent row. */
+  moveAgentTab(from: string, to: string) {
+    setState("ui", "agentTabs", (as) => moved(as, from, to));
+    saveTabs();
   },
 
   /** Drops tabs whose agent no longer exists, and boxes that are gone with
    * no agent tab left to show. Agents of a deleted box stay, as history. */
   pruneTabs() {
+    const prevAgents = state.ui.agentTabs;
+    const agents = prevAgents.filter((id) => state.agents.some((a) => a.id === id));
     const prev = state.ui.tabs;
-    const next = prev
-      .map((g) => ({ ...g, agents: g.agents.filter((id) => state.agents.some((a) => a.id === id)) }))
-      .filter((g) => g.agents.length > 0 || state.machines.some((m) => m.id === g.machineId));
-    for (const g of prev) {
-      const kept = next.find((x) => x.machineId === g.machineId);
-      if (!kept) closeTerminal(boxTerminalKey(g.machineId));
-      for (const a of g.agents) if (!kept?.agents.includes(a)) closeTerminal(agentTerminalKey(a));
-    }
-    if (JSON.stringify(next) !== JSON.stringify(prev)) {
-      setState("ui", "tabs", next);
-      saveTabs(next);
+    const next = prev.filter((g) => state.machines.some((m) => m.id === g.machineId) || agents.some((a) => agentById(a)?.machineId === g.machineId));
+    for (const g of prev) if (!next.includes(g)) closeTerminal(boxTerminalKey(g.machineId));
+    for (const a of prevAgents) if (!agents.includes(a)) closeTerminal(agentTerminalKey(a));
+    if (next.length !== prev.length || agents.length !== prevAgents.length) {
+      setState("ui", { tabs: next, agentTabs: agents });
+      saveTabs();
     }
     const sel = state.ui.selection;
-    const ok =
-      (sel.kind === "box" && state.machines.some((m) => m.id === sel.id)) || (sel.kind === "agent" && next.some((g) => g.agents.includes(sel.id)));
+    const ok = (sel.kind === "box" && state.machines.some((m) => m.id === sel.id)) || (sel.kind === "agent" && agents.includes(sel.id));
     if ((sel.kind === "box" || sel.kind === "agent") && !ok) {
       const g = next.find((x) => sel.kind === "box" && x.machineId === sel.id) ?? next[0];
       if (g) actions.selectGroup(g.machineId);

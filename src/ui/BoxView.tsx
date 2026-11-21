@@ -3,7 +3,7 @@ import type { Machine, SetupRun, SetupStatus, StepState } from "../bridge/types"
 import { api } from "../bridge/api";
 import { actions, agentsForMachine, capsFor, multiProvider, phaseOf, providerLabel, setupActive, setupRunFor, state } from "../state/store";
 import * as I from "../icons";
-import { AgentDot, Dot, PowerActions } from "./common";
+import { AgentDot, Dot, PowerActions, harnessName } from "./common";
 import { agentPhaseLabel, boxHourly, gib, hours, IDLE_STOP, money, relTime, sizeLabel, sshHint, statusLabel, until } from "./format";
 import { boxTerminalKey } from "./termSessions";
 
@@ -50,7 +50,7 @@ const AgentsTab = (p: { machine: Machine }) => {
               <button class="list-row" onClick={() => actions.select({ kind: "agent", id: a.id })}>
                 <AgentDot agent={a} />
                 <span class="name">{a.title || "New agent"}</span>
-                <span class="cell">{a.harness === "claude-code" ? "Claude Code" : "Codex"}</span>
+                <span class="cell">{harnessName(a.harness)}</span>
                 <span class="cell">
                   {agentPhaseLabel[phaseOf(a)]} · {relTime(a.updatedAt)}
                 </span>
