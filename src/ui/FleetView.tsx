@@ -130,7 +130,7 @@ const Meter = (p: { label: string; ratio: number; warn?: number; danger?: number
   <span class="meter-cell" classList={{ stale: p.stale }}>
     <span class="mono">{p.label}</span>
     <span class="meter" role="presentation">
-      <span class="meter-fill" data-level={level(p.ratio, p.warn, p.danger)} style={{ width: `${Math.max(1, Math.min(100, p.ratio * 100))}%` }} />
+      <span class="meter-fill" data-level={level(p.ratio, p.warn, p.danger)} style={{ "--ratio": Math.max(0.01, Math.min(1, p.ratio)) }} />
     </span>
   </span>
 );
@@ -146,7 +146,7 @@ const Tile = (p: { label: string; value: string; sub: string; ratio?: number; do
     </span>
     <Show when={p.ratio !== undefined}>
       <span class="meter" role="presentation">
-        <span class="meter-fill" data-level="" style={{ width: `${Math.max(0, Math.min(100, (p.ratio ?? 0) * 100))}%` }} />
+        <span class="meter-fill" data-level="" style={{ "--ratio": Math.max(0, Math.min(1, p.ratio ?? 0)) }} />
       </span>
     </Show>
     <span class="tile-sub">{p.sub}</span>
