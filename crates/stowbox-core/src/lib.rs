@@ -11,6 +11,8 @@
 //!   NDJSON and terminals over a WebSocket.
 //! - `blaxel`: Blaxel, over its REST API, with commands through each
 //!   sandbox's process API and terminals over its WebSocket.
+//! - `modal`: Modal, over its gRPC client API, with exec through each
+//!   sandbox's task command router.
 //! - `sshhost`: any machine reachable over SSH, with no lifecycle.
 //! - `audit`: a local record of key, secret, setup and power actions.
 //! - `capabilities`: what each provider supports, for the UI.
@@ -55,6 +57,7 @@ pub mod git;
 pub mod guard;
 pub mod http;
 pub mod metrics;
+pub mod modal;
 pub mod ndjson;
 pub mod notify;
 pub mod ports;

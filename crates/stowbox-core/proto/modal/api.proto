@@ -1,0 +1,258 @@
+// The part of Modal's client API that Stowbox uses, cut down from
+// modal_proto/api.proto in https://github.com/modal-labs/modal-client at
+// commit 8dd0a049da4f3226688acacb5c74aaa405aff60c (Apache-2.0; see
+// third-party/modal-proto.md).
+//
+// Only the messages, fields and RPCs Stowbox sends or reads are kept, with
+// their names and field numbers unchanged, so the wire format is Modal's.
+// A field the server adds or that is left out here is skipped on decode.
+// google.protobuf.Empty is replaced by an identical local Empty.
+
+syntax = "proto3";
+
+package modal.client;
+
+message Empty {}
+
+enum ObjectCreationType {
+  OBJECT_CREATION_TYPE_UNSPECIFIED = 0;  // just lookup
+  OBJECT_CREATION_TYPE_CREATE_IF_MISSING = 1;
+}
+
+message GenericResult {
+  enum GenericStatus {
+    GENERIC_STATUS_UNSPECIFIED = 0;
+    GENERIC_STATUS_SUCCESS = 1;
+    GENERIC_STATUS_FAILURE = 2;
+    GENERIC_STATUS_TERMINATED = 3;
+    GENERIC_STATUS_TIMEOUT = 4;
+    GENERIC_STATUS_INIT_FAILURE = 5;
+    GENERIC_STATUS_INTERNAL_FAILURE = 6;
+    GENERIC_STATUS_IDLE_TIMEOUT = 7;
+  }
+  GenericStatus status = 1;
+  string exception = 2;
+  int32 exitcode = 3;
+}
+
+message EnvironmentGetOrCreateRequest {
+  string deployment_name = 1;
+  ObjectCreationType object_creation_type = 2;
+}
+
+message EnvironmentSettings {
+  string image_builder_version = 1;
+}
+
+message EnvironmentMetadata {
+  string name = 1;
+  EnvironmentSettings settings = 2;
+}
+
+message EnvironmentGetOrCreateResponse {
+  string environment_id = 1;
+  EnvironmentMetadata metadata = 2;
+}
+
+message WorkspaceNameLookupResponse {
+  string username = 2;
+}
+
+message AppGetOrCreateRequest {
+  string app_name = 1;
+  string environment_name = 2;
+  ObjectCreationType object_creation_type = 3;
+}
+
+message AppGetOrCreateResponse {
+  string app_id = 1;
+}
+
+message Image {
+  repeated string dockerfile_commands = 6;
+}
+
+message ImageGetOrCreateRequest {
+  Image image = 2;
+  string app_id = 4;
+  string builder_version = 9;
+}
+
+message ImageGetOrCreateResponse {
+  string image_id = 1;
+  GenericResult result = 2;
+}
+
+message ImageJoinStreamingRequest {
+  string image_id = 1;
+  float timeout = 2;
+  string last_entry_id = 3;
+}
+
+message ImageJoinStreamingResponse {
+  GenericResult result = 1;
+  string entry_id = 3;
+  bool eof = 4;
+}
+
+message Resources {
+  uint32 memory_mb = 2;
+  uint32 milli_cpu = 3;
+}
+
+message PTYInfo {
+  bool enabled = 1;
+  uint32 winsz_rows = 2;
+  uint32 winsz_cols = 3;
+  string env_term = 4;
+  string env_colorterm = 5;
+  string env_term_program = 6;
+  enum PTYType {
+    PTY_TYPE_UNSPECIFIED = 0;
+    PTY_TYPE_FUNCTION = 1;
+    PTY_TYPE_SHELL = 2;
+  }
+  PTYType pty_type = 7;
+  bool no_terminate_on_idle_stdin = 8;
+}
+
+message StringMap {
+  map<string, string> contents = 1;
+}
+
+message Sandbox {
+  repeated string entrypoint_args = 1;
+  string image_id = 3;
+  Resources resources = 5;
+  uint32 timeout_secs = 7;
+  optional string workdir = 8;
+  optional string name = 30;
+  optional uint32 idle_timeout_secs = 33;
+  StringMap environment_variables = 40;
+}
+
+message SandboxTag {
+  string tag_name = 1;
+  string tag_value = 2;
+}
+
+message SandboxCreateRequest {
+  string app_id = 1;
+  Sandbox definition = 2;
+  repeated SandboxTag tags = 4;
+}
+
+message SandboxCreateResponse {
+  string sandbox_id = 1;
+}
+
+message SandboxListRequest {
+  string app_id = 1;
+  double before_timestamp = 2;
+  string environment_name = 3;
+  bool include_finished = 4;
+  repeated SandboxTag tags = 5;
+}
+
+message TaskInfo {
+  string id = 1;
+  double started_at = 2;
+  double finished_at = 3;
+  GenericResult result = 4;
+  double enqueued_at = 5;
+}
+
+message ResourceInfo {
+  message ResourceValue {
+    uint32 value = 1;
+    bool is_default = 2;
+  }
+  ResourceValue memory_mb = 1;
+  ResourceValue milli_cpu = 2;
+  uint32 ephemeral_disk_mb = 5;
+}
+
+message SandboxStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_CREATED = 1;
+    STATE_SCHEDULED = 2;
+    STATE_STARTING = 3;
+    STATE_READY = 4;
+    STATE_TERMINATING = 5;
+    STATE_TERMINATED = 6;
+  }
+  State state = 1;
+  string state_str = 2;
+  optional string message = 8;
+  bool is_terminal = 11;
+  bool is_running = 12;
+}
+
+message SandboxInfo {
+  string id = 1;
+  double created_at = 3;
+  TaskInfo task_info = 4;
+  string app_id = 5;
+  repeated SandboxTag tags = 6;
+  string name = 7;
+  ResourceInfo resource_info = 9;
+  uint32 timeout_secs = 11;
+  optional uint32 idle_timeout_secs = 12;
+  SandboxStatus status = 17;
+}
+
+message SandboxListResponse {
+  repeated SandboxInfo sandboxes = 1;
+}
+
+message SandboxWaitRequest {
+  string sandbox_id = 1;
+  float timeout = 2;
+}
+
+message SandboxWaitResponse {
+  GenericResult result = 1;
+}
+
+message SandboxGetTaskIdRequest {
+  string sandbox_id = 1;
+  optional float timeout = 2;
+  bool wait_until_ready = 3;
+}
+
+message SandboxGetTaskIdResponse {
+  optional string task_id = 1;
+  optional GenericResult task_result = 2;
+}
+
+message SandboxTerminateRequest {
+  string sandbox_id = 1;
+}
+
+message SandboxTerminateResponse {
+  GenericResult existing_result = 1;
+}
+
+message TaskGetCommandRouterAccessRequest {
+  string task_id = 1;
+}
+
+message TaskGetCommandRouterAccessResponse {
+  string jwt = 1;
+  string url = 2;
+}
+
+service ModalClient {
+  rpc AppGetOrCreate(AppGetOrCreateRequest) returns (AppGetOrCreateResponse);
+  rpc EnvironmentGetOrCreate(EnvironmentGetOrCreateRequest) returns (EnvironmentGetOrCreateResponse);
+  rpc ImageGetOrCreate(ImageGetOrCreateRequest) returns (ImageGetOrCreateResponse);
+  rpc ImageJoinStreaming(ImageJoinStreamingRequest) returns (stream ImageJoinStreamingResponse);
+  rpc SandboxCreate(SandboxCreateRequest) returns (SandboxCreateResponse);
+  rpc SandboxGetTaskId(SandboxGetTaskIdRequest) returns (SandboxGetTaskIdResponse);
+  rpc SandboxList(SandboxListRequest) returns (SandboxListResponse);
+  rpc SandboxTerminate(SandboxTerminateRequest) returns (SandboxTerminateResponse);
+  rpc SandboxWait(SandboxWaitRequest) returns (SandboxWaitResponse);
+  rpc TaskGetCommandRouterAccess(TaskGetCommandRouterAccessRequest) returns (TaskGetCommandRouterAccessResponse);
+  rpc WorkspaceNameLookup(Empty) returns (WorkspaceNameLookupResponse);
+}
