@@ -2,21 +2,39 @@
 //!
 //! The shell holds one registry. Every call about a box goes through
 //! [`Registry::owner`], which answers from what the last listing showed
-//! and, for a box it has not seen, asks each provider in turn. Box ids do
-//! not collide across providers in practice (boxd hands out UUIDs, boat
-//! `bx_…`), and a box is only ever routed to a provider that said it has it.
+//! and, for a box it has not seen, asks every provider at once. A box is
+//! only ever routed to a provider that said it has it.
+//!
+//! Ids can collide: Vercel, Blaxel and Sprites use the name the person
+//! chose, so `api` can exist in two of them. Calls take only the id, so an
+//! id that more than one provider claims is refused rather than guessed,
+//! until one of the boxes is renamed or deleted.
 
 use crate::provider::Provider;
 use crate::types::Machine;
 use crate::{Error, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Default)]
 pub struct Registry {
     providers: Mutex<Vec<Arc<dyn Provider>>>,
-    owners: Mutex<HashMap<String, &'static str>>,
+    /// Every provider that has listed or returned a box with this id.
+    owners: Mutex<HashMap<String, Vec<&'static str>>>,
+}
+
+/// The data stays consistent if a holder panicked: every critical section
+/// is a single insert, remove or clone.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn ambiguous(machine_id: &str, owners: &[&'static str]) -> Error {
+    Error::Provider(format!(
+        "{} each have a box called {machine_id}, so Stowbox cannot tell which one is meant. Rename or delete one of them.",
+        owners.join(" and ")
+    ))
 }
 
 /// What one listing across every provider returned: the boxes of those that
@@ -35,7 +53,7 @@ impl Registry {
     /// Adds `p`, replacing a provider with the same id. Providers keep the
     /// order they were first added in.
     pub fn set(&self, p: Arc<dyn Provider>) {
-        let mut all = self.providers.lock().unwrap();
+        let mut all = lock(&self.providers);
         match all.iter_mut().find(|q| q.id() == p.id()) {
             Some(slot) => *slot = p,
             None => all.push(p),
@@ -44,38 +62,47 @@ impl Registry {
 
     /// Drops the provider and forgets which boxes it owned.
     pub fn remove(&self, id: &str) {
-        self.providers.lock().unwrap().retain(|p| p.id() != id);
-        self.owners.lock().unwrap().retain(|_, owner| *owner != id);
+        lock(&self.providers).retain(|p| p.id() != id);
+        lock(&self.owners).retain(|_, owners| {
+            owners.retain(|o| *o != id);
+            !owners.is_empty()
+        });
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<dyn Provider>> {
-        self.providers.lock().unwrap().iter().find(|p| p.id() == id).cloned()
+        lock(&self.providers).iter().find(|p| p.id() == id).cloned()
     }
 
     pub fn all(&self) -> Vec<Arc<dyn Provider>> {
-        self.providers.lock().unwrap().clone()
+        lock(&self.providers).clone()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.providers.lock().unwrap().is_empty()
+        lock(&self.providers).is_empty()
     }
 
     /// Records that `m` belongs to `provider`, and stamps it on the machine.
     fn claim(&self, provider: &'static str, m: &mut Machine) {
         m.provider = provider.to_string();
-        self.owners.lock().unwrap().insert(m.id.clone(), provider);
-    }
-
-    /// Records the owner of a machine a provider just returned.
-    pub fn remember(&self, m: &Machine) {
-        let id = self.all().into_iter().map(|p| p.id()).find(|id| *id == m.provider);
-        if let Some(id) = id {
-            self.owners.lock().unwrap().insert(m.id.clone(), id);
+        let mut owners = lock(&self.owners);
+        let claims = owners.entry(m.id.clone()).or_default();
+        if !claims.contains(&provider) {
+            claims.push(provider);
         }
     }
 
+    /// Drops `provider`'s claim to every box it did not just list.
+    fn keep_only(&self, provider: &'static str, listed: &HashSet<&str>) {
+        lock(&self.owners).retain(|id, owners| {
+            if !listed.contains(id.as_str()) {
+                owners.retain(|o| *o != provider);
+            }
+            !owners.is_empty()
+        });
+    }
+
     pub fn forget(&self, machine_id: &str) {
-        self.owners.lock().unwrap().remove(machine_id);
+        lock(&self.owners).remove(machine_id);
     }
 
     /// Every provider's boxes, listed at the same time. One provider that
@@ -91,6 +118,7 @@ impl Registry {
         for (id, r) in results {
             match r {
                 Ok(ms) => {
+                    self.keep_only(id, &ms.iter().map(|m| m.id.as_str()).collect());
                     for mut m in ms {
                         self.claim(id, &mut m);
                         out.machines.push(m);
@@ -108,30 +136,38 @@ impl Registry {
         if providers.is_empty() {
             return Err(Error::NotConfigured);
         }
-        let known = self.owners.lock().unwrap().get(machine_id).copied();
-        if let Some(id) = known {
-            if let Some(p) = providers.iter().find(|p| p.id() == id) {
-                return Ok(p.clone());
-            }
+        let known = lock(&self.owners).get(machine_id).cloned().unwrap_or_default();
+        let connected: Vec<_> = providers.iter().filter(|p| known.contains(&p.id())).cloned().collect();
+        match connected.as_slice() {
+            [one] => return Ok(one.clone()),
+            [] => {}
+            _ => return Err(ambiguous(machine_id, &known)),
         }
-        if providers.len() == 1 {
-            return Ok(providers[0].clone());
+        if let [only] = providers.as_slice() {
+            return Ok(only.clone());
         }
-        // Not seen yet: the first provider that has it owns it.
+        // Not seen yet: ask every provider at once, and take the one that
+        // has it, unless several do.
+        let answers = futures_join_all(providers.iter().map(|p| async move { (p.clone(), p.get_machine(machine_id).await) })).await;
+        let mut found = Vec::new();
         let mut last = None;
-        for p in &providers {
-            match p.get_machine(machine_id).await {
+        for (p, r) in answers {
+            match r {
                 Ok(mut m) => {
                     self.claim(p.id(), &mut m);
-                    return Ok(p.clone());
+                    found.push(p);
                 }
                 Err(e) => last = Some(e),
             }
         }
-        Err(match last {
-            Some(Error::NotFound(_)) | None => Error::NotFound(format!("no connected provider has the box {machine_id}")),
-            Some(e) => e,
-        })
+        match found.as_slice() {
+            [one] => Ok(one.clone()),
+            [] => Err(match last {
+                Some(Error::NotFound(_)) | None => Error::NotFound(format!("no connected provider has the box {machine_id}")),
+                Some(e) => e,
+            }),
+            _ => Err(ambiguous(machine_id, &found.iter().map(|p| p.id()).collect::<Vec<_>>())),
+        }
     }
 
     /// Reads one box from its owner, with the owner stamped on it.
@@ -147,9 +183,9 @@ impl Registry {
         let providers = self.all();
         match provider.filter(|p| !p.is_empty()) {
             Some(id) => providers.into_iter().find(|p| p.id() == id).ok_or_else(|| Error::Provider(format!("{id} is not connected"))),
-            None => match providers.len() {
-                0 => Err(Error::NotConfigured),
-                1 => Ok(providers[0].clone()),
+            None => match providers.as_slice() {
+                [] => Err(Error::NotConfigured),
+                [only] => Ok(only.clone()),
                 _ => Err(Error::Provider("more than one provider is connected: say which one makes the box".into())),
             },
         }
@@ -170,12 +206,12 @@ async fn futures_join_all<F: Future>(futs: impl IntoIterator<Item = F>) -> Vec<F
     let mut results: Vec<Option<F::Output>> = (0..pinned.len()).map(|_| None).collect();
     std::future::poll_fn(|cx| {
         let mut pending = false;
-        for (i, f) in pinned.iter_mut().enumerate() {
-            if results[i].is_some() {
+        for (f, slot) in pinned.iter_mut().zip(results.iter_mut()) {
+            if slot.is_some() {
                 continue;
             }
             match f.as_mut().poll(cx) {
-                std::task::Poll::Ready(v) => results[i] = Some(v),
+                std::task::Poll::Ready(v) => *slot = Some(v),
                 std::task::Poll::Pending => pending = true,
             }
         }
@@ -186,7 +222,8 @@ async fn futures_join_all<F: Future>(futs: impl IntoIterator<Item = F>) -> Vec<F
         }
     })
     .await;
-    results.into_iter().map(|r| r.expect("every future finished")).collect()
+    // poll_fn returned Ready only once every slot was filled.
+    results.into_iter().flatten().collect()
 }
 
 #[cfg(test)]
@@ -296,6 +333,29 @@ mod tests {
         assert_eq!(boat.gets.load(Ordering::SeqCst), asked);
 
         assert!(matches!(r.owner("nope").await, Err(Error::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn an_id_two_providers_have_is_refused_not_guessed() {
+        let vercel = fake("vercel", &["api", "web"]);
+        let blaxel = fake("blaxel", &["api"]);
+        let r = Registry::new();
+        r.set(vercel.clone());
+        r.set(blaxel.clone());
+        // Not listed yet: both are asked, and both have it.
+        let e = r.owner("api").await.err().unwrap();
+        assert!(e.to_string().contains("vercel and blaxel"), "{e}");
+        // Listed: still both.
+        r.list_machines().await;
+        assert!(r.owner("api").await.is_err());
+        assert_eq!(r.owner("web").await.unwrap().id(), "vercel");
+        // Once one provider stops listing it, the other owns it again.
+        let r2 = Registry::new();
+        r2.set(fake("vercel", &["web"]));
+        r2.set(blaxel.clone());
+        r2.claim("vercel", &mut machine("api", MachineStatus::Running));
+        r2.list_machines().await;
+        assert_eq!(r2.owner("api").await.unwrap().id(), "blaxel");
     }
 
     #[tokio::test]

@@ -619,16 +619,30 @@ pub struct LineBuffer {
     buf: Vec<u8>,
 }
 
+/// A line longer than this is handed on in pieces of this size, so output
+/// without newlines cannot grow the buffer without end.
+pub const MAX_LINE: usize = 64 * 1024;
+
 impl LineBuffer {
     pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
-        self.buf.extend_from_slice(bytes);
         let mut lines = Vec::new();
-        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = self.buf.drain(..=pos).collect();
-            let s = String::from_utf8_lossy(&line[..line.len() - 1]).trim_end_matches('\r').to_string();
-            lines.push(s);
+        for &b in bytes {
+            if b == b'\n' {
+                lines.push(Self::text(&self.buf));
+                self.buf.clear();
+            } else {
+                self.buf.push(b);
+                if self.buf.len() >= MAX_LINE {
+                    lines.push(Self::text(&self.buf));
+                    self.buf.clear();
+                }
+            }
         }
         lines
+    }
+
+    fn text(line: &[u8]) -> String {
+        String::from_utf8_lossy(line).trim_end_matches('\r').to_string()
     }
 
     pub fn flush(&mut self) -> Option<String> {
@@ -644,6 +658,19 @@ impl LineBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_buffer_splits_lines_and_caps_long_ones() {
+        let mut b = LineBuffer::default();
+        assert_eq!(b.push(b"one\r\ntw"), vec!["one"]);
+        assert_eq!(b.push(b"o\n\nthree"), vec!["two", ""]);
+        assert_eq!(b.flush().as_deref(), Some("three"));
+        assert_eq!(b.flush(), None);
+        let long = vec![b'x'; MAX_LINE * 2 + 5];
+        let lines = b.push(&long);
+        assert_eq!(lines.iter().map(String::len).collect::<Vec<_>>(), vec![MAX_LINE, MAX_LINE]);
+        assert_eq!(b.flush().map(|s| s.len()), Some(5));
+    }
 
     fn node_flags() -> BootstrapFlags {
         BootstrapFlags { user: "node".into(), home: "/home/node".into(), tmux: true, claude_code: true, codex: true }

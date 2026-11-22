@@ -11,7 +11,7 @@ use crate::provider::Provider;
 use crate::types::*;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,31 +58,13 @@ pub async fn sample<P: Provider + ?Sized>(p: &P, id: &str) -> Result<Option<Mach
     if m.status != MachineStatus::Running {
         return Ok(None);
     }
-    let mut h = p.exec(&m.id, ExecSpec { script: SCRIPT.into(), tty: false, cols: 0, rows: 0, env: vec![("LC_ALL".into(), "C".into())] }).await?;
-    let _ = h.input.send(ExecInput::Close).await;
-
-    let end = Instant::now() + DEADLINE;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    loop {
-        let left = end.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(Error::Provider("metrics sample timed out".into()));
-        }
-        match tokio::time::timeout(left, h.output.recv()).await {
-            Ok(Some(ExecOutput::Stdout(b))) => stdout.extend_from_slice(&b),
-            Ok(Some(ExecOutput::Stderr(b))) => stderr.extend_from_slice(&b),
-            Ok(Some(ExecOutput::Exit(0))) | Ok(None) => break,
-            Ok(Some(ExecOutput::Exit(code))) => {
-                let text = String::from_utf8_lossy(&stderr);
-                return Err(Error::Provider(format!("metrics script exited with code {code}: {}", text.trim())));
-            }
-            Ok(Some(ExecOutput::Error(e))) => return Err(Error::Provider(e)),
-            Err(_) => return Err(Error::Provider("metrics sample timed out".into())),
-        }
+    let c = crate::git::capture(p, &m.id, format!("export LC_ALL=C\n{SCRIPT}"), None, DEADLINE, "the metrics sample").await?;
+    if c.code != 0 {
+        let text = String::from_utf8_lossy(&c.stderr);
+        return Err(Error::Provider(format!("metrics script exited with code {}: {}", c.code, text.trim())));
     }
     let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
-    parse(&String::from_utf8_lossy(&stdout), now_ms).map(Some)
+    parse(&String::from_utf8_lossy(&c.stdout), now_ms).map(Some)
 }
 
 /// Totals from one `cpu` line of `/proc/stat`: (busy, all) jiffies.
