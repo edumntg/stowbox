@@ -899,9 +899,12 @@ async fn keep_watching(state: &AppState, machine_id: &str) -> bool {
         return true;
     }
     let ids: Vec<String> = state.agents.read().await.iter().filter(|a| a.machine_id == machine_id).map(|a| a.id.clone()).collect();
-    let live = state.live.lock().unwrap();
+    let live = state.live.lock().unwrap_or_else(|e| e.into_inner());
     ids.iter().any(|id| live.get(id).is_some_and(guard::agent_holds_box))
 }
+
+/// How often a watch with no news asks whether it is still needed.
+const WATCH_IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Starts reading the box's agent states, unless that already runs.
 async fn ensure_watch(app: &AppHandle, state: &AppState, machine_id: &str) {
@@ -919,9 +922,19 @@ async fn watch_box(app: AppHandle, machine_id: String) {
     loop {
         let Ok(p) = state.owner(&machine_id).await else { break };
         if let Ok(mut w) = session::watch(p.as_ref(), &machine_id).await {
-            while let Some(snap) = w.next().await {
-                attempt = 0;
-                apply_live(&app, &state, &machine_id, snap).await;
+            // The script prints only when something changes, so a quiet box
+            // sends nothing: check the reason to watch on a timer too, or
+            // the exec would stay open (and the box awake) for good.
+            // `Watch::next` is cancel-safe, so a timeout loses no bytes.
+            loop {
+                match tokio::time::timeout(WATCH_IDLE_CHECK, w.next()).await {
+                    Ok(Some(snap)) => {
+                        attempt = 0;
+                        apply_live(&app, &state, &machine_id, snap).await;
+                    }
+                    Ok(None) => break,
+                    Err(_) => {}
+                }
                 if !keep_watching(&state, &machine_id).await {
                     state.watches.lock().await.remove(&machine_id);
                     return;
@@ -1131,11 +1144,17 @@ async fn apply_setup_event(app: &AppHandle, state: &AppState, run_id: &str, ev: 
             return;
         }
         r.apply(&ev, now_ms());
-        (r.clone(), !r.is_active())
+        // The UI keeps its own copy of the output and gets only `append`,
+        // so the run is copied without it: the log can be 256 KiB and this
+        // runs once per line.
+        let output = std::mem::take(&mut r.output);
+        let light = r.clone();
+        r.output = output;
+        (light, !r.is_active())
     };
-    let append = if let RunEvent::Output(t) = &ev { t.clone() } else { String::new() };
+    let append = if let RunEvent::Output(t) = ev { t } else { String::new() };
     let notice = if done { state.notifier.lock().unwrap_or_else(|e| e.into_inner()).setup(&run) } else { None };
-    let _ = app.emit("setup-event", SetupPush { run: ProvisionRun { output: String::new(), ..run.clone() }, append, notice });
+    let _ = app.emit("setup-event", SetupPush { run: run.clone(), append, notice });
     if done {
         state.audit(AuditEvent::SetupEnded {
             run_id: run.id.clone(),
@@ -1331,17 +1350,25 @@ async fn terminal_open(
 #[tauri::command]
 async fn terminal_write(state: State<'_, AppState>, id: String, data: String) -> CmdResult<()> {
     let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(err)?;
-    let terms = state.terminals.lock().await;
-    let t = terms.get(&id).ok_or("terminal is closed")?;
-    state.touch(&t.machine);
-    t.input.send(ExecInput::Data(bytes)).await.map_err(|_| "terminal is closed".to_string())
+    let input = terminal_input(&state, &id, true).await?;
+    input.send(ExecInput::Data(bytes)).await.map_err(|_| "terminal is closed".to_string())
 }
 
 #[tauri::command]
 async fn terminal_resize(state: State<'_, AppState>, id: String, cols: u16, rows: u16) -> CmdResult<()> {
+    let input = terminal_input(&state, &id, false).await?;
+    input.send(ExecInput::Resize { cols, rows }).await.map_err(|_| "terminal is closed".to_string())
+}
+
+/// The terminal's input, taken out of the map so the lock is not held
+/// while a send waits on a slow box: that would stall every terminal.
+async fn terminal_input(state: &AppState, id: &str, touch: bool) -> CmdResult<mpsc::Sender<ExecInput>> {
     let terms = state.terminals.lock().await;
-    let t = terms.get(&id).ok_or("terminal is closed")?;
-    t.input.send(ExecInput::Resize { cols, rows }).await.map_err(|_| "terminal is closed".to_string())
+    let t = terms.get(id).ok_or("terminal is closed")?;
+    if touch {
+        state.touch(&t.machine);
+    }
+    Ok(t.input.clone())
 }
 
 #[tauri::command]

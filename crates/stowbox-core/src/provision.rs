@@ -107,6 +107,9 @@ async fn wait_for_agent_tools(p: &dyn Provider, id: &str, flags: &BootstrapFlags
 
 /// Kept in the run record; older output is dropped from the front.
 pub const OUTPUT_CAP: usize = 256 * 1024;
+/// Output may run this far past [`OUTPUT_CAP`] before it is cut back, so
+/// a run of short lines moves the buffer once per 64 KiB, not per line.
+const OUTPUT_SLACK: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -476,7 +479,7 @@ impl ProvisionRun {
             }
             RunEvent::Output(text) => {
                 self.output.push_str(text);
-                if self.output.len() > OUTPUT_CAP {
+                if self.output.len() > OUTPUT_CAP + OUTPUT_SLACK {
                     let mut cut = self.output.len() - OUTPUT_CAP;
                     while !self.output.is_char_boundary(cut) {
                         cut += 1;
@@ -1069,6 +1072,11 @@ mod tests {
         }
         r.apply(&RunEvent::Output("é".repeat(OUTPUT_CAP)), 0);
         assert!(r.output.len() <= OUTPUT_CAP);
+        for _ in 0..10_000 {
+            r.apply(&RunEvent::Output("a line of output\n".into()), 0);
+            assert!(r.output.len() <= OUTPUT_CAP + OUTPUT_SLACK);
+        }
+        assert!(r.output.ends_with("a line of output\n"));
         r.apply(&RunEvent::Finished(0), 5);
         assert_eq!(r.status, RunStatus::Done);
         assert!(r.error.is_none());

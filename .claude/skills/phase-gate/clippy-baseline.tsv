@@ -18,4 +18,4 @@ crates/stowbox-core/src/ssh.rs	20
 crates/stowbox-core/src/sshexec.rs	4
 crates/stowbox-core/src/testing.rs	10
 crates/stowbox-core/src/upload.rs	3
-src-tauri/src/lib.rs	13
+src-tauri/src/lib.rs	12
