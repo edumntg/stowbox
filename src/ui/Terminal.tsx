@@ -165,8 +165,15 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
   const enc = new TextEncoder();
   const dec = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   let closed = false;
+  // Writes run one after another: the shell handles each call on its own
+  // task, so two in flight at once could reach the box out of order.
+  let writes: Promise<void> = Promise.resolve();
+  const send = (id: string, text: string) => {
+    const bytes = enc.encode(text);
+    writes = writes.then(() => api.terminalWrite(id, bytes)).catch(() => undefined);
+  };
   const onData = term.onData((d) => {
-    if (s.id) void api.terminalWrite(s.id, enc.encode(d)).catch(() => undefined);
+    if (s.id) send(s.id, d);
   });
   const s: Session = {
     el,
@@ -251,7 +258,7 @@ async function createSession(machine: string, target: TermTarget, host: HTMLElem
       s.id = id;
       if (over(s)) return;
       s.status = "open";
-      s.write = (text) => void api.terminalWrite(id, enc.encode(text)).catch(() => undefined);
+      s.write = (text) => send(id, text);
       s.view?.onInput?.(s.write);
       s.view?.refresh();
       if (s.view) term.focus();

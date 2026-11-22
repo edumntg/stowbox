@@ -18,11 +18,12 @@ use crate::{Error, Result};
 use async_trait::async_trait;
 use pb::boxd_api_client::BoxdApiClient;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::{Channel, ClientTlsConfig};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tonic::{Request, Status};
 
 pub use auth::TokenExchange;
@@ -105,19 +106,34 @@ impl tonic::service::Interceptor for AuthInterceptor {
 type Api = BoxdApiClient<InterceptedService<Channel, AuthInterceptor>>;
 
 pub struct Boxd {
+    /// Unary calls, each bounded by [`CALL_TIMEOUT`].
     channel: Channel,
+    /// Exec and upload, which last as long as the command or the file:
+    /// no overall timeout, and HTTP/2 keepalives notice a peer that went
+    /// away.
+    streams: Channel,
     auth: Arc<TokenExchange>,
     config: BoxdConfig,
 }
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CALL_TIMEOUT: Duration = Duration::from_secs(120);
+
 impl Boxd {
-    /// Must be called inside a Tokio runtime: the channel connects lazily
-    /// and binds to the runtime it is created in.
+    /// Must be called inside a Tokio runtime: the channels connect lazily
+    /// and bind to the runtime they are created in.
     pub fn new(api_key: String, config: BoxdConfig) -> Result<Self> {
-        let tls = ClientTlsConfig::new().with_webpki_roots();
-        let channel = Channel::from_shared(config.endpoint.clone()).map_err(|e| Error::Network(e.to_string()))?.tls_config(tls)?.connect_lazy();
+        let endpoint = Endpoint::from_shared(config.endpoint.clone())
+            .map_err(|e| Error::Network(e.to_string()))?
+            .tls_config(ClientTlsConfig::new().with_webpki_roots())?
+            .connect_timeout(CONNECT_TIMEOUT)
+            .http2_keep_alive_interval(Duration::from_secs(30))
+            .keep_alive_timeout(Duration::from_secs(10))
+            .keep_alive_while_idle(true);
+        let channel = endpoint.clone().timeout(CALL_TIMEOUT).connect_lazy();
+        let streams = endpoint.connect_lazy();
         let auth = Arc::new(TokenExchange::new(api_key, config.auth_url.clone()));
-        Ok(Self { channel, auth, config })
+        Ok(Self { channel, streams, auth, config })
     }
 
     pub fn config(&self) -> &BoxdConfig {
@@ -125,9 +141,18 @@ impl Boxd {
     }
 
     async fn api(&self) -> Result<Api> {
+        self.client(&self.channel).await
+    }
+
+    async fn stream_api(&self) -> Result<Api> {
+        self.client(&self.streams).await
+    }
+
+    async fn client(&self, channel: &Channel) -> Result<Api> {
         let token = self.auth.token().await?;
-        let value: MetadataValue<Ascii> = format!("Bearer {token}").parse().map_err(|_| Error::Auth("token is not valid header text".into()))?;
-        Ok(BoxdApiClient::with_interceptor(self.channel.clone(), AuthInterceptor(value)))
+        let mut value: MetadataValue<Ascii> = format!("Bearer {token}").parse().map_err(|_| Error::Auth("token is not valid header text".into()))?;
+        value.set_sensitive(true);
+        Ok(BoxdApiClient::with_interceptor(channel.clone(), AuthInterceptor(value)))
     }
 
     fn desktop_url(&self, name: &str) -> String {
@@ -237,7 +262,7 @@ impl Provider for Boxd {
     }
 
     async fn exec(&self, id: &str, spec: ExecSpec) -> Result<ExecHandle> {
-        let mut api = self.api().await?;
+        let mut api = self.stream_api().await?;
 
         // Wrap in a login shell so the command string is interpreted the same
         // way whether the server execs it directly or hands it to `sh -c`.
@@ -346,7 +371,7 @@ impl Provider for Boxd {
 
     async fn upload_file(&self, id: &str, path: &str, data: Vec<u8>) -> Result<u64> {
         let expected = data.len() as u64;
-        let mut api = self.api().await?;
+        let mut api = self.stream_api().await?;
         let written = if data.len() <= UNARY_UPLOAD_MAX {
             api.upload_file(pb::UploadFileRequest { vm_id: id.into(), path: path.into(), data }).await?.into_inner().bytes_written
         } else {

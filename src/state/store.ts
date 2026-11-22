@@ -548,14 +548,17 @@ function saveNotifyPrefs() {
   }
 }
 
-/** Output past this is dropped from the front, as the shell does. */
+/** Output past this is dropped from the front, as the shell does. It may
+ * run SETUP_OUTPUT_SLACK past it first, so short lines do not copy the
+ * whole log one by one. */
 const SETUP_OUTPUT_CAP = 256 * 1024;
+const SETUP_OUTPUT_SLACK = 64 * 1024;
 
 function onSetupPush(p: SetupPush) {
   if (!p || !p.run) return;
   const prev = state.setupRuns[p.run.machineId];
   let output = (prev && prev.id === p.run.id ? prev.output : "") + p.append;
-  if (output.length > SETUP_OUTPUT_CAP) output = output.slice(output.length - SETUP_OUTPUT_CAP);
+  if (output.length > SETUP_OUTPUT_CAP + SETUP_OUTPUT_SLACK) output = output.slice(output.length - SETUP_OUTPUT_CAP);
   setState("setupRuns", p.run.machineId, { ...p.run, output });
   if (p.notice) void deliver(p.notice);
 }
