@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 pub const STATUS_CAP: usize = 256 * 1024;
 /// Bytes of patch text kept, tracked changes first, then untracked files.
 pub const DIFF_CAP: usize = 512 * 1024;
+/// Bytes [`capture`] keeps per stream before it stops the script.
+pub const CAPTURE_CAP: usize = 16 << 20;
 
 pub const REVIEW_DEADLINE: Duration = Duration::from_secs(45);
 pub const COMMIT_DEADLINE: Duration = Duration::from_secs(120);
@@ -613,9 +615,9 @@ pub async fn capture<P: Provider + ?Sized>(
         if left.is_zero() {
             return Err(timed_out());
         }
-        match tokio::time::timeout(left, h.output.recv()).await {
-            Ok(Some(ExecOutput::Stdout(b))) => c.stdout.extend_from_slice(&b),
-            Ok(Some(ExecOutput::Stderr(b))) => c.stderr.extend_from_slice(&b),
+        let (buf, b) = match tokio::time::timeout(left, h.output.recv()).await {
+            Ok(Some(ExecOutput::Stdout(b))) => (&mut c.stdout, b),
+            Ok(Some(ExecOutput::Stderr(b))) => (&mut c.stderr, b),
             Ok(Some(ExecOutput::Exit(code))) => {
                 c.code = code;
                 return Ok(c);
@@ -623,7 +625,13 @@ pub async fn capture<P: Provider + ?Sized>(
             Ok(None) => return Ok(c),
             Ok(Some(ExecOutput::Error(e))) => return Err(Error::Provider(e)),
             Err(_) => return Err(timed_out()),
+        };
+        // Every script here prints a bounded amount (diffs are cut in the
+        // box), so more than this is a box writing without end.
+        if buf.len() + b.len() > CAPTURE_CAP {
+            return Err(Error::Provider(format!("{what} printed more than {} MiB, so it was stopped", CAPTURE_CAP >> 20)));
         }
+        buf.extend_from_slice(&b);
     }
 }
 
@@ -986,6 +994,16 @@ index 0000000..5555555
         };
         assert!(fill("github.com").contains("username=x-access-token\npassword=tok-123\n"));
         assert!(!fill("example.com").contains("tok-123"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(not(unix), ignore = "box-side script, needs a Linux box's bash; see testing.rs")]
+    async fn capture_stops_a_script_that_prints_without_end() {
+        let (home, _work) = fixture();
+        let p = LocalBash { home: home.clone(), env: vec![] };
+        let e = capture(&p, "vm1", "yes stowbox".into(), None, Duration::from_secs(60), "test").await.unwrap_err();
+        assert!(e.to_string().contains("printed more than 16 MiB"), "{e}");
         let _ = std::fs::remove_dir_all(&home);
     }
 

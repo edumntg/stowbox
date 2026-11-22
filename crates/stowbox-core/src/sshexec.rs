@@ -55,7 +55,7 @@ pub enum HostCheck {
 }
 
 /// How the SSH byte stream gets to the box.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Dial {
     /// Straight TCP to host and port.
     Tcp,
@@ -64,8 +64,18 @@ pub enum Dial {
     WebSocket(Vec<(String, String)>),
 }
 
+/// Header values carry the provider's API key, so only names are printed.
+impl std::fmt::Debug for Dial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Dial::Tcp => f.write_str("Tcp"),
+            Dial::WebSocket(headers) => f.debug_tuple("WebSocket").field(&headers.iter().map(|(name, _)| (name.as_str(), "***")).collect::<Vec<_>>()).finish(),
+        }
+    }
+}
+
 /// Where to reach one box over SSH.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Endpoint {
     pub host: String,
     pub port: u16,
@@ -77,6 +87,22 @@ pub struct Endpoint {
     pub provider: &'static str,
     /// What to tell the person when the box refuses Stowbox's key.
     pub key_refused: String,
+}
+
+/// With [`Login::Token`] the user name is the access token.
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let user = if self.login == Login::Token { "***" } else { self.user.as_str() };
+        f.debug_struct("Endpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &user)
+            .field("login", &self.login)
+            .field("check", &self.check)
+            .field("dial", &self.dial)
+            .field("provider", &self.provider)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A host key as an OpenSSH line, with or without a host name in front
@@ -533,6 +559,25 @@ mod tests {
     use russh::client::Handler;
 
     const HOST_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIBJTU59j3HRwRnqvcgkRZcLUm4HubVI5GWQ6LxuS8O8";
+
+    #[test]
+    fn debug_hides_tokens_and_header_values() {
+        let ep = Endpoint {
+            host: "ssh.example.com".into(),
+            port: 22,
+            user: "tok_secret_user".into(),
+            login: Login::Token,
+            check: HostCheck::Edge,
+            dial: Dial::WebSocket(vec![("Authorization".into(), "Bearer tok_secret_header".into())]),
+            provider: "test",
+            key_refused: String::new(),
+        };
+        let shown = format!("{ep:?}");
+        assert!(!shown.contains("tok_secret"), "{shown}");
+        assert!(shown.contains("Authorization") && shown.contains("ssh.example.com"), "{shown}");
+        let keyed = Endpoint { user: "boxd".into(), login: Login::Key, dial: Dial::Tcp, ..ep };
+        assert!(format!("{keyed:?}").contains("\"boxd\""));
+    }
     /// `HOST_KEY` signed by a throwaway certificate authority.
     const HOST_CERT: &str = "ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIF1sYftjGlln+VgcRvZsKMUiaTDJYKZ2DlhWwYvLIcWjAAAAIIBJTU59j3HRwRnqvcgkRZcLUm4HubVI5GWQ6LxuS8O8AAAAAAAAAAAAAAACAAAAB2ZpeHR1cmUAAAAPAAAAC2JveC5leGFtcGxlAAAAAAAAAAD//////////wAAAAAAAAAAAAAAAAAAADMAAAALc3NoLWVkMjU1MTkAAAAgPqqyDemW/z0Qek3OWIw3yl4n35t1bx79cIN4gPoHOecAAABTAAAAC3NzaC1lZDI1NTE5AAAAQIFTld30CS7LMwA+MTEDlGtPrr0c6vw3a3HGZn2lqyw0mcrI3Nsfj4p+Y9k082lI9OFRycPjn/GIDt4hRQVnSAk= host";
 

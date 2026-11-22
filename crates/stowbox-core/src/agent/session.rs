@@ -258,21 +258,38 @@ pub fn parse_snapshot(text: &str) -> BoxAgents {
 /// A running watch: yields a snapshot each time the box's agents change.
 pub struct Watch {
     handle: ExecHandle,
-    end: String,
-    buf: String,
+    end: Vec<u8>,
+    buf: Vec<u8>,
+    /// How much of `buf` has been searched for `end` already.
+    scanned: usize,
 }
+
+/// Bytes of one snapshot. A snapshot lists a box's tmux sessions, a few
+/// lines each, so a box that sends more without an end marker is not
+/// running the watch script and the watch ends.
+const WATCH_CAP: usize = 1 << 20;
 
 impl Watch {
     /// The next snapshot; `None` once the exec stream ends.
     pub async fn next(&mut self) -> Option<BoxAgents> {
         loop {
-            if let Some(i) = self.buf.find(&self.end) {
-                let snap = parse_snapshot(&self.buf[..i]);
-                self.buf.drain(..i + self.end.len());
+            // Only new bytes are searched, plus enough before them to catch
+            // a marker split across two chunks.
+            let from = self.scanned.saturating_sub(self.end.len().saturating_sub(1));
+            let tail = self.buf.get(from..)?;
+            if let Some(rel) = tail.windows(self.end.len()).position(|w| w == self.end.as_slice()) {
+                let at = from + rel;
+                let snap = parse_snapshot(&String::from_utf8_lossy(self.buf.get(..at)?));
+                self.buf.drain(..at + self.end.len());
+                self.scanned = 0;
                 return Some(snap);
             }
+            self.scanned = self.buf.len();
+            if self.buf.len() > WATCH_CAP {
+                return None;
+            }
             match self.handle.output.recv().await? {
-                ExecOutput::Stdout(b) => self.buf.push_str(&String::from_utf8_lossy(&b)),
+                ExecOutput::Stdout(b) => self.buf.extend_from_slice(&b),
                 ExecOutput::Stderr(_) => {}
                 ExecOutput::Exit(_) | ExecOutput::Error(_) => return None,
             }
@@ -283,7 +300,7 @@ impl Watch {
 pub async fn watch<P: Provider + ?Sized>(p: &P, machine_id: &str) -> Result<Watch> {
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let handle = p.exec(machine_id, ExecSpec { script: watch_script(&nonce), tty: false, cols: 0, rows: 0, env: vec![] }).await?;
-    Ok(Watch { handle, end: format!("{} end\n", marker(&nonce)), buf: String::new() })
+    Ok(Watch { handle, end: format!("{} end\n", marker(&nonce)).into_bytes(), buf: Vec::new(), scanned: 0 })
 }
 
 /// Ends the agent's harness in the box; `forget` also drops its state.
@@ -299,6 +316,29 @@ pub async fn stop<P: Provider + ?Sized>(p: &P, machine_id: &str, agent_id: &str,
 mod tests {
     use super::*;
     use crate::testing::{has_bash, temp_dir, LocalBash};
+
+    fn fed_watch(chunks: Vec<Vec<u8>>) -> Watch {
+        let (input, _in_rx) = tokio::sync::mpsc::channel(1);
+        let (tx, output) = tokio::sync::mpsc::channel(chunks.len() + 1);
+        for c in chunks {
+            tx.try_send(ExecOutput::Stdout(c)).unwrap();
+        }
+        Watch { handle: ExecHandle { input, output }, end: b"@@m end\n".to_vec(), buf: Vec::new(), scanned: 0 }
+    }
+
+    #[tokio::test]
+    async fn watch_finds_a_marker_split_across_chunks() {
+        let mut w = fed_watch(vec![b"tmux\n@@m e".to_vec(), b"nd\nnotmux\n@".to_vec(), b"@m end\n".to_vec()]);
+        assert!(w.next().await.is_some());
+        assert!(w.next().await.is_some());
+        assert!(w.next().await.is_none(), "the stream ended");
+    }
+
+    #[tokio::test]
+    async fn watch_ends_when_a_box_sends_too_much_without_a_marker() {
+        let mut w = fed_watch(vec![vec![b'x'; WATCH_CAP], vec![b'x'; 16], b"@@m end\n".to_vec()]);
+        assert!(w.next().await.is_none());
+    }
 
     fn meta(harness: Harness, session: Option<&str>) -> AgentMeta {
         AgentMeta {
