@@ -34,6 +34,8 @@ pub const VCPUS: u32 = 8;
 pub const DISK_GB: u64 = 100;
 const USER: &str = "sprite";
 const HOME: &str = "/home/sprite";
+/// The largest file Sprites' `fs/write` takes.
+const MAX_UPLOAD: u64 = 16 << 20;
 /// Pages of 100 read before the list stops.
 const MAX_PAGES: usize = 20;
 
@@ -90,7 +92,7 @@ pub fn capabilities() -> Capabilities {
         https_default_route: false,
         port_forwards: false,
         editor_ssh: false,
-        max_upload_bytes: crate::upload::MAX_BYTES,
+        max_upload_bytes: MAX_UPLOAD,
         remote_user: USER.into(),
         remote_home: HOME.into(),
         metering_note: "Sprites bills CPU time, memory and storage on use, and its API does not report them. This is the CPU at full use while awake; a paused sprite costs only its storage.".into(),
@@ -231,6 +233,20 @@ impl Provider for Sprites {
 
     async fn exec(&self, id: &str, spec: ExecSpec) -> Result<ExecHandle> {
         exec::run(self.api.clone(), Self::checked(id)?.to_string(), spec).await
+    }
+
+    /// Sprites' file API, which takes the bytes as they are: no base64 over
+    /// an exec, and no shell between the path and the file.
+    async fn upload_file(&self, id: &str, path: &str, data: Vec<u8>) -> Result<u64> {
+        if !path.starts_with('/') {
+            return Err(Error::Provider(format!("{path:?} is not an absolute path")));
+        }
+        let expected = data.len() as u64;
+        if expected > MAX_UPLOAD {
+            return Err(Error::Provider(format!("Sprites takes files of up to 16 MB; this one is {expected} bytes")));
+        }
+        let written = self.api.put_bytes(&format!("{}/fs/write?path={}&workingDir=%2F", Self::path(id)?, seg(path)), data).await?;
+        crate::upload::confirm_written(written.get("size").and_then(Value::as_u64).unwrap_or(0), expected, path)
     }
 
     async fn machine_usage(&self, _id: &str) -> Result<Usage> {

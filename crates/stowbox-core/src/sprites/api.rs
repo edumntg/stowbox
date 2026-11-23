@@ -102,6 +102,26 @@ impl Api {
         }
     }
 
+    /// A PUT with `data` as the body, sent once: a retry would copy the
+    /// bytes again. Given as long as an upload over exec.
+    pub async fn put_bytes(&self, path: &str, data: Vec<u8>) -> Result<Value> {
+        let resp = self
+            .http
+            .put(format!("{}{path}", self.base))
+            .headers(self.headers.clone())
+            .header("Content-Type", "application/octet-stream")
+            .timeout(Duration::from_secs(300))
+            .body(data)
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = String::from_utf8_lossy(&http::read_capped(resp, MAX_BODY, "Sprites").await?).into_owned();
+        if !status.is_success() {
+            return Err(into_error(status.as_u16(), &text));
+        }
+        serde_json::from_str(&text).map_err(|e| Error::Provider(format!("Sprites answered with a body that is not JSON: {e}")))
+    }
+
     pub async fn get(&self, path: &str) -> Result<Value> {
         self.call(Method::GET, path, None).await
     }

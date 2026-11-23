@@ -795,7 +795,7 @@
       "isolated": false,
       "keyPrefixes": [],
       "label": "Sprites",
-      "maxUploadBytes": 20971520,
+      "maxUploadBytes": 16777216,
       "meteredUsage": false,
       "meteringNote": "Sprites bills CPU time, memory and storage on use, and its API does not report them. This is the CPU at full use while awake; a paused sprite costs only its storage.",
       "newBoxBlurb": "A Sprites microVM with 8 vCPUs and a 100 GB disk that persists. It pauses by itself seconds after its last use and wakes on the next command.",

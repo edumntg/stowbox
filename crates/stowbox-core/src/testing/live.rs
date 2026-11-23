@@ -75,6 +75,25 @@ async fn reach(p: &dyn Provider, id: &str, want: MachineStatus) -> Result<(), St
     }
 }
 
+/// Polls until the box can take work: running, or for a provider whose boxes
+/// pause when idle, paused too, since the next exec wakes it.
+async fn ready(p: &dyn Provider, id: &str, pauses_when_idle: bool) -> Result<(), String> {
+    if !pauses_when_idle {
+        return reach(p, id, MachineStatus::Running).await;
+    }
+    let last = std::cell::Cell::new(MachineStatus::Unknown);
+    let ready = poll_until(SETTLE, || async {
+        last.set(timed("get", p.get_machine(id)).await?.status);
+        Ok(matches!(last.get(), MachineStatus::Running | MachineStatus::Suspended | MachineStatus::Hibernated))
+    })
+    .await?;
+    if ready {
+        Ok(())
+    } else {
+        Err(format!("still {:?} after {}s, wanted running or paused", last.get(), SETTLE.as_secs()))
+    }
+}
+
 /// Whether the provider lists `id`.
 async fn listed(p: &dyn Provider, id: &str) -> Result<bool, String> {
     Ok(timed("list", p.list_machines()).await?.iter().any(|m| m.id == id))
@@ -191,7 +210,7 @@ async fn conform(p: &dyn Provider) -> Report {
         }
     };
 
-    if r.check("running after create", reach(p, &id, MachineStatus::Running).await) {
+    if r.check("ready after create", ready(p, &id, caps.pauses_when_idle).await) {
         // Daytona's list lags a create by a few seconds.
         let shown = poll_until(Duration::from_secs(60), || listed(p, &id)).await;
         r.check("list", shown.and_then(|yes| if yes { Ok(()) } else { Err("not listed after 60s".into()) }));

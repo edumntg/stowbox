@@ -20,7 +20,7 @@
 
 use super::api::Api;
 use crate::daytona::api::seg;
-use crate::sshexec::{kill_group_command, remote_command, with_env, Marker};
+use crate::sshexec::{kill_group_command, quiet_remote_command, with_env, Marker, QUIET_LOGIN};
 use crate::types::*;
 use crate::websocket::{self, Event, Message, Socket};
 use crate::{Error, Result};
@@ -48,7 +48,9 @@ const RUN_STAGED: &str = "c=$(cat \"$1\") && rm -f \"$1\" && eval \"$c\"";
 /// A terminal: records its pid, which leads the terminal's process group,
 /// so a dropped terminal can be hung up; runs the script staged in `$2`;
 /// removes the record when the script ends.
-const TERMINAL: &str = "umask 077; echo $$ > \"$1\"; s=$(cat \"$2\"); rm -f \"$2\"; bash -lc \"$s\"; c=$?; rm -f \"$1\"; exit $c";
+fn terminal() -> String {
+    format!("umask 077; f=$1; echo $$ > \"$f\"; s=$(cat \"$2\"); rm -f \"$2\"; set -- \"$s\"; {QUIET_LOGIN}; c=$?; rm -f \"$f\"; exit $c")
+}
 /// Hangs up the group a terminal recorded in `$1`. A pid file that is empty
 /// or names init must not turn into `kill -1`.
 const HANG_UP: &str =
@@ -125,6 +127,11 @@ fn temp_path(kind: &str) -> String {
     format!("/tmp/.stowbox-{kind}-{}", uuid::Uuid::new_v4().simple())
 }
 
+/// A terminal's new window size.
+fn resize(cols: u16, rows: u16) -> Message {
+    Message::Text(json!({ "type": "resize", "cols": cols.max(20), "rows": rows.max(5) }).to_string())
+}
+
 /// Input as stdin messages of at most [`CHUNK`] bytes.
 fn stdin_messages(data: &[u8]) -> impl Iterator<Item = Message> + '_ {
     data.chunks(CHUNK).map(|c| Message::Binary([STDIN].iter().chain(c).copied().collect()))
@@ -195,10 +202,15 @@ pub async fn run(api: Arc<Api>, sprite: String, spec: ExecSpec) -> Result<ExecHa
     let tty = spec.tty;
     let pid_file = tty.then(|| temp_path("tty"));
     let argv = match &pid_file {
-        Some(f) => sh(TERMINAL, &[f, &stage(&api, &sprite, &with_env(&spec)).await?]),
-        None => sh(RUN_STAGED, &[&stage(&api, &sprite, &remote_command(&spec)).await?]),
+        Some(f) => sh(&terminal(), &[f, &stage(&api, &sprite, &with_env(&spec)).await?]),
+        None => sh(RUN_STAGED, &[&stage(&api, &sprite, &quiet_remote_command(&spec)).await?]),
     };
     let mut ws = open(&api, &sprite, &argv, tty.then_some((spec.cols, spec.rows))).await?;
+    // Sprites starts the terminal at 0x0 whatever the query says; a resize
+    // right away gives it the window's size.
+    if tty {
+        ws.send.send(resize(spec.cols, spec.rows)).await.map_err(|_| Error::Network("Sprites closed the terminal's socket".into()))?;
+    }
 
     let (in_tx, mut in_rx) = mpsc::channel::<ExecInput>(64);
     let (out_tx, out_rx) = mpsc::channel::<ExecOutput>(256);
@@ -211,9 +223,7 @@ pub async fn run(api: Arc<Api>, sprite: String, spec: ExecSpec) -> Result<ExecHa
             let (messages, last): (Vec<Message>, bool) = match msg {
                 ExecInput::Data(d) if tty => (d.chunks(CHUNK).map(|c| Message::Binary(c.to_vec())).collect(), false),
                 ExecInput::Data(d) => (stdin_messages(&d).collect(), false),
-                ExecInput::Resize { cols, rows } if tty => {
-                    (vec![Message::Text(json!({ "type": "resize", "cols": cols.max(20), "rows": rows.max(5) }).to_string())], false)
-                }
+                ExecInput::Resize { cols, rows } if tty => (vec![resize(cols, rows)], false),
                 // A command has no window to resize.
                 ExecInput::Resize { .. } => continue,
                 ExecInput::Close => (vec![Message::Binary(vec![if tty { EOT } else { STDIN_EOF }])], true),
@@ -330,7 +340,7 @@ mod tests {
         let staged = dir.join("my cmd");
         let staged = staged.to_str().unwrap();
         let spec = ExecSpec { script: "echo \"hi $A\"; exit 3".into(), tty: false, cols: 0, rows: 0, env: vec![("A".into(), "it's".into())] };
-        assert_eq!(local(STAGE, &[staged], &remote_command(&spec)).1, 0);
+        assert_eq!(local(STAGE, &[staged], &quiet_remote_command(&spec)).1, 0);
         let (out, code) = local(RUN_STAGED, &[staged], "");
         assert_eq!((out.as_str(), code), ("hi it's\n", 3));
         assert!(!std::path::Path::new(staged).exists());
@@ -338,7 +348,7 @@ mod tests {
         let pid = dir.join("p id");
         let pid = pid.to_str().unwrap();
         local(STAGE, &[staged], &with_env(&spec));
-        let (out, code) = local(TERMINAL, &[pid, staged], "");
+        let (out, code) = local(&terminal(), &[pid, staged], "");
         assert_eq!((out.as_str(), code), ("hi it's\n", 3));
         assert!(!std::path::Path::new(staged).exists() && !std::path::Path::new(pid).exists());
 

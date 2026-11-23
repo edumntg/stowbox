@@ -38,8 +38,16 @@ your Sprites organization (it looks like `org/id/secret`).
   environment exported in front. Without a TTY, each binary message leads
   with its stream (0 stdin, 1 stdout, 2 stderr, 3 the exit code, 4 the end
   of stdin). With a TTY, binary messages are the terminal's bytes and a
-  resize is `{"type":"resize","cols","rows"}`. The exit comes as the `3`
-  message or as `{"type":"exit","exit_code":N}`.
+  resize is `{"type":"resize","cols","rows"}`. A terminal starts at 0x0
+  whatever the query says, so Stowbox sends a resize as soon as it opens.
+  The exit comes as the `3` message or as `{"type":"exit","exit_code":N}`.
+- **Login shell.** Commands run in a login bash, as over SSH, so
+  `.profile` and `.bashrc` set the PATH. A sprite's default `.bashrc` calls
+  `bind` in every shell, which warns when there is no line editing, so
+  what the startup files write to stderr is dropped. The command's own
+  stderr is kept.
+- **Uploads.** A file goes in whole through `PUT /fs/write`, up to 16 MB,
+  and Sprites' answer gives the size written.
 - **Ending an exec.** Sprites keeps a command running after its socket
   closes. So when Stowbox drops or loses the socket, it ends what the exec
   started itself: a command reports its process group on stderr, as over
