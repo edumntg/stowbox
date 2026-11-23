@@ -819,10 +819,12 @@ export const actions = {
   },
 
   /** One exec per running box, in parallel. Boxes in any other state are
-   * skipped on purpose: sampling would wake them. */
+   * skipped on purpose: sampling would wake them. So is a box that pauses
+   * when idle and has no agent in it: each sample counts as use, and a poll
+   * every 15 s would keep it from ever pausing. */
   async refreshMetrics() {
     if (state.metricsBusy) return;
-    const targets = state.machines.filter((m) => m.status === "running");
+    const targets = state.machines.filter((m) => m.status === "running" && (!capsFor(m)?.pausesWhenIdle || agentsForMachine(m.id).length > 0));
     setState("metricsBusy", true);
     try {
       await Promise.all(
@@ -1209,9 +1211,11 @@ export const actions = {
       m = await api.createMachine(task.box.create, null, null);
       setState("machines", (ms) => [...ms.filter((x) => x.id !== m!.id), m!].sort((a, b) => a.name.localeCompare(b.name)));
       onStep(`Starting ${m.name}…`);
-      // A new box can take a moment; the agent needs it running.
+      // A new box can take a moment; the agent needs it running, or paused
+      // where the agent's first command wakes it.
       const deadline = Date.now() + 180_000;
-      while (m.status !== "running") {
+      const ready = (x: Machine) => x.status === "running" || (!!capsFor(x)?.pausesWhenIdle && (x.status === "suspended" || x.status === "hibernated"));
+      while (!ready(m)) {
         if (m.status === "failed" || m.status === "stopped") throw new Error(`${m.name} did not start: ${providerLabel(m.provider)} reports it ${m.status}.`);
         if (Date.now() > deadline) throw new Error(`${m.name} is still ${m.status} after three minutes. It stays in the list; start the agent from it once it runs.`);
         await new Promise((r) => window.setTimeout(r, 2000));

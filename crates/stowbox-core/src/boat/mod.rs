@@ -73,6 +73,7 @@ pub fn capabilities() -> Capabilities {
         auto_suspend: false,
         auto_hibernate: false,
         idle_stop: false,
+        pauses_when_idle: false,
         auto_stop: true,
         custom_size: false,
         sizes: SIZES

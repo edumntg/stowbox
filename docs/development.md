@@ -24,8 +24,9 @@ To run the app from this repo:
    [app.boxd.sh](https://app.boxd.sh)), boat (`boat_…`), Daytona (`dtn_…`),
    Agent37 (`sk_live_…`), E2B (`e2b_…`) or Blaxel (`bl_…`, with its
    workspace) API key, a Vercel token with its team and project, a Modal
-   token id and secret (`ak-…`, `as-…`), or the URL and token of a Cloudflare
-   bridge Worker (`docs/cloudflare.md`). The others can be added later in Settings. Keys are stored in the OS keychain.
+   token id and secret (`ak-…`, `as-…`), the URL and token of a Cloudflare
+   bridge Worker (`docs/cloudflare.md`), or a Sprites organization token
+   (`org/id/secret`). The others can be added later in Settings. Keys are stored in the OS keychain.
 
 To install it as a regular app instead of running it from a terminal:
 
@@ -64,7 +65,7 @@ A test fails when it no longer matches core; `STOWBOX_REGENERATE=1 cargo test
 -p stowbox-core the_mock_gets_the_descriptors` writes the new one.
 
 The live conformance run covers each provider whose
-`STOWBOX_LIVE_<ID>_KEY` (`BOXD`, `BOAT`, `DAYTONA`, `AGENT37`, `E2B`, `VERCEL`, `BLAXEL`;
+`STOWBOX_LIVE_<ID>_KEY` (`BOXD`, `BOAT`, `DAYTONA`, `AGENT37`, `E2B`, `VERCEL`, `BLAXEL`, `SPRITES`;
 other credential fields as `STOWBOX_LIVE_<ID>_<FIELD>`, and Modal's as
 `STOWBOX_LIVE_MODAL_TOKEN_ID` and `STOWBOX_LIVE_MODAL_TOKEN_SECRET`; for
 Cloudflare, `STOWBOX_LIVE_CLOUDFLARE_KEY` is the bridge token and
@@ -143,6 +144,7 @@ crates/stowbox-core/   provider trait, registry, capabilities, agent protocol, c
   src/blaxel/          Blaxel's REST client, states, processes and terminals
   src/modal/           Modal's gRPC client, states and exec through the task command router
   src/cloudflare/      the Cloudflare bridge's REST client, states and exec over its WebSocket
+  src/sprites/         Sprites' REST client, states and exec over its WebSocket
   src/ndjson.rs        newline-delimited JSON off a streaming answer (Vercel, Blaxel)
   src/websocket.rs     text and binary WebSocket messages (Vercel, Blaxel terminals)
   src/sshexec.rs       exec over SSH (russh) for providers without a usable exec API
@@ -160,10 +162,11 @@ box. Every provider implements the `Provider` trait and describes itself with
 `Capabilities`; the `Registry` holds every connected one and routes each box to
 the provider that owns it. The UI turns features on and off from the
 capabilities, never from the provider's name. How boat, Daytona, Agent37, E2B,
-Vercel, Blaxel, Modal, Cloudflare and a plain SSH host are used, and what
-they do not have, is in `docs/boat.md`, `docs/daytona.md`, `docs/agent37.md`,
-`docs/e2b.md`, `docs/vercel.md`, `docs/blaxel.md`, `docs/modal.md`,
-`docs/cloudflare.md` and `docs/sshhost.md`.
+Vercel, Blaxel, Modal, Cloudflare, Sprites and a plain SSH host are used,
+and what they do not have, is in `docs/boat.md`, `docs/daytona.md`,
+`docs/agent37.md`, `docs/e2b.md`, `docs/vercel.md`, `docs/blaxel.md`,
+`docs/modal.md`, `docs/cloudflare.md`, `docs/sprites.md` and
+`docs/sshhost.md`.
 
 ## How boxd is used
 

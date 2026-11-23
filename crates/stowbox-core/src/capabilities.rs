@@ -109,6 +109,11 @@ pub struct Capabilities {
     /// later (`set_auto_stop` takes it in seconds).
     #[serde(default)]
     pub idle_stop: bool,
+    /// The box pauses by itself seconds after its last use and wakes on the
+    /// next exec. A paused box is ready for work, and sampling an idle one
+    /// would keep it from pausing.
+    #[serde(default)]
+    pub pauses_when_idle: bool,
     /// Free vCPU and memory at create; otherwise `sizes` is the menu.
     pub custom_size: bool,
     pub sizes: Vec<SizeOption>,

@@ -166,6 +166,9 @@ export interface Capabilities {
   autoStop: boolean;
   /** A stop after so long with no activity; setAutoStop takes it in seconds. */
   idleStop: boolean;
+  /** Pauses by itself seconds after its last use and wakes on the next exec:
+   * a paused box is ready, and sampling an idle one keeps it awake. */
+  pausesWhenIdle: boolean;
   customSize: boolean;
   sizes: SizeOption[];
   httpsLinks: boolean;

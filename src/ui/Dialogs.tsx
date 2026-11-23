@@ -6,7 +6,7 @@ import { GUARD_COUNTDOWN_MS, actions, capsFor, capsOf, connectedProviders, creat
 import * as I from "../icons";
 import { ProviderIcon, isWindows } from "./common";
 import { ProviderKeyForm } from "./Onboarding";
-import { IDLE_STOP, currencySymbol, firstLine, money, spendLine } from "./format";
+import { IDLE_STOP, currencySymbol, firstLine, money, sizeLabel, spendLine } from "./format";
 
 const GIB = 1024 ** 3;
 
@@ -187,7 +187,7 @@ const NewBox = () => {
                 {(z) => (
                   <button class="choice" aria-pressed={sizeId() === z.id} onClick={() => setSizeId(z.id)} title={z.note || undefined}>
                     <span>
-                      {z.id} · {z.vcpu} vCPU · {Math.round(z.memoryBytes / GIB)} GiB
+                      {z.id} · {sizeLabel(z)}
                     </span>
                     <span class="faint mono">
                       {money(z.hourlyMicro, caps()!.currency)}/h running{z.note ? ` · ${z.note}` : ""}

@@ -15,14 +15,14 @@
 
 <p align="center"><b>A desktop cockpit for cloud boxes and the coding agents running in them.</b></p>
 
-Stowbox talks to nine sandbox providers with your own API keys, from your
+Stowbox talks to ten sandbox providers with your own API keys, from your
 computer: [boxd](https://boxd.sh), [boat](https://boat.dev),
 [Daytona](https://www.daytona.io), [Agent37](https://www.agent37.com),
 [E2B](https://e2b.dev), [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox),
-[Blaxel](https://blaxel.ai), [Modal](https://modal.com) (beta) and
+[Blaxel](https://blaxel.ai), [Modal](https://modal.com) (beta),
 [Cloudflare Containers](https://developers.cloudflare.com/containers/) (through
-a Worker you deploy). It also drives any machine you can reach over SSH.
-Connect one or several. It shows your boxes with a
+a Worker you deploy) and [Sprites](https://sprites.dev). It also drives any
+machine you can reach over SSH. Connect one or several. It shows your boxes with a
 live cost estimate, runs Claude Code or Codex inside them, one terminal and one
 session per agent, opens a shell in any box, and pauses, stops, forks or deletes
 a box from the same window, with whatever each provider supports. There is no
@@ -66,13 +66,13 @@ it claims, links and delete.
 | [Blaxel](https://blaxel.ai) | API key `bl_…`, workspace | automatic standby | process API, terminal WebSocket | [docs/blaxel.md](docs/blaxel.md) |
 | [Modal](https://modal.com) (beta) | Token id `ak-…`, secret `as-…` | delete only | gRPC command router | Built on Modal's unpublished SDK API. A sandbox lasts at most 24 h. [docs/modal.md](docs/modal.md) |
 | [Cloudflare Containers](https://developers.cloudflare.com/containers/) | Your Worker's URL and token | stop, start | Container exec with a PTY | Needs Workers Paid. A stop keeps no files. [docs/cloudflare.md](docs/cloudflare.md) |
+| [Sprites](https://sprites.dev) | Token `org/id/secret` | pauses by itself | exec WebSocket | 8 vCPUs and a 100 GB disk that persists. [docs/sprites.md](docs/sprites.md) |
 | SSH host | Host and user; port and key optional | none | SSH | Any machine you already have. [docs/sshhost.md](docs/sshhost.md) |
 
 Next, in the order of the [provider roadmap](docs/providers-roadmap.md):
 
-- **Fly.io Sprites** is built and waiting for its live run.
 - **exe.dev**, **Morph Cloud** and **Northflank** each wait for an account
-  for that run.
+  for their live run.
 
 ### Quality bar
 

@@ -58,6 +58,7 @@ pub fn capabilities() -> crate::capabilities::Capabilities {
         auto_suspend: true,
         auto_hibernate: true,
         idle_stop: false,
+        pauses_when_idle: false,
         auto_stop: false,
         custom_size: true,
         sizes: Vec::new(),

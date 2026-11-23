@@ -464,14 +464,30 @@ pub fn remote_command(spec: &ExecSpec) -> String {
     if spec.tty {
         format!("bash -lc {}", shell_quote(&script))
     } else {
-        let inner = "printf '\\036stowbox-pgid:%s\\n' \"$$\" >&2; exec bash -lc \"$1\"";
-        // setsid -w is util-linux. Elsewhere (macOS, BSD, BusyBox) the script
-        // runs without a group of its own: it works, but dropping the exec
-        // cannot kill what it left running. `sh -c` keeps this independent
-        // of the account's login shell.
-        let pick = "if setsid -w true 2>/dev/null; then exec setsid -w bash -c \"$1\" stowbox \"$2\"; else exec bash -c \"$1\" stowbox \"$2\"; fi";
-        format!("sh -c {} stowbox {} {}", shell_quote(pick), shell_quote(&inner), shell_quote(&script))
+        in_group(&script, "bash -lc \"$1\"")
     }
+}
+
+/// A login bash that runs `"$1"` with what its startup files write to
+/// stderr dropped, and stderr back for the command itself. Sprites' default
+/// `.bashrc` calls `bind` in every shell, which warns outside a terminal.
+pub const QUIET_LOGIN: &str = "bash -lc 'exec 2>&3 3>&-; eval \"$1\"' stowbox \"$1\" 3>&2 2>/dev/null";
+
+/// [`remote_command`] for a command without a TTY, run by [`QUIET_LOGIN`].
+pub fn quiet_remote_command(spec: &ExecSpec) -> String {
+    in_group(&with_env(spec), QUIET_LOGIN)
+}
+
+/// Runs `script` with `login`, which takes it as `"$1"`, in a process group
+/// of its own that it reports on stderr.
+fn in_group(script: &str, login: &str) -> String {
+    let inner = format!("printf '\\036stowbox-pgid:%s\\n' \"$$\" >&2; exec {login}");
+    // setsid -w is util-linux. Elsewhere (macOS, BSD, BusyBox) the script
+    // runs without a group of its own: it works, but dropping the exec
+    // cannot kill what it left running. `sh -c` keeps this independent
+    // of the account's login shell.
+    let pick = "if setsid -w true 2>/dev/null; then exec setsid -w bash -c \"$1\" stowbox \"$2\"; else exec bash -c \"$1\" stowbox \"$2\"; fi";
+    format!("sh -c {} stowbox {} {}", shell_quote(pick), shell_quote(&inner), shell_quote(script))
 }
 
 /// Reads the process group id off the front of stderr, once. Any exec that
@@ -659,6 +675,26 @@ mod tests {
         let (pgid, rest) = m.feed(&out.stderr);
         assert!(pgid.is_some_and(|g| g > 1));
         assert_eq!(rest.unwrap(), b"oops\n");
+    }
+
+    /// What the startup files print on stderr is dropped; what they set and
+    /// what the command prints are kept.
+    #[cfg(unix)]
+    #[test]
+    fn the_quiet_wrapper_drops_only_the_startup_noise() {
+        if !crate::testing::has_bash() {
+            return;
+        }
+        let home = crate::testing::temp_dir("stowbox-quiet-login");
+        std::fs::write(home.join(".bash_profile"), "echo noise >&2\nexport FROM_PROFILE=yes\n").unwrap();
+        let spec = ExecSpec { script: "echo \"$FROM_PROFILE $A\"; echo oops >&2; exit 5".into(), env: vec![("A".into(), "it's".into())], ..Default::default() };
+        let out = std::process::Command::new("sh").arg("-c").arg(quiet_remote_command(&spec)).env("HOME", &home).output().unwrap();
+        assert_eq!(out.status.code(), Some(5));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "yes it's\n");
+        let (pgid, rest) = Marker::Reading(Vec::new()).feed(&out.stderr);
+        assert!(pgid.is_some());
+        assert_eq!(rest.unwrap(), b"oops\n");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// A host without util-linux (macOS, BSD) still runs the script.

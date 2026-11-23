@@ -120,6 +120,7 @@ pub fn capabilities() -> Capabilities {
         auto_hibernate: false,
         auto_stop: false,
         idle_stop: true,
+        pauses_when_idle: false,
         custom_size: false,
         sizes: SHAPES
             .iter()

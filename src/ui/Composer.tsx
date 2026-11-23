@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
 import type { CreateSpec, Harness, Machine } from "../bridge/types";
 import { actions, agentsForMachine, capsOf, creatableProviders, machineById, multiProvider, providerLabel, state } from "../state/store";
 import * as I from "../icons";
-import { boxHourly, gib, money, statusLabel } from "./format";
+import { boxHourly, money, sizeLabel, statusLabel } from "./format";
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
 /** A new box from the composer stops on its own after this, where the provider has auto-stop. */
@@ -43,12 +43,12 @@ function newBoxPlace(providerId: string): Place | null {
     return {
       value: `new:${providerId}`,
       label: `New box${on} · ${size.id} · ${price}/h`,
-      hint: `Creates a ${size.id} box on ${caps.label} (${size.vcpu} vCPU, ${gib(size.memoryBytes)}, ${price}/h while it runs${stops}), then opens the agent in it.`,
+      hint: `Creates a ${size.id} box on ${caps.label} (${sizeLabel(size).replace(" · ", ", ")}, ${price}/h while it runs${stops}), then opens the agent in it.`,
       box: { create: { provider: providerId, size: size.id, autoStopSecs: caps.autoStop ? AUTO_STOP_SECS : null, isolated: false } },
     };
   }
   const b = state.accounts[providerId]?.billing;
-  const size = b && b.defaultVcpu ? ` · ${b.defaultVcpu} vCPU · ${gib(b.defaultMemoryBytes)}` : "";
+  const size = b && b.defaultVcpu ? ` · ${sizeLabel({ vcpu: b.defaultVcpu, memoryBytes: b.defaultMemoryBytes })}` : "";
   return {
     value: `new:${providerId}`,
     label: `New box${on}${size}`,
